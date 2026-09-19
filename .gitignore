@@ -5,3 +5,7 @@ desktop.ini
 .idea/
 .vscode/
 .cursor/
+__pycache__/
+*.pyc
+build/
+dist/

@@ -12,6 +12,18 @@ python -m http.server 8080
 
 Then visit `http://localhost:8080`.
 
+## Windows app (.exe)
+
+The viewer can run as a desktop window (local HTTP + WebView2) and be packed into a single executable.
+
+```bash
+python -m pip install -r requirements-desktop.txt
+python desktop/app.py
+python desktop/build.py
+```
+
+The built file is `dist/KMZ-GIS-Viewer.exe`. Double-click it to open the same GIS viewer. Network access is still needed for map tiles and driving directions. Windows 10/11 with WebView2 is required (already installed on most PCs).
+
 Use **Open** or drag a `.kmz` / `.kml` file onto the map. Demo files: `examples/sample.kml` and `examples/sample.kmz`.
 
 ## Tools
