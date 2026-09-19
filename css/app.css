@@ -248,6 +248,54 @@ select {
   height: auto;
 }
 
+.inspect-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.btn-directions {
+  margin-top: 8px;
+}
+
+.route-card {
+  position: absolute;
+  right: 12px;
+  bottom: 28px;
+  z-index: 400;
+  width: min(280px, calc(100% - 24px));
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.route-card.hidden {
+  display: none;
+}
+
+.route-card-title {
+  font-weight: 700;
+}
+
+.route-card-meta {
+  color: var(--muted);
+  margin: 4px 0 8px;
+}
+
+.route-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.route-card-actions .btn,
+.inspect-actions .btn {
+  text-decoration: none;
+}
+
 .map-wrap {
   position: relative;
   flex: 1;

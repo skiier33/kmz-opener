@@ -130,6 +130,14 @@
 
         <main class="map-wrap">
           <div id="map"></div>
+          <div id="route-card" class="route-card hidden">
+            <div id="route-card-title" class="route-card-title"></div>
+            <div id="route-card-meta" class="route-card-meta"></div>
+            <div class="route-card-actions">
+              <a id="route-google" class="btn" href="#" target="_blank" rel="noopener noreferrer">Google Maps</a>
+              <button id="route-clear" class="btn" type="button">Clear route</button>
+            </div>
+          </div>
           <div id="drop-overlay" class="drop-overlay hidden" aria-hidden="true">
             <div class="drop-card">Drop KMZ or KML to open</div>
           </div>
@@ -153,6 +161,7 @@
     <script src="js/kmz-loader.js"></script>
     <script src="js/map.js"></script>
     <script src="js/measure.js"></script>
+    <script src="js/directions.js"></script>
     <script src="js/main.js"></script>
   </body>
 </html>

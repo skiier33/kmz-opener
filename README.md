@@ -23,9 +23,12 @@ Use **Open** or drag a `.kmz` / `.kml` file onto the map. Demo files: `examples/
 | Area | Area tool, click vertices, close on the first point, double-click, or Enter |
 | Cancel draft | Esc |
 | Clear measurements | Clear (or `C`) |
+| Driving directions | Click a KMZ point, then **Drive from my location** or **Click map for start** |
 | Shortcuts | `P` pan, `D` distance, `A` area |
 
 The status bar shows cursor lat/lon, the active tool, and the last measurement in metric and imperial units. A scale bar stays on the map.
+
+Driving directions work on point placemarks. The app draws a road route (OSRM) from your location or a clicked start point, shows distance and time, and can open the same trip in Google Maps. Serve the app over `http://localhost` so the browser can use geolocation and the routing API.
 
 ## Supported KMZ / KML
 

@@ -47,6 +47,19 @@
     return div.innerHTML;
   }
 
+  function firstPoint(feature) {
+    var geoms = (feature && feature.geometries) || [];
+    for (var i = 0; i < geoms.length; i += 1) {
+      if (geoms[i].type === "Point" && geoms[i].latlngs && geoms[i].latlngs[0]) {
+        return {
+          lat: geoms[i].latlngs[0].lat,
+          lng: geoms[i].latlngs[0].lng,
+        };
+      }
+    }
+    return null;
+  }
+
   function popupHtml(feature) {
     var title = feature.name || "Feature";
     var meta = feature.geometryType || "";
@@ -54,11 +67,24 @@
       meta += (meta ? " · " : "") + feature.coordinatesText;
     }
     var desc = sanitizeHtml(feature.description || "");
-    return (
-      '<div class="popup-title"></div>'.replace("></", ">" + escapeText(title) + "</") +
+    var dest = firstPoint(feature);
+    var html =
+      '<div class="popup-title">' +
+      escapeText(title) +
+      "</div>" +
       (meta ? '<div class="popup-meta">' + escapeText(meta) + "</div>" : "") +
-      (desc ? '<div class="desc">' + desc + "</div>" : "")
-    );
+      (desc ? '<div class="desc">' + desc + "</div>" : "");
+    if (dest) {
+      html +=
+        '<button type="button" class="btn btn-directions" data-dir-lat="' +
+        dest.lat +
+        '" data-dir-lng="' +
+        dest.lng +
+        '" data-dir-name="' +
+        encodeURIComponent(title) +
+        '">Directions</button>';
+    }
+    return html;
   }
 
   function escapeText(text) {
@@ -107,6 +133,11 @@
       layer.bindPopup(popupHtml(node.feature), { maxWidth: 280 });
     }
     layer.on("click", function (event) {
+      if (global.Directions && global.Directions.isPickingOrigin()) {
+        global.Directions.setOrigin(event.latlng);
+        L.DomEvent.stop(event);
+        return;
+      }
       if (!featureClicksEnabled) {
         if (global.Measure && typeof global.Measure.addPoint === "function") {
           global.Measure.addPoint(event.latlng);
@@ -239,6 +270,7 @@
 
   function inspectPayload(node) {
     var feature = node.feature || {};
+    var dest = firstPoint(feature);
     return {
       id: node.id,
       name: feature.name || node.name,
@@ -248,6 +280,7 @@
       description: feature.description || "",
       extendedData: feature.extendedData || [],
       rotation: feature.overlay ? feature.overlay.rotation : 0,
+      destination: dest,
     };
   }
 
@@ -349,5 +382,6 @@
     getRoot: function () {
       return currentRoot;
     },
+    firstPoint: firstPoint,
   };
 })(window);

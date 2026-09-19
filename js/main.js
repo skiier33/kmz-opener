@@ -10,6 +10,10 @@
   var statusTool = document.getElementById("status-tool");
   var statusMeasure = document.getElementById("status-measure");
   var statusMessage = document.getElementById("status-message");
+  var routeCard = document.getElementById("route-card");
+  var routeCardTitle = document.getElementById("route-card-title");
+  var routeCardMeta = document.getElementById("route-card-meta");
+  var routeGoogle = document.getElementById("route-google");
   var currentBlobUrls = [];
   var dragDepth = 0;
 
@@ -51,7 +55,58 @@
     if (info.description) {
       html += '<div class="desc">' + sanitizeHtml(info.description) + "</div>";
     }
+    if (info.destination) {
+      html +=
+        '<div class="inspect-actions">' +
+        '<button type="button" class="btn" id="btn-drive-here">Drive from my location</button>' +
+        '<button type="button" class="btn" id="btn-drive-click">Click map for start</button>' +
+        '<a class="btn" id="btn-drive-google" target="_blank" rel="noopener noreferrer" href="' +
+        Directions.googleMapsUrl(null, info.destination) +
+        '">Open in Google Maps</a>' +
+        "</div>";
+    }
     inspectEl.innerHTML = html;
+    bindInspectDirections(info);
+  }
+
+  function destFromInfo(info) {
+    if (!info || !info.destination) {
+      return null;
+    }
+    return {
+      lat: info.destination.lat,
+      lng: info.destination.lng,
+      name: info.name || "Point",
+    };
+  }
+
+  function bindInspectDirections(info) {
+    var dest = destFromInfo(info);
+    var driveHere = document.getElementById("btn-drive-here");
+    var driveClick = document.getElementById("btn-drive-click");
+    if (driveHere) {
+      driveHere.addEventListener("click", function () {
+        chooseTool("pan");
+        Directions.routeFromMyLocation(dest);
+      });
+    }
+    if (driveClick) {
+      driveClick.addEventListener("click", function () {
+        chooseTool("pan");
+        Directions.pickOriginOnMap(dest);
+      });
+    }
+  }
+
+  function showRouteCard(info) {
+    if (!info) {
+      routeCard.classList.add("hidden");
+      return;
+    }
+    routeCardTitle.textContent = "Drive to " + info.name;
+    routeCardMeta.textContent = info.distanceText + " · " + info.durationText;
+    routeGoogle.href = info.googleUrl;
+    routeCard.classList.remove("hidden");
   }
 
   function escapeText(text) {
@@ -167,6 +222,7 @@
       .then(function (parsed) {
         currentBlobUrls = parsed.blobUrls || [];
         GisMap.loadDocument(parsed);
+        Directions.clear();
         fileLabel.textContent = parsed.fileName + (parsed.sourceKind === "kmz" ? " (KMZ)" : " (KML)");
         renderTree(parsed.tree);
         renderInspect(null);
@@ -175,6 +231,7 @@
       })
       .catch(function (err) {
         GisMap.clearDocument();
+        Directions.clear();
         resetFileUi();
         setMessage(err.message || "Could not open that file.");
       });
@@ -195,6 +252,34 @@
   GisMap.onInspect(function (info) {
     renderInspect(info);
     highlightTreeSelection();
+  });
+
+  Directions.init(map, {
+    onStatus: setMessage,
+    onRoute: showRouteCard,
+  });
+
+  map.on("popupopen", function (event) {
+    var root = event.popup.getElement();
+    if (!root) {
+      return;
+    }
+    var btn = root.querySelector(".btn-directions");
+    if (!btn) {
+      return;
+    }
+    btn.addEventListener("click", function () {
+      chooseTool("pan");
+      Directions.routeFromMyLocation({
+        lat: parseFloat(btn.getAttribute("data-dir-lat")),
+        lng: parseFloat(btn.getAttribute("data-dir-lng")),
+        name: decodeURIComponent(btn.getAttribute("data-dir-name") || "Point"),
+      });
+    });
+  });
+
+  document.getElementById("route-clear").addEventListener("click", function () {
+    Directions.clear();
   });
 
   Measure.init(map, function (state) {
