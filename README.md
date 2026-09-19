@@ -1,0 +1,39 @@
+# KMZ GIS Viewer
+
+A local, no-build web app that opens KMZ and KML files on a Leaflet map. It includes OSM/satellite/topo basemaps, a folder layer tree, feature inspection, and geodesic distance/area tools.
+
+## Run
+
+Open `index.html` in a browser (network access is needed for map tiles and CDN libraries), or serve the folder:
+
+```bash
+python -m http.server 8080
+```
+
+Then visit `http://localhost:8080`.
+
+Use **Open** or drag a `.kmz` / `.kml` file onto the map. Demo files: `examples/sample.kml` and `examples/sample.kmz`.
+
+## Tools
+
+| Action | How |
+|---|---|
+| Pan / inspect | Pan tool, then click a feature |
+| Distance | Distance tool, click vertices, double-click or Enter to finish |
+| Area | Area tool, click vertices, close on the first point, double-click, or Enter |
+| Cancel draft | Esc |
+| Clear measurements | Clear (or `C`) |
+| Shortcuts | `P` pan, `D` distance, `A` area |
+
+The status bar shows cursor lat/lon, the active tool, and the last measurement in metric and imperial units. A scale bar stays on the map.
+
+## Supported KMZ / KML
+
+- Points, LineStrings, Polygons, MultiGeometry
+- Document / Folder layer tree with visibility toggles
+- Styles and StyleMaps (line, fill, icon)
+- Ground overlays (`LatLonBox` images packaged in the KMZ)
+- Placemark name, description (HTML sanitized), and ExtendedData
+- Warning when a `NetworkLink` is skipped (external fetches are not loaded)
+
+Not in this version: NetworkLink loading, 3D/altitude extrusion, editing or saving KML, and point clustering.

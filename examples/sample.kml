@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Sample Denver features</name>
+    <Style id="pathStyle">
+      <LineStyle>
+        <color>ff3d8c5f</color>
+        <width>3</width>
+      </LineStyle>
+    </Style>
+    <Style id="areaStyle">
+      <LineStyle>
+        <color>fff58b4c</color>
+        <width>2</width>
+      </LineStyle>
+      <PolyStyle>
+        <color>664c8bf5</color>
+      </PolyStyle>
+    </Style>
+    <Folder>
+      <name>Points</name>
+      <Placemark>
+        <name>Civic Center Park</name>
+        <description>Sample point used to verify popups and inspect.</description>
+        <ExtendedData>
+          <Data name="kind"><value>park</value></Data>
+        </ExtendedData>
+        <Point>
+          <coordinates>-104.9889,39.7392,0</coordinates>
+        </Point>
+      </Placemark>
+    </Folder>
+    <Folder>
+      <name>Paths</name>
+      <Placemark>
+        <name>16th Street Mall</name>
+        <styleUrl>#pathStyle</styleUrl>
+        <LineString>
+          <coordinates>
+            -104.9958,39.7478,0
+            -104.9897,39.7436,0
+            -104.9836,39.7394,0
+          </coordinates>
+        </LineString>
+      </Placemark>
+    </Folder>
+    <Folder>
+      <name>Areas</name>
+      <Placemark>
+        <name>Capitol grounds</name>
+        <styleUrl>#areaStyle</styleUrl>
+        <Polygon>
+          <outerBoundaryIs>
+            <LinearRing>
+              <coordinates>
+                -104.9868,39.7406,0
+                -104.9842,39.7406,0
+                -104.9842,39.7387,0
+                -104.9868,39.7387,0
+                -104.9868,39.7406,0
+              </coordinates>
+            </LinearRing>
+          </outerBoundaryIs>
+        </Polygon>
+      </Placemark>
+    </Folder>
+  </Document>
+</kml>
