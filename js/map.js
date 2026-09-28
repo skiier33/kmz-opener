@@ -7,6 +7,7 @@
   var dataGroup = null;
   var layersById = {};
   var inspectCallback = null;
+  var featureHoverCallback = null;
   var featureClicksEnabled = true;
   var selectedId = null;
 
@@ -94,9 +95,13 @@
       .replace(/>/g, "&gt;");
   }
 
+  function pointIconSize(style) {
+    return Math.max(16, Math.round(32 * (style.iconScale || 1)));
+  }
+
   function pointToLayer(latlng, style) {
     if (style.iconUrl) {
-      var size = Math.max(16, Math.round(32 * (style.iconScale || 1)));
+      var size = pointIconSize(style);
       return L.marker(latlng, {
         icon: L.icon({
           iconUrl: style.iconUrl,
@@ -116,6 +121,29 @@
     });
   }
 
+  function pointLabelOffset(style) {
+    if (style && style.iconUrl) {
+      return [Math.round(pointIconSize(style) / 2) + 4, 0];
+    }
+    return [12, 0];
+  }
+
+  function bindPointLabel(marker, text, style) {
+    var label = text || "";
+    if (!label) {
+      return;
+    }
+    var el = document.createElement("span");
+    el.textContent = label;
+    marker.bindTooltip(el, {
+      permanent: true,
+      direction: "right",
+      offset: pointLabelOffset(style),
+      className: "point-label",
+      opacity: 1,
+    });
+  }
+
   function pathOptions(style, filled) {
     return {
       color: style.stroke,
@@ -132,6 +160,23 @@
     if (node.feature) {
       layer.bindPopup(popupHtml(node.feature), { maxWidth: 280 });
     }
+    layer.on("mouseover", function (event) {
+      if (!featureHoverCallback || !event.originalEvent) {
+        return;
+      }
+      featureHoverCallback({
+        id: node.id,
+        x: event.originalEvent.clientX,
+        y: event.originalEvent.clientY,
+      });
+    });
+    layer.on("mouseout", function (event) {
+      if (!featureHoverCallback) {
+        return;
+      }
+      var related = event.originalEvent && event.originalEvent.relatedTarget;
+      featureHoverCallback({ id: node.id, leave: true }, related);
+    });
     layer.on("click", function (event) {
       if (global.Directions && global.Directions.isPickingOrigin()) {
         global.Directions.setOrigin(event.latlng);
@@ -146,7 +191,7 @@
         return;
       }
       L.DomEvent.stopPropagation(event);
-      selectFeature(node.id, true);
+      selectFeature(node.id, true, "map");
     });
     return layer;
   }
@@ -171,8 +216,11 @@
 
     (feature.geometries || []).forEach(function (geom) {
       if (geom.type === "Point") {
+        var pointLabel = node.name || node.type;
         geom.latlngs.forEach(function (ll) {
-          group.addLayer(pointToLayer(ll, style));
+          var marker = pointToLayer(ll, style);
+          bindPointLabel(marker, pointLabel, style);
+          group.addLayer(marker);
         });
         return;
       }
@@ -224,6 +272,9 @@
   }
 
   function findNode(root, id) {
+    if (!root) {
+      return null;
+    }
     if (root.id === id) {
       return root;
     }
@@ -235,6 +286,350 @@
       }
     }
     return null;
+  }
+
+  function locateNode(root, id) {
+    if (!root) {
+      return null;
+    }
+    function walk(node, parent) {
+      if (node.id === id) {
+        var index = parent ? (parent.children || []).indexOf(node) : -1;
+        return { parent: parent, index: index, node: node };
+      }
+      var children = node.children || [];
+      for (var i = 0; i < children.length; i += 1) {
+        var found = walk(children[i], node);
+        if (found) {
+          return found;
+        }
+      }
+      return null;
+    }
+    return walk(root, null);
+  }
+
+  function containsId(node, id) {
+    var children = (node && node.children) || [];
+    for (var i = 0; i < children.length; i += 1) {
+      if (children[i].id === id || containsId(children[i], id)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function topLevelIds(ids) {
+    var wanted = {};
+    (ids || []).forEach(function (id) {
+      wanted[id] = true;
+    });
+    var ordered = [];
+    function walk(node) {
+      if (!node) {
+        return;
+      }
+      if (wanted[node.id]) {
+        ordered.push(node.id);
+        return;
+      }
+      (node.children || []).forEach(walk);
+    }
+    walk(currentRoot);
+    return ordered;
+  }
+
+  var nodeSeq = 0;
+
+  function nextNodeId() {
+    nodeSeq += 1;
+    return "edit-" + nodeSeq;
+  }
+
+  function removeLayers(node) {
+    collectDescendantIds(node, []).forEach(function (childId) {
+      var layer = layersById[childId];
+      if (layer && dataGroup) {
+        dataGroup.removeLayer(layer);
+      }
+      delete layersById[childId];
+    });
+  }
+
+  function addLayers(node) {
+    var layer = layerFromNode(node);
+    if (layer) {
+      layersById[node.id] = layer;
+      if (node.visible !== false && dataGroup) {
+        dataGroup.addLayer(layer);
+      }
+    }
+    (node.children || []).forEach(addLayers);
+  }
+
+  function forceVisibility(node, visible) {
+    node.visible = visible;
+    (node.children || []).forEach(function (child) {
+      forceVisibility(child, visible);
+    });
+  }
+
+  function detachNode(id) {
+    var loc = locateNode(currentRoot, id);
+    if (!loc || !loc.parent) {
+      return null;
+    }
+    loc.parent.children.splice(loc.index, 1);
+    return loc.node;
+  }
+
+  function refreshFeaturePresentation(node) {
+    var layer = layersById[node.id];
+    if (!layer || !node.feature) {
+      return;
+    }
+    var html = popupHtml(node.feature);
+    var label = node.name || "Feature";
+    function apply(target) {
+      if (!target) {
+        return;
+      }
+      if (
+        typeof target.getPopup === "function" &&
+        target.getPopup() &&
+        typeof target.setPopupContent === "function"
+      ) {
+        target.setPopupContent(html);
+      }
+      if (
+        typeof target.getTooltip === "function" &&
+        target.getTooltip() &&
+        typeof target.setTooltipContent === "function"
+      ) {
+        target.setTooltipContent(label);
+      }
+    }
+    apply(layer);
+    if (typeof layer.eachLayer === "function") {
+      layer.eachLayer(apply);
+    }
+  }
+
+  function renameNode(id, name) {
+    var node = currentRoot ? findNode(currentRoot, id) : null;
+    var trimmed = String(name || "").trim();
+    if (!node || !trimmed) {
+      return false;
+    }
+    node.name = trimmed;
+    node.nameEdited = true;
+    if (node.sourceEl && global.KmzSave) {
+      global.KmzSave.setElementName(node.sourceEl, trimmed);
+    }
+    if (node.feature) {
+      node.feature.name = trimmed;
+      refreshFeaturePresentation(node);
+    }
+    if (selectedId === id) {
+      selectFeature(id, false);
+    }
+    return true;
+  }
+
+  function deleteNodes(ids) {
+    if (!currentRoot) {
+      return [];
+    }
+    var toDelete = topLevelIds(ids).filter(function (id) {
+      return id !== currentRoot.id;
+    });
+    var removed = [];
+    var clearedSelection = false;
+    toDelete.forEach(function (id) {
+      var loc = locateNode(currentRoot, id);
+      if (!loc || !loc.parent) {
+        return;
+      }
+      if (selectedId && (selectedId === id || containsId(loc.node, selectedId))) {
+        clearedSelection = true;
+      }
+      if (global.KmzSave) {
+        global.KmzSave.detachNode(loc.node);
+      }
+      removeLayers(loc.node);
+      loc.parent.children.splice(loc.index, 1);
+      removed.push(id);
+    });
+    if (clearedSelection) {
+      selectedId = null;
+      if (map) {
+        map.closePopup();
+      }
+    }
+    return removed;
+  }
+
+  function moveNodes(ids, parentId, beforeId) {
+    if (!currentRoot) {
+      return [];
+    }
+    var movingIds = topLevelIds(ids).filter(function (id) {
+      if (id === currentRoot.id) {
+        return false;
+      }
+      var node = findNode(currentRoot, id);
+      if (!node || id === parentId || containsId(node, parentId)) {
+        return false;
+      }
+      return true;
+    });
+    if (!movingIds.length) {
+      return [];
+    }
+
+    var anchorId = beforeId;
+    if (anchorId && movingIds.indexOf(anchorId) !== -1) {
+      var anchorLoc = locateNode(currentRoot, anchorId);
+      anchorId = null;
+      if (anchorLoc && anchorLoc.parent) {
+        var siblings = anchorLoc.parent.children;
+        for (var s = anchorLoc.index + 1; s < siblings.length; s += 1) {
+          if (movingIds.indexOf(siblings[s].id) === -1) {
+            anchorId = siblings[s].id;
+            break;
+          }
+        }
+      }
+    }
+
+    var nodes = [];
+    movingIds.forEach(function (id) {
+      var node = detachNode(id);
+      if (node) {
+        nodes.push(node);
+      }
+    });
+
+    var parent = findNode(currentRoot, parentId);
+    if (!parent) {
+      return [];
+    }
+    if (!parent.children) {
+      parent.children = [];
+    }
+    var index = parent.children.length;
+    if (anchorId) {
+      for (var i = 0; i < parent.children.length; i += 1) {
+        if (parent.children[i].id === anchorId) {
+          index = i;
+          break;
+        }
+      }
+    }
+    nodes.forEach(function (node, offset) {
+      parent.children.splice(index + offset, 0, node);
+    });
+    if (parent.visible === false) {
+      nodes.forEach(function (node) {
+        setLayerVisible(node.id, false, currentRoot);
+      });
+    }
+    return nodes.map(function (node) {
+      return node.id;
+    });
+  }
+
+  function cloneNode(node) {
+    if (!node) {
+      return null;
+    }
+    var copy = {
+      id: nextNodeId(),
+      name: node.name,
+      type: node.type,
+      visible: node.visible !== false,
+      expanded: node.expanded !== false,
+      nameEdited: !!node.nameEdited,
+      children: [],
+      feature: node.feature ? JSON.parse(JSON.stringify(node.feature)) : null,
+      sourceEl: global.KmzSave ? global.KmzSave.cloneSourceElement(node) : null,
+    };
+    if (copy.feature) {
+      copy.feature.name = copy.name;
+    }
+    copy.children = (node.children || []).map(cloneNode);
+    if (copy.sourceEl) {
+      copy.children.forEach(function (child) {
+        if (child && child.sourceEl && child.sourceEl.parentNode !== copy.sourceEl) {
+          copy.sourceEl.appendChild(child.sourceEl);
+        }
+      });
+    }
+    return copy;
+  }
+
+  function sortChildrenByName(id, recursive) {
+    var node = currentRoot ? findNode(currentRoot, id) : null;
+    if (!node) {
+      return 0;
+    }
+    var changed = 0;
+    var children = node.children || [];
+    if (children.length > 1) {
+      var before = children.map(function (child) {
+        return child.id;
+      });
+      children.sort(function (a, b) {
+        return String(a.name || "").localeCompare(String(b.name || ""), undefined, {
+          numeric: true,
+          sensitivity: "base",
+        });
+      });
+      var unchanged = children.every(function (child, index) {
+        return child.id === before[index];
+      });
+      if (!unchanged) {
+        changed = 1;
+      }
+    }
+    if (recursive) {
+      children.forEach(function (child) {
+        if (child.type === "folder") {
+          changed += sortChildrenByName(child.id, true);
+        }
+      });
+    }
+    return changed;
+  }
+
+  function insertNodes(parentId, beforeId, nodes) {
+    var parent = currentRoot ? findNode(currentRoot, parentId) : null;
+    if (!parent || !nodes || !nodes.length) {
+      return [];
+    }
+    if (!parent.children) {
+      parent.children = [];
+    }
+    var index = parent.children.length;
+    if (beforeId) {
+      for (var i = 0; i < parent.children.length; i += 1) {
+        if (parent.children[i].id === beforeId) {
+          index = i;
+          break;
+        }
+      }
+    }
+    var hide = parent.visible === false;
+    nodes.forEach(function (node, offset) {
+      if (hide) {
+        forceVisibility(node, false);
+      }
+      parent.children.splice(index + offset, 0, node);
+      addLayers(node);
+    });
+    return nodes.map(function (node) {
+      return node.id;
+    });
   }
 
   function setLayerVisible(id, visible, root) {
@@ -284,7 +679,7 @@
     };
   }
 
-  function selectFeature(id, openPopup) {
+  function selectFeature(id, openPopup, source) {
     selectedId = id;
     var layer = layersById[id];
     if (openPopup && layer && layer.openPopup && featureClicksEnabled) {
@@ -292,7 +687,23 @@
     }
     if (inspectCallback) {
       var node = currentRoot ? findNode(currentRoot, id) : null;
-      inspectCallback(node ? inspectPayload(node) : null);
+      inspectCallback(node ? inspectPayload(node) : null, source || "");
+    }
+  }
+
+  function clearSelected() {
+    selectedId = null;
+    if (map) {
+      map.closePopup();
+    }
+    if (inspectCallback) {
+      inspectCallback(null, "");
+    }
+  }
+
+  function closePopup() {
+    if (map) {
+      map.closePopup();
     }
   }
 
@@ -306,7 +717,7 @@
       attributionControl: true,
     }).setView([20, 0], 2);
 
-    activeBasemap = basemaps.osm.addTo(map);
+    activeBasemap = basemaps.satellite.addTo(map);
     L.control.scale({ metric: true, imperial: true, position: "bottomleft" }).addTo(map);
     dataGroup = L.featureGroup().addTo(map);
     return map;
@@ -330,6 +741,7 @@
     layersById = {};
     currentRoot = null;
     selectedId = null;
+    nodeSeq = 0;
     if (inspectCallback) {
       inspectCallback(null);
     }
@@ -357,6 +769,10 @@
     inspectCallback = fn;
   }
 
+  function onFeatureHover(fn) {
+    featureHoverCallback = fn;
+  }
+
   function getMap() {
     return map;
   }
@@ -373,6 +789,7 @@
     setLayerVisible: setLayerVisible,
     setFeatureClicksEnabled: setFeatureClicksEnabled,
     onInspect: onInspect,
+    onFeatureHover: onFeatureHover,
     selectFeature: selectFeature,
     getMap: getMap,
     getSelectedId: getSelectedId,
@@ -382,6 +799,26 @@
     getRoot: function () {
       return currentRoot;
     },
+    locate: function (id) {
+      return currentRoot ? locateNode(currentRoot, id) : null;
+    },
+    topLevelIds: topLevelIds,
+    nodeContains: function (ancestorId, id) {
+      var ancestor = currentRoot ? findNode(currentRoot, ancestorId) : null;
+      return !!(ancestor && containsId(ancestor, id));
+    },
+    subtreeIds: function (id) {
+      var node = currentRoot ? findNode(currentRoot, id) : null;
+      return node ? collectDescendantIds(node, []) : [];
+    },
+    renameNode: renameNode,
+    deleteNodes: deleteNodes,
+    sortChildrenByName: sortChildrenByName,
+    moveNodes: moveNodes,
+    cloneNode: cloneNode,
+    insertNodes: insertNodes,
+    clearSelected: clearSelected,
+    closePopup: closePopup,
     firstPoint: firstPoint,
   };
 })(window);

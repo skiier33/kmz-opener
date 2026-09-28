@@ -19,16 +19,19 @@
     </Style>
     <Folder>
       <name>Points</name>
-      <Placemark>
-        <name>Civic Center Park</name>
-        <description>Sample point used to verify popups and inspect.</description>
-        <ExtendedData>
-          <Data name="kind"><value>park</value></Data>
-        </ExtendedData>
-        <Point>
-          <coordinates>-104.9889,39.7392,0</coordinates>
-        </Point>
-      </Placemark>
+      <Folder>
+        <name>Parks</name>
+        <Placemark>
+          <name>Civic Center Park</name>
+          <description>Sample point used to verify popups and inspect.</description>
+          <ExtendedData>
+            <Data name="kind"><value>park</value></Data>
+          </ExtendedData>
+          <Point>
+            <coordinates>-104.9889,39.7392,0</coordinates>
+          </Point>
+        </Placemark>
+      </Folder>
     </Folder>
     <Folder>
       <name>Paths</name>

@@ -335,6 +335,7 @@
       name: textOf(el, "name") || "Ground overlay",
       type: "overlay",
       visible: textOf(el, "visibility") !== "0",
+      sourceEl: el,
       children: [],
       feature: {
         name: textOf(el, "name") || "Ground overlay",
@@ -379,6 +380,7 @@
       name: name,
       type: "placemark",
       visible: textOf(el, "visibility") !== "0",
+      sourceEl: el,
       children: [],
       feature: {
         name: name,
@@ -399,6 +401,8 @@
       name: name,
       type: "folder",
       visible: textOf(el, "visibility") !== "0",
+      expanded: textOf(el, "open") !== "0",
+      sourceEl: el,
       children: [],
       feature: null,
     };
@@ -459,6 +463,8 @@
         name: textOf(root, "name") || "KML",
         type: "folder",
         visible: true,
+        expanded: true,
+        sourceEl: root,
         children: [],
         feature: null,
       };

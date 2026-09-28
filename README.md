@@ -4,6 +4,8 @@ A local, no-build web app that opens KMZ and KML files on a Leaflet map. It incl
 
 ## Run
 
+On Windows, double-click `start.bat` (or `start.vbs`). It installs desktop dependencies in a hidden process and opens only the viewer window — no terminal. To see Python output while debugging, run `python desktop/app.py` instead.
+
 Open `index.html` in a browser (network access is needed for map tiles and CDN libraries), or serve the folder:
 
 ```bash
@@ -37,6 +39,11 @@ Use **Open** or drag a `.kmz` / `.kml` file onto the map. Demo files: `examples/
 | Clear measurements | Clear (or `C`) |
 | Driving directions | Click a KMZ point, then **Drive from my location** or **Click map for start** |
 | Shortcuts | `P` pan, `D` distance, `A` area |
+| Layer tree | Click to select. `Ctrl` toggles, `Shift` selects a range, `Ctrl+A` selects visible layers |
+| Rearrange | Drag a layer onto a folder to nest it, or between rows to reorder |
+| Edit layers | Copy, Cut, Paste, Delete, and Rename act on the selection. Double-click a feature or press `F2` to rename. Show and Hide apply to every selected layer |
+| Sort | **Sort** orders every folder’s contents by name |
+| Save copy | **Save copy** writes a new KMZ or KML beside the original, with a timestamp added to the file name |
 
 The status bar shows cursor lat/lon, the active tool, and the last measurement in metric and imperial units. A scale bar stays on the map.
 
@@ -51,4 +58,6 @@ Driving directions work on point placemarks. The app draws a road route (OSRM) f
 - Placemark name, description (HTML sanitized), and ExtendedData
 - Warning when a `NetworkLink` is skipped (external fetches are not loaded)
 
-Not in this version: NetworkLink loading, 3D/altitude extrusion, editing or saving KML, and point clustering.
+Rename, delete, and sort stay in the open map until you use **Save copy**. That writes the current layers into a new file in the same folder as the original, named like `survey_20260928-154205.kmz`. The original file is left unchanged. In a browser tab that cannot see the original folder, Save copy downloads the file or asks where to put it.
+
+Not in this version: NetworkLink loading, 3D/altitude extrusion, overwriting the original KMZ or KML, and point clustering.

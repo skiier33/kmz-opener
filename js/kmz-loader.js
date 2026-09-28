@@ -145,7 +145,7 @@
     return doc;
   }
 
-  function collectHrefPromises(xmlDoc, resolveHref) {
+  function warmHrefCache(xmlDoc, resolveHref) {
     var hrefs = [];
     var nodes = xmlDoc.getElementsByTagName("*");
     var i;
@@ -160,14 +160,7 @@
       if (!text || /^(https?:|data:|blob:)/i.test(text)) {
         continue;
       }
-      hrefs.push(
-        Promise.resolve(resolveHref(text)).then(function (url) {
-          if (url && url !== text) {
-            el.textContent = url;
-          }
-          return url;
-        })
-      );
+      hrefs.push(Promise.resolve(resolveHref(text)));
     }
     return Promise.all(hrefs);
   }
@@ -187,7 +180,7 @@
             .async("string")
             .then(function (kmlText) {
               var xmlDoc = parseXml(kmlText);
-              return collectHrefPromises(xmlDoc, resolveHref).then(function () {
+              return warmHrefCache(xmlDoc, resolveHref).then(function () {
                 var parsed = global.KmlParse.parseKmlDocument(xmlDoc, function (href) {
                   if (!href) {
                     return "";
@@ -201,6 +194,10 @@
                 parsed.fileName = name;
                 parsed.blobUrls = blobUrls;
                 parsed.sourceKind = "kmz";
+                parsed.zip = zip;
+                parsed.kmlPath = rootName;
+                parsed.xmlDoc = xmlDoc;
+                parsed.originalBuffer = buffer;
                 return parsed;
               });
             });
@@ -215,6 +212,10 @@
       parsed.fileName = name;
       parsed.blobUrls = blobUrls;
       parsed.sourceKind = "kml";
+      parsed.zip = null;
+      parsed.kmlPath = "";
+      parsed.xmlDoc = xmlDoc;
+      parsed.originalBuffer = buffer;
       return parsed;
     });
   }
