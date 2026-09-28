@@ -4,7 +4,7 @@ A local, no-build web app that opens KMZ and KML files on a Leaflet map. It incl
 
 ## Run
 
-On Windows, double-click `start.bat` (or `start.vbs`). It installs desktop dependencies in a hidden process and opens only the viewer window — no terminal. To see Python output while debugging, run `python desktop/app.py` instead.
+On Windows, double-click `start.bat` (or `start.vbs`). It opens the viewer window without a terminal. Missing desktop packages are installed in the background the first time. To see Python output while debugging, run `python desktop/app.py` instead.
 
 Open `index.html` in a browser (network access is needed for map tiles and CDN libraries), or serve the folder:
 

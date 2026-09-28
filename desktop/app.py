@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import subprocess
 import sys
 import threading
 from datetime import datetime
@@ -56,8 +57,79 @@ def _attach_log_if_no_console() -> None:
     sys.stderr = handle
 
 
+def _show_error(message: str) -> None:
+    """
+    Show a blocking error when no console is available.
+
+    Args:
+        message: Text to display to the user.
+
+    Returns:
+        None.
+    """
+    if sys.platform == "win32":
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(None, message, "KMZ GIS Viewer", 0x10)
+        return
+    print(message, file=sys.stderr)
+
+
+def _ensure_webview() -> None:
+    """
+    Install pywebview with no console window if it is not already importable.
+
+    Args:
+        None.
+
+    Returns:
+        None.
+    """
+    if getattr(sys, "frozen", False):
+        return
+    try:
+        import webview  # noqa: F401
+
+        return
+    except ImportError:
+        pass
+    req = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "requirements-desktop.txt",
+    )
+    kwargs: dict = {"capture_output": True, "text": True}
+    if sys.platform == "win32":
+        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-r", req],
+            **kwargs,
+        )
+    except (OSError, subprocess.SubprocessError) as err:
+        _show_error(f"Could not install desktop dependencies.\n{err}")
+        sys.exit(1)
+    log_path = os.path.join(
+        os.environ.get("TEMP") or os.environ.get("TMP") or ".",
+        "kmz_gis_viewer_setup.log",
+    )
+    try:
+        with open(log_path, "w", encoding="utf-8") as handle:
+            handle.write(result.stdout or "")
+            handle.write(result.stderr or "")
+    except OSError:
+        pass
+    try:
+        import webview  # noqa: F401
+    except ImportError:
+        _show_error(
+            "Failed to install desktop dependencies. Details: " + log_path
+        )
+        sys.exit(1)
+
+
 if __name__ == "__main__":
     _attach_log_if_no_console()
+    _ensure_webview()
 
 import webview
 
