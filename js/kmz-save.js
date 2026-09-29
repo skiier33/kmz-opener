@@ -202,6 +202,20 @@
     );
   }
 
+  function kmzFileName(fileName) {
+    var name = String(fileName || "untitled.kmz");
+    var slash = Math.max(name.lastIndexOf("/"), name.lastIndexOf("\\"));
+    if (slash >= 0) {
+      name = name.slice(slash + 1);
+    }
+    var dot = name.lastIndexOf(".");
+    var stem = dot > 0 ? name.slice(0, dot) : name;
+    if (!stem || stem === "." || stem === "..") {
+      stem = "untitled";
+    }
+    return stem + ".kmz";
+  }
+
   function timestampedName(fileName, date) {
     var name = String(fileName || "untitled.kmz");
     var slash = Math.max(name.lastIndexOf("/"), name.lastIndexOf("\\"));
@@ -212,6 +226,14 @@
     var stem = dot > 0 ? name.slice(0, dot) : name;
     var ext = dot > 0 ? name.slice(dot) : ".kmz";
     return stem + "_" + timestampSuffix(date) + ext;
+  }
+
+  function generateKmz(zip) {
+    return zip.generateAsync({
+      type: "blob",
+      compression: "DEFLATE",
+      mimeType: "application/vnd.google-earth.kmz",
+    });
   }
 
   function buildBlob(doc, root) {
@@ -225,13 +247,40 @@
         return Promise.reject(new Error("This KMZ cannot be saved."));
       }
       doc.zip.file(doc.kmlPath, xml);
-      return doc.zip.generateAsync({
-        type: "blob",
-        compression: "DEFLATE",
-        mimeType: "application/vnd.google-earth.kmz",
-      });
+      return generateKmz(doc.zip);
     }
     return Promise.resolve(new Blob([xml], { type: "application/vnd.google-earth.kml+xml" }));
+  }
+
+  function buildKmzBlob(doc, root, preferOriginal) {
+    if (!doc) {
+      return Promise.reject(new Error("Open a KMZ or KML file first."));
+    }
+    if (preferOriginal && doc.originalBuffer && doc.sourceKind === "kmz") {
+      return Promise.resolve(
+        new Blob([doc.originalBuffer], { type: "application/vnd.google-earth.kmz" })
+      );
+    }
+    if (typeof JSZip === "undefined") {
+      return Promise.reject(new Error("KMZ export is unavailable."));
+    }
+    if (preferOriginal && doc.originalBuffer && doc.sourceKind !== "kmz") {
+      var originalZip = new JSZip();
+      originalZip.file("doc.kml", doc.originalBuffer);
+      return generateKmz(originalZip);
+    }
+    if (!doc.xmlDoc) {
+      return Promise.reject(new Error("This file cannot be exported."));
+    }
+    syncTree(root);
+    var xml = serializeXml(doc.xmlDoc);
+    if (doc.sourceKind === "kmz" && doc.zip && doc.kmlPath) {
+      doc.zip.file(doc.kmlPath, xml);
+      return generateKmz(doc.zip);
+    }
+    var zip = new JSZip();
+    zip.file("doc.kml", xml);
+    return generateKmz(zip);
   }
 
   global.KmzSave = {
@@ -239,7 +288,9 @@
     detachNode: detachNode,
     cloneSourceElement: cloneSourceElement,
     syncTree: syncTree,
+    kmzFileName: kmzFileName,
     timestampedName: timestampedName,
     buildBlob: buildBlob,
+    buildKmzBlob: buildKmzBlob,
   };
 })(window);

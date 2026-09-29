@@ -17,6 +17,7 @@
   var layersShowBtn = document.getElementById("layers-show");
   var layersHideBtn = document.getElementById("layers-hide");
   var layersSortBtn = document.getElementById("layers-sort");
+  var layersExportBtn = document.getElementById("layers-export");
   var fileSaveBtn = document.getElementById("file-save-copy");
   var selectedIds = [];
   var anchorId = null;
@@ -1288,10 +1289,13 @@
   }
 
   function updateFileActions() {
-    if (!fileSaveBtn) {
-      return;
+    var canWrite = !saveInFlight && !!currentDoc && !!currentDoc.xmlDoc;
+    if (fileSaveBtn) {
+      fileSaveBtn.disabled = !canWrite;
     }
-    fileSaveBtn.disabled = saveInFlight || !currentDoc || !currentDoc.xmlDoc;
+    if (layersExportBtn) {
+      layersExportBtn.disabled = !canWrite;
+    }
   }
 
   function noteEdit() {
@@ -1458,6 +1462,87 @@
           return;
         }
         downloadBlob(blob, downloadName);
+      });
+  }
+
+  function downloadNamedBlob(blob, downloadName, message) {
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement("a");
+    link.href = url;
+    link.download = downloadName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(function () {
+      URL.revokeObjectURL(url);
+    }, 1500);
+    setMessage(message);
+  }
+
+  function readJsonResponse(response) {
+    return response.text().then(function (text) {
+      var payload = {};
+      if (text) {
+        try {
+          payload = JSON.parse(text);
+        } catch (err) {
+          payload = {};
+        }
+      }
+      return { ok: response.ok, payload: payload };
+    });
+  }
+
+  function exportCurrentKmz() {
+    if (!currentDoc || !currentDoc.xmlDoc) {
+      setMessage("Open a KMZ or KML file first.");
+      return;
+    }
+    if (saveInFlight) {
+      return;
+    }
+    var downloadName = KmzSave.kmzFileName(currentDoc.fileName);
+    var root = GisMap.getRoot();
+    saveInFlight = true;
+    updateFileActions();
+    setMessage("Exporting " + downloadName + "…");
+    KmzSave.buildKmzBlob(currentDoc, root, !docDirty)
+      .then(function (blob) {
+        return ensureDesktop().then(function (desktop) {
+          if (!desktop || typeof desktop.api.choose_export_path !== "function") {
+            downloadNamedBlob(blob, downloadName, "Exported " + downloadName + ".");
+            return;
+          }
+          return Promise.resolve(desktop.api.choose_export_path(downloadName)).then(function (dest) {
+            if (!dest || !dest.path) {
+              setMessage("Export cancelled.");
+              return;
+            }
+            return fetch("/__desktop/export", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/octet-stream",
+                "X-Desktop-Token": desktop.token,
+                "X-Dest-Path": encodeURIComponent(dest.path),
+              },
+              body: blob,
+            }).then(function (response) {
+              return readJsonResponse(response).then(function (result) {
+                if (!result.ok) {
+                  throw new Error(result.payload.error || "Could not export the KMZ.");
+                }
+                setMessage("Exported " + (result.payload.name || downloadName) + ".");
+              });
+            });
+          });
+        });
+      })
+      .catch(function (err) {
+        setMessage((err && err.message) || "Could not export the KMZ.");
+      })
+      .then(function () {
+        saveInFlight = false;
+        updateFileActions();
       });
   }
 
@@ -1757,6 +1842,9 @@
   });
   if (layersSortBtn) {
     layersSortBtn.addEventListener("click", sortLayersByName);
+  }
+  if (layersExportBtn) {
+    layersExportBtn.addEventListener("click", exportCurrentKmz);
   }
   if (fileSaveBtn) {
     fileSaveBtn.addEventListener("click", saveTimestampedCopy);

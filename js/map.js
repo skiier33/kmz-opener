@@ -96,6 +96,7 @@
   }
 
   var GEO_CROSSHAIR_SIZE = 32;
+  var GEO_CROSSHAIR_RADIUS = 10;
   var GEO_CROSSHAIR_COLOR = "#ff0000";
 
   function pointIconSize(style) {
@@ -105,7 +106,16 @@
   function geoCrosshairIcon() {
     var size = GEO_CROSSHAIR_SIZE;
     var mid = size / 2;
+    var radius = GEO_CROSSHAIR_RADIUS;
     var color = GEO_CROSSHAIR_COLOR;
+    var east = mid + radius;
+    var west = mid - radius;
+    var north = mid - radius;
+    var south = mid + radius;
+    var arc = radius + " " + radius + " 0 0 0 ";
+    // North is up: Q2 is upper-left, Q4 is lower-right. Q1 and Q3 stay open.
+    var q2 = "M " + mid + " " + mid + " L " + mid + " " + north + " A " + arc + west + " " + mid + " Z";
+    var q4 = "M " + mid + " " + mid + " L " + mid + " " + south + " A " + arc + east + " " + mid + " Z";
     var html =
       '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' +
       size +
@@ -116,31 +126,47 @@
       '" height="' +
       size +
       '" aria-hidden="true">' +
+      '<path class="geo-crosshair-q2" d="' +
+      q2 +
+      '" fill="' +
+      color +
+      '"/>' +
+      '<path class="geo-crosshair-q4" d="' +
+      q4 +
+      '" fill="' +
+      color +
+      '"/>' +
       '<circle class="geo-crosshair-ring" cx="' +
       mid +
       '" cy="' +
       mid +
-      '" r="7" fill="none" stroke="' +
+      '" r="' +
+      radius +
+      '" fill="none" stroke="' +
       color +
       '" stroke-width="2"/>' +
       '<line class="geo-crosshair-v" x1="' +
       mid +
-      '" y1="2" x2="' +
+      '" y1="' +
+      north +
+      '" x2="' +
       mid +
       '" y2="' +
-      (size - 2) +
+      south +
       '" stroke="' +
       color +
-      '" stroke-width="2"/>' +
-      '<line class="geo-crosshair-h" x1="2" y1="' +
+      '" stroke-width="2" stroke-linecap="butt"/>' +
+      '<line class="geo-crosshair-h" x1="' +
+      west +
+      '" y1="' +
       mid +
       '" x2="' +
-      (size - 2) +
+      east +
       '" y2="' +
       mid +
       '" stroke="' +
       color +
-      '" stroke-width="2"/>' +
+      '" stroke-width="2" stroke-linecap="butt"/>' +
       "</svg>";
     return L.divIcon({
       className: "geo-crosshair",
@@ -170,7 +196,7 @@
     if (style && style.iconUrl) {
       return [Math.round(pointIconSize(style) / 2) + 4, 0];
     }
-    return [GEO_CROSSHAIR_SIZE / 2 + 4, 0];
+    return [GEO_CROSSHAIR_RADIUS + 6, 0];
   }
 
   function bindPointLabel(marker, text, style) {

@@ -7,6 +7,7 @@ import os
 import secrets
 import subprocess
 import sys
+import tempfile
 import threading
 from datetime import datetime
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -18,6 +19,7 @@ PREFERRED_PORT = 47821
 MAX_UPLOAD_BYTES = 1024 * 1024 * 1024
 DESKTOP_TOKEN = secrets.token_urlsafe(24)
 OPENED_PATHS: Set[str] = set()
+EXPORT_PATHS: Set[str] = set()
 FILE_TOKENS: Dict[str, str] = {}
 STATE_LOCK = threading.Lock()
 
@@ -261,6 +263,68 @@ def _open_dialog_flag() -> object:
     return webview.OPEN_DIALOG
 
 
+def _save_dialog_flag() -> object:
+    """Return the pywebview constant for a save-file dialog."""
+    file_dialog = getattr(webview, "FileDialog", None)
+    if file_dialog is not None and hasattr(file_dialog, "SAVE"):
+        return file_dialog.SAVE
+    return webview.SAVE_DIALOG
+
+
+def kmz_export_name(file_name: str) -> str:
+    """
+    Return a .kmz file name derived from the loaded document name.
+
+    Args:
+        file_name: Original file name, with or without a directory.
+
+    Returns:
+        A basename ending in .kmz.
+    """
+    base = os.path.basename(str(file_name or "").replace("\\", "/"))
+    stem, _ext = os.path.splitext(base)
+    if not stem or stem in {".", ".."}:
+        stem = "untitled"
+    return stem + ".kmz"
+
+
+def write_bytes(path: str, data: bytes) -> None:
+    """
+    Overwrite a file with the given bytes.
+
+    Args:
+        path: Absolute destination path.
+        data: File contents.
+
+    Returns:
+        None.
+
+    Raises:
+        OSError: The file could not be written.
+    """
+    directory = os.path.dirname(path) or "."
+    fd, tmp = tempfile.mkstemp(prefix=".kmz-export-", dir=directory)
+    try:
+        view = memoryview(data)
+        while view:
+            written = os.write(fd, view)
+            if written <= 0:
+                raise OSError("Could not write the KMZ.")
+            view = view[written:]
+        os.close(fd)
+        fd = -1
+        os.replace(tmp, path)
+        tmp = ""
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        if tmp:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
 def _first_path(result: object) -> Optional[str]:
     """Return the first path from a file-dialog result."""
     if isinstance(result, str) and result:
@@ -344,6 +408,41 @@ class DesktopApi:
             return None
         return _source_payload(path)
 
+    def choose_export_path(self, suggested_name: str) -> Optional[dict]:
+        """
+        Show a native save dialog for exporting the map as a KMZ file.
+
+        Args:
+            suggested_name: Default file name shown in the dialog.
+
+        Returns:
+            The chosen path, or None if the dialog was cancelled.
+        """
+        windows = webview.windows
+        if not windows:
+            return None
+        window = windows[0]
+        file_name = kmz_export_name(suggested_name)
+
+        def _save() -> Optional[str]:
+            result = window.create_file_dialog(
+                _save_dialog_flag(),
+                save_filename=file_name,
+                file_types=("KMZ (*.kmz)",),
+            )
+            return _first_path(result)
+
+        path = _invoke_on_ui(window, _save)
+        if not path or not isinstance(path, str):
+            return None
+        full = _normalize_path(path)
+        stem, ext = os.path.splitext(full)
+        if ext.lower() != ".kmz":
+            full = f"{stem}.kmz" if ext else f"{full}.kmz"
+        with STATE_LOCK:
+            EXPORT_PATHS.add(full)
+        return {"path": full, "name": os.path.basename(full)}
+
     def register_path(self, path: str) -> Optional[dict]:
         """
         Register an existing KMZ or KML so the page can read and copy it.
@@ -390,12 +489,15 @@ class QuietHandler(SimpleHTTPRequestHandler):
         super().do_GET()
 
     def do_POST(self) -> None:
-        """Write a timestamped copy beside a KMZ or KML opened in this session."""
+        """Write a timestamped copy or an exported KMZ chosen in a save dialog."""
         parsed = urlparse(self.path)
-        if parsed.path != "/__desktop/save-copy":
-            self._send_json(404, {"error": "Not found."})
+        if parsed.path == "/__desktop/save-copy":
+            self._save_copy()
             return
-        self._save_copy()
+        if parsed.path == "/__desktop/export":
+            self._export_kmz()
+            return
+        self._send_json(404, {"error": "Not found."})
 
     def _serve_source(self, query: str) -> None:
         """Return the bytes of a file registered by the desktop API."""
@@ -455,6 +557,45 @@ class QuietHandler(SimpleHTTPRequestHandler):
             dest = write_unique(os.path.dirname(source), preferred, data)
         except OSError as err:
             self._send_json(500, {"error": err.strerror or "Could not save the copy."})
+            return
+        self._send_json(200, {"ok": True, "path": dest, "name": os.path.basename(dest)})
+
+    def _export_kmz(self) -> None:
+        """Write an uploaded KMZ to a path the user just chose in the save dialog."""
+        if not _token_ok(self.headers.get("X-Desktop-Token")):
+            self._send_json(403, {"error": "Desktop access was denied."})
+            return
+        raw_path = self.headers.get("X-Dest-Path")
+        if not raw_path:
+            self._send_json(400, {"error": "Missing export path."})
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0") or "0")
+        except ValueError:
+            self._send_json(400, {"error": "Invalid upload size."})
+            return
+        if length <= 0 or length > MAX_UPLOAD_BYTES:
+            self._send_json(400, {"error": "The KMZ is empty or too large."})
+            return
+        dest = _normalize_path(unquote(raw_path))
+        if os.path.splitext(dest)[1].lower() != ".kmz":
+            self._send_json(400, {"error": "Export must be a .kmz file."})
+            return
+        with STATE_LOCK:
+            allowed = dest in EXPORT_PATHS
+            if allowed:
+                EXPORT_PATHS.discard(dest)
+        if not allowed:
+            self._send_json(403, {"error": "Choose where to save the KMZ first."})
+            return
+        data = self.rfile.read(length)
+        if len(data) != length:
+            self._send_json(400, {"error": "The upload was incomplete."})
+            return
+        try:
+            write_bytes(dest, data)
+        except OSError as err:
+            self._send_json(500, {"error": err.strerror or "Could not export the KMZ."})
             return
         self._send_json(200, {"ok": True, "path": dest, "name": os.path.basename(dest)})
 

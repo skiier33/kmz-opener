@@ -4,7 +4,7 @@ import socket
 import threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Union
 
 import pytest
 from playwright.sync_api import Page, sync_playwright
@@ -59,6 +59,20 @@ MEASURE_JS = """
   const groundErrorM = map.distance(gps, recovered);
   const metersPerPixel = map.distance(gps, map.containerPointToLatLng(projected.add([1, 0])));
   const mid = Number(svg.viewBox.baseVal.width) / 2;
+  const radius = Number(ring.getAttribute("r"));
+  const q2 = svg.querySelector(".geo-crosshair-q2");
+  const q4 = svg.querySelector(".geo-crosshair-q4");
+  const inside = (el, x, y) => !!(el && el.isPointInFill(new DOMPoint(x, y)));
+  const inset = radius * 0.45;
+  const ends = [
+    [Number(vertical.getAttribute("x1")), Number(vertical.getAttribute("y1"))],
+    [Number(vertical.getAttribute("x2")), Number(vertical.getAttribute("y2"))],
+    [Number(horizontal.getAttribute("x1")), Number(horizontal.getAttribute("y1"))],
+    [Number(horizontal.getAttribute("x2")), Number(horizontal.getAttribute("y2"))],
+  ];
+  const endpointDelta = Math.max.apply(null, ends.map((xy) => (
+    Math.abs(Math.hypot(xy[0] - mid, xy[1] - mid) - radius)
+  )));
 
   return {
     lat: gps.lat,
@@ -82,6 +96,20 @@ MEASURE_JS = """
     hX1: Number(horizontal.getAttribute("x1")),
     hX2: Number(horizontal.getAttribute("x2")),
     mid: mid,
+    radius: radius,
+    endpointDelta: endpointDelta,
+    q2Fill: q2 ? q2.getAttribute("fill") : "",
+    q4Fill: q4 ? q4.getAttribute("fill") : "",
+    q2InQ1: inside(q2, mid + inset, mid - inset),
+    q2InQ2: inside(q2, mid - inset, mid - inset),
+    q2InQ3: inside(q2, mid - inset, mid + inset),
+    q2InQ4: inside(q2, mid + inset, mid + inset),
+    q4InQ1: inside(q4, mid + inset, mid - inset),
+    q4InQ2: inside(q4, mid - inset, mid - inset),
+    q4InQ3: inside(q4, mid - inset, mid + inset),
+    q4InQ4: inside(q4, mid + inset, mid + inset),
+    hasQ1: !!svg.querySelector(".geo-crosshair-q1"),
+    hasQ3: !!svg.querySelector(".geo-crosshair-q3"),
   };
 }
 """
@@ -120,7 +148,7 @@ def _launch_browser(playwright: Any) -> Any:
         return playwright.chromium.launch(headless=True)
 
 
-def _measure(page: Page) -> Dict[str, float]:
+def _measure(page: Page) -> Dict[str, Union[float, bool, str]]:
     page.wait_for_function(
         "() => { const map = GisMap.getMap(); return !!document.querySelector('.geo-crosshair') && !map._animatingZoom; }"
     )
@@ -132,13 +160,22 @@ def _measure(page: Page) -> Dict[str, float]:
     return measured
 
 
-def _assert_on_gps(measured: Dict[str, float], label: str) -> None:
+def _assert_on_gps(measured: Dict[str, Union[float, bool, str]], label: str) -> None:
     assert measured["stroke"] == "#ff0000", label
+    assert measured["q2Fill"] == "#ff0000", label
+    assert measured["q4Fill"] == "#ff0000", label
     assert measured["vX"] == measured["vX2"] == measured["mid"], label
     assert measured["hY"] == measured["hY2"] == measured["mid"], label
     assert measured["ringCx"] == measured["ringCy"] == measured["mid"], label
     assert measured["vY1"] < measured["mid"] < measured["vY2"], label
     assert measured["hX1"] < measured["mid"] < measured["hX2"], label
+    assert measured["endpointDelta"] < 0.05, (
+        "%s: crosshair arms leave the circle by %.3f user units" % (label, measured["endpointDelta"])
+    )
+    assert measured["q2InQ2"] is True and measured["q4InQ4"] is True, label
+    assert measured["q2InQ1"] is False and measured["q2InQ3"] is False and measured["q2InQ4"] is False, label
+    assert measured["q4InQ1"] is False and measured["q4InQ2"] is False and measured["q4InQ3"] is False, label
+    assert measured["hasQ1"] is False and measured["hasQ3"] is False, label
     assert abs(measured["lat"] - PARK_LAT) < 1e-9, label
     assert abs(measured["lng"] - PARK_LNG) < 1e-9, label
     assert measured["pixelError"] <= PIXEL_TOLERANCE, (
