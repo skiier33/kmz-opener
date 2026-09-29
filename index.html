@@ -23,6 +23,21 @@
             </svg>
             Open
           </button>
+          <button
+            id="btn-save-as"
+            class="btn"
+            type="button"
+            disabled
+            title="Save the current map as a KMZ file"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-4-4zm-5 16a3 3 0 1 1 0-6 3 3 0 0 1 0 6zm3-10H5V5h10v4z"
+              />
+            </svg>
+            Save As…
+          </button>
           <input
             id="file-input"
             class="file-input"
@@ -35,12 +50,17 @@
 
         <div class="toolbar-basemap-group">
           <div class="toolbar-coords" aria-live="polite" title="Cursor position on the map (WGS84)">
-            <span class="toolbar-coords-label">Coordinates</span>
             <span id="toolbar-coords" class="toolbar-coords-value">—</span>
           </div>
           <label class="basemap-label">
-            Basemap
-            <select id="basemap-select" title="Basemap">
+            <span class="toolbar-select-caption">Scale</span>
+            <select id="map-scale-select" title="Map scale (1:N at 96 DPI)" aria-label="Map scale">
+              <option value="">Custom</option>
+            </select>
+          </label>
+          <label class="basemap-label">
+            <span class="toolbar-select-caption">Basemap</span>
+            <select id="basemap-select" title="Basemap" aria-label="Basemap">
               <option value="osm">OpenStreetMap</option>
               <option value="satellite" selected>Esri Satellite</option>
               <option value="topo">Esri Topo</option>

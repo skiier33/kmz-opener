@@ -2,6 +2,7 @@
   "use strict";
 
   var fileInput = document.getElementById("file-input");
+  var saveAsBtn = document.getElementById("btn-save-as");
   var fileLabel = document.getElementById("file-label");
   var recentFilesEl = document.getElementById("recent-files");
   var layerTreeEl = document.getElementById("layer-tree");
@@ -1293,6 +1294,9 @@
     if (fileSaveBtn) {
       fileSaveBtn.disabled = !canWrite;
     }
+    if (saveAsBtn) {
+      saveAsBtn.disabled = !canWrite;
+    }
     if (layersExportBtn) {
       layersExportBtn.disabled = !canWrite;
     }
@@ -1493,7 +1497,7 @@
     });
   }
 
-  function exportCurrentKmz() {
+  function saveAsKmz() {
     if (!currentDoc || !currentDoc.xmlDoc) {
       setMessage("Open a KMZ or KML file first.");
       return;
@@ -1505,40 +1509,46 @@
     var root = GisMap.getRoot();
     saveInFlight = true;
     updateFileActions();
-    setMessage("Exporting " + downloadName + "…");
+    setMessage("Saving " + downloadName + "…");
     KmzSave.buildKmzBlob(currentDoc, root, !docDirty)
       .then(function (blob) {
         return ensureDesktop().then(function (desktop) {
-          if (!desktop || typeof desktop.api.choose_export_path !== "function") {
-            downloadNamedBlob(blob, downloadName, "Exported " + downloadName + ".");
-            return;
-          }
-          return Promise.resolve(desktop.api.choose_export_path(downloadName)).then(function (dest) {
-            if (!dest || !dest.path) {
-              setMessage("Export cancelled.");
-              return;
-            }
-            return fetch("/__desktop/export", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/octet-stream",
-                "X-Desktop-Token": desktop.token,
-                "X-Dest-Path": encodeURIComponent(dest.path),
-              },
-              body: blob,
-            }).then(function (response) {
-              return readJsonResponse(response).then(function (result) {
-                if (!result.ok) {
-                  throw new Error(result.payload.error || "Could not export the KMZ.");
-                }
-                setMessage("Exported " + (result.payload.name || downloadName) + ".");
+          if (desktop && typeof desktop.api.choose_export_path === "function") {
+            return Promise.resolve(desktop.api.choose_export_path(downloadName)).then(function (dest) {
+              if (!dest || !dest.path) {
+                setMessage("Save cancelled.");
+                return;
+              }
+              return fetch("/__desktop/export", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/octet-stream",
+                  "X-Desktop-Token": desktop.token,
+                  "X-Dest-Path": encodeURIComponent(dest.path),
+                },
+                body: blob,
+              }).then(function (response) {
+                return readJsonResponse(response).then(function (result) {
+                  if (!result.ok) {
+                    throw new Error(result.payload.error || "Could not save the KMZ.");
+                  }
+                  setMessage("Saved " + (result.payload.name || downloadName) + ".");
+                });
               });
             });
-          });
+          }
+          if (typeof window.showSaveFilePicker === "function") {
+            return saveWithBrowser(blob, downloadName, currentDoc.handle);
+          }
+          downloadNamedBlob(
+            blob,
+            downloadName,
+            "Saved " + downloadName + " to your browser downloads folder."
+          );
         });
       })
       .catch(function (err) {
-        setMessage((err && err.message) || "Could not export the KMZ.");
+        setMessage((err && err.message) || "Could not save the KMZ.");
       })
       .then(function () {
         saveInFlight = false;
@@ -1844,7 +1854,10 @@
     layersSortBtn.addEventListener("click", sortLayersByName);
   }
   if (layersExportBtn) {
-    layersExportBtn.addEventListener("click", exportCurrentKmz);
+    layersExportBtn.addEventListener("click", saveAsKmz);
+  }
+  if (saveAsBtn) {
+    saveAsBtn.addEventListener("click", saveAsKmz);
   }
   if (fileSaveBtn) {
     fileSaveBtn.addEventListener("click", saveTimestampedCopy);
@@ -2018,6 +2031,73 @@
       fileInput.value = "";
     }
   });
+
+  var mapScaleSelect = document.getElementById("map-scale-select");
+  var mapScaleSyncLock = false;
+
+  function populateMapScaleSelect() {
+    if (!mapScaleSelect) {
+      return;
+    }
+    var custom = mapScaleSelect.querySelector('option[value=""]');
+    mapScaleSelect.innerHTML = "";
+    if (custom) {
+      mapScaleSelect.appendChild(custom);
+    } else {
+      var customOpt = document.createElement("option");
+      customOpt.value = "";
+      customOpt.textContent = "Custom";
+      mapScaleSelect.appendChild(customOpt);
+    }
+    GisMap.MAP_SCALE_PRESETS.forEach(function (denom) {
+      var opt = document.createElement("option");
+      opt.value = String(denom);
+      opt.textContent = GisMap.formatMapScaleLabel(denom);
+      mapScaleSelect.appendChild(opt);
+    });
+  }
+
+  function syncMapScaleSelect() {
+    if (!mapScaleSelect || mapScaleSyncLock) {
+      return;
+    }
+    var denom = GisMap.getMapScaleDenominator();
+    if (denom == null) {
+      return;
+    }
+    var preset = GisMap.nearestMapScalePreset(denom);
+    var customOpt = mapScaleSelect.querySelector('option[value=""]');
+    if (preset == null) {
+      if (customOpt) {
+        customOpt.textContent = GisMap.formatMapScaleLabel(denom);
+      }
+      mapScaleSelect.value = "";
+    } else {
+      if (customOpt) {
+        customOpt.textContent = "Custom";
+      }
+      mapScaleSelect.value = String(preset);
+    }
+  }
+
+  populateMapScaleSelect();
+  syncMapScaleSelect();
+
+  map.on("zoomend moveend", syncMapScaleSelect);
+
+  if (mapScaleSelect) {
+    mapScaleSelect.addEventListener("change", function (event) {
+      var raw = event.target.value;
+      if (!raw) {
+        syncMapScaleSelect();
+        return;
+      }
+      mapScaleSyncLock = true;
+      GisMap.setMapScaleDenominator(Number(raw));
+      mapScaleSyncLock = false;
+      syncMapScaleSelect();
+    });
+  }
 
   document.getElementById("basemap-select").addEventListener("change", function (event) {
     GisMap.setBasemap(event.target.value);

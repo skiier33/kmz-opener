@@ -119,6 +119,18 @@ select:focus-visible {
   color: var(--muted);
 }
 
+.toolbar-select-caption {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+#map-scale-select {
+  min-width: 7.5rem;
+}
+
 select {
   height: 30px;
   border: 1px solid var(--border);
@@ -457,17 +469,8 @@ select {
   font-variant-numeric: tabular-nums;
 }
 
-.toolbar-coords-label {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--muted);
-  line-height: 1.2;
-}
-
 .toolbar-coords-value {
-  font-size: 12px;
+  font-size: 16px;
   font-weight: 600;
   color: var(--text);
   line-height: 1.3;

@@ -852,6 +852,83 @@
     return selectedId;
   }
 
+  var MAP_SCALE_DPI = 96;
+  var WORLD_CIRCUMFERENCE_M = 40075016.68557849;
+  var INCHES_PER_METER = 39.3700787;
+
+  /** Common map scale denominators (1:N) for site plans, USGS, and regional mapping. */
+  var MAP_SCALE_PRESETS = [
+    500,
+    1000,
+    2000,
+    2500,
+    5000,
+    10000,
+    12000,
+    24000,
+    25000,
+    50000,
+    63360,
+    100000,
+    250000,
+    500000,
+    1000000,
+    2000000,
+  ];
+
+  function metersPerPixelAt(lat, zoom) {
+    var cosLat = Math.cos((lat * Math.PI) / 180);
+    return (WORLD_CIRCUMFERENCE_M * cosLat) / (256 * Math.pow(2, zoom));
+  }
+
+  function scaleDenominatorAt(lat, zoom) {
+    return metersPerPixelAt(lat, zoom) * MAP_SCALE_DPI * INCHES_PER_METER;
+  }
+
+  function zoomForScaleDenominator(lat, denominator) {
+    var metersPerPixel = denominator / (MAP_SCALE_DPI * INCHES_PER_METER);
+    var cosLat = Math.cos((lat * Math.PI) / 180);
+    return Math.log2((WORLD_CIRCUMFERENCE_M * cosLat) / (256 * metersPerPixel));
+  }
+
+  function formatMapScaleLabel(denominator) {
+    return "1:" + Math.round(denominator).toLocaleString("en-US");
+  }
+
+  function getMapScaleDenominator() {
+    if (!map) {
+      return null;
+    }
+    return scaleDenominatorAt(map.getCenter().lat, map.getZoom());
+  }
+
+  function setMapScaleDenominator(denominator) {
+    if (!map || !denominator || denominator <= 0) {
+      return;
+    }
+    var center = map.getCenter();
+    var zoom = zoomForScaleDenominator(center.lat, denominator);
+    zoom = Math.max(map.getMinZoom(), Math.min(map.getMaxZoom(), zoom));
+    map.setZoom(zoom);
+  }
+
+  function nearestMapScalePreset(denominator, relativeTolerance) {
+    if (!denominator || denominator <= 0) {
+      return null;
+    }
+    var tol = relativeTolerance == null ? 0.02 : relativeTolerance;
+    var best = null;
+    var bestDiff = Infinity;
+    MAP_SCALE_PRESETS.forEach(function (preset) {
+      var diff = Math.abs(preset - denominator) / preset;
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        best = preset;
+      }
+    });
+    return bestDiff <= tol ? best : null;
+  }
+
   global.GisMap = {
     init: init,
     setBasemap: setBasemap,
@@ -891,5 +968,10 @@
     clearSelected: clearSelected,
     closePopup: closePopup,
     firstPoint: firstPoint,
+    MAP_SCALE_PRESETS: MAP_SCALE_PRESETS,
+    formatMapScaleLabel: formatMapScaleLabel,
+    getMapScaleDenominator: getMapScaleDenominator,
+    setMapScaleDenominator: setMapScaleDenominator,
+    nearestMapScalePreset: nearestMapScalePreset,
   };
 })(window);
