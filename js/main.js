@@ -1856,45 +1856,67 @@
   layerTreeEl.addEventListener("dblclick", onTreeDblClick);
   layerTreeEl.addEventListener("change", onTreeCheckbox);
 
-  function promptOpenFile() {
-    ensureDesktop()
-      .then(function (desktop) {
-        if (desktop && typeof desktop.api.choose_kmz === "function") {
-          return Promise.resolve(desktop.api.choose_kmz()).then(function (meta) {
-            if (!meta || !meta.token) {
-              return null;
-            }
-            return readDesktopFile(desktop.token, meta);
-          });
-        }
-        if (typeof window.showOpenFilePicker !== "function") {
-          fileInput.click();
+  function openWithBrowserPicker() {
+    if (typeof window.showOpenFilePicker !== "function") {
+      fileInput.click();
+      return;
+    }
+    var picker;
+    try {
+      picker = window.showOpenFilePicker({
+        multiple: false,
+        types: browserFileTypes(),
+      });
+    } catch (err) {
+      if (!err || err.name !== "AbortError") {
+        fileInput.click();
+      }
+      return;
+    }
+    picker
+      .then(function (handles) {
+        if (!handles.length) {
           return null;
         }
-        return window
-          .showOpenFilePicker({
-            multiple: false,
-            types: browserFileTypes(),
-          })
-          .then(function (handles) {
-            if (!handles.length) {
-              return null;
-            }
-            var handle = handles[0];
-            return handle.getFile().then(function (file) {
-              openFile(file, handle, null);
-            });
-          })
-          .catch(function (err) {
-            if (err && err.name === "AbortError") {
-              return null;
-            }
-            fileInput.click();
-            return null;
-          });
+        var handle = handles[0];
+        return handle.getFile().then(function (file) {
+          openFile(file, handle, null);
+        });
       })
       .catch(function (err) {
         if (err && err.name === "AbortError") {
+          return null;
+        }
+        fileInput.click();
+        return null;
+      });
+  }
+
+  function promptOpenFile() {
+    var api = getDesktopApi();
+    if (!api || typeof api.choose_kmz !== "function") {
+      openWithBrowserPicker();
+      return;
+    }
+    setMessage("Choose a KMZ or KML file…");
+    ensureDesktop()
+      .then(function (desktop) {
+        if (!desktop || typeof desktop.api.choose_kmz !== "function") {
+          setMessage("");
+          openWithBrowserPicker();
+          return null;
+        }
+        return Promise.resolve(desktop.api.choose_kmz()).then(function (meta) {
+          if (!meta || !meta.token) {
+            setMessage("");
+            return null;
+          }
+          return readDesktopFile(desktop.token, meta);
+        });
+      })
+      .catch(function (err) {
+        if (err && err.name === "AbortError") {
+          setMessage("");
           return;
         }
         setMessage((err && err.message) || "Could not open that file.");

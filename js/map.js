@@ -95,8 +95,60 @@
       .replace(/>/g, "&gt;");
   }
 
+  var GEO_CROSSHAIR_SIZE = 32;
+  var GEO_CROSSHAIR_COLOR = "#ff0000";
+
   function pointIconSize(style) {
     return Math.max(16, Math.round(32 * (style.iconScale || 1)));
+  }
+
+  function geoCrosshairIcon() {
+    var size = GEO_CROSSHAIR_SIZE;
+    var mid = size / 2;
+    var color = GEO_CROSSHAIR_COLOR;
+    var html =
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' +
+      size +
+      " " +
+      size +
+      '" width="' +
+      size +
+      '" height="' +
+      size +
+      '" aria-hidden="true">' +
+      '<circle class="geo-crosshair-ring" cx="' +
+      mid +
+      '" cy="' +
+      mid +
+      '" r="7" fill="none" stroke="' +
+      color +
+      '" stroke-width="2"/>' +
+      '<line class="geo-crosshair-v" x1="' +
+      mid +
+      '" y1="2" x2="' +
+      mid +
+      '" y2="' +
+      (size - 2) +
+      '" stroke="' +
+      color +
+      '" stroke-width="2"/>' +
+      '<line class="geo-crosshair-h" x1="2" y1="' +
+      mid +
+      '" x2="' +
+      (size - 2) +
+      '" y2="' +
+      mid +
+      '" stroke="' +
+      color +
+      '" stroke-width="2"/>' +
+      "</svg>";
+    return L.divIcon({
+      className: "geo-crosshair",
+      html: html,
+      iconSize: [size, size],
+      iconAnchor: [mid, mid],
+      popupAnchor: [0, -mid],
+    });
   }
 
   function pointToLayer(latlng, style) {
@@ -111,21 +163,14 @@
         }),
       });
     }
-    return L.circleMarker(latlng, {
-      radius: 7,
-      color: style.stroke,
-      weight: 2,
-      opacity: style.strokeOpacity,
-      fillColor: style.fill || style.stroke,
-      fillOpacity: 0.85,
-    });
+    return L.marker(latlng, { icon: geoCrosshairIcon() });
   }
 
   function pointLabelOffset(style) {
     if (style && style.iconUrl) {
       return [Math.round(pointIconSize(style) / 2) + 4, 0];
     }
-    return [12, 0];
+    return [GEO_CROSSHAIR_SIZE / 2 + 4, 0];
   }
 
   function bindPointLabel(marker, text, style) {

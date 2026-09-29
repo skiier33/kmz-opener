@@ -270,6 +270,36 @@ def _first_path(result: object) -> Optional[str]:
     return None
 
 
+def _invoke_on_ui(window: object, action):
+    """
+    Run a callable on the WinForms UI thread when the window requires it.
+
+    JavaScript API calls run on a background thread. A Windows file dialog
+    shown from that thread fails immediately, so the picker never appears.
+
+    Args:
+        window: pywebview window that owns the native form.
+        action: Callable that performs the UI work.
+
+    Returns:
+        The value returned by action.
+    """
+    native = getattr(window, "native", None)
+    invoke = getattr(native, "Invoke", None)
+    if invoke is None or not getattr(native, "InvokeRequired", False):
+        return action()
+
+    box: Dict[str, object] = {}
+
+    def _run() -> None:
+        box["value"] = action()
+
+    from System import Func, Type
+
+    invoke(Func[Type](_run))
+    return box.get("value")
+
+
 def _source_payload(path: str) -> dict:
     """Register a path and return the metadata the page needs to read it."""
     full = _normalize_path(path)
@@ -299,13 +329,18 @@ class DesktopApi:
         windows = webview.windows
         if not windows:
             return None
-        result = windows[0].create_file_dialog(
-            _open_dialog_flag(),
-            allow_multiple=False,
-            file_types=("KMZ and KML (*.kmz;*.kml)", "All files (*.*)"),
-        )
-        path = _first_path(result)
-        if not path:
+        window = windows[0]
+
+        def _open() -> Optional[str]:
+            result = window.create_file_dialog(
+                _open_dialog_flag(),
+                allow_multiple=False,
+                file_types=("KMZ and KML (*.kmz;*.kml)", "All files (*.*)"),
+            )
+            return _first_path(result)
+
+        path = _invoke_on_ui(window, _open)
+        if not path or not isinstance(path, str):
             return None
         return _source_payload(path)
 
