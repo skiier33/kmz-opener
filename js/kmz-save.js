@@ -68,6 +68,96 @@
     nameEl.textContent = name;
   }
 
+  function createElementNS(parent, localName) {
+    var ns = parent.namespaceURI;
+    return ns
+      ? parent.ownerDocument.createElementNS(ns, localName)
+      : parent.ownerDocument.createElement(localName);
+  }
+
+  function ensureChild(parent, localName) {
+    var child = childByLocalName(parent, localName);
+    if (!child) {
+      child = createElementNS(parent, localName);
+      parent.appendChild(child);
+    }
+    return child;
+  }
+
+  function firstGeometryChild(placemarkEl) {
+    var children = (placemarkEl && placemarkEl.children) || [];
+    for (var i = 0; i < children.length; i += 1) {
+      var name = localName(children[i]);
+      if (
+        name === "point" ||
+        name === "linestring" ||
+        name === "polygon" ||
+        name === "multigeometry" ||
+        name === "linearring"
+      ) {
+        return children[i];
+      }
+    }
+    return null;
+  }
+
+  function setStyleIconHref(styleEl, href) {
+    if (!styleEl || localName(styleEl) !== "style") {
+      return "";
+    }
+    var iconStyle = ensureChild(styleEl, "IconStyle");
+    var icon = ensureChild(iconStyle, "Icon");
+    var hrefEl = childByLocalName(icon, "href");
+    var previous = hrefEl ? String(hrefEl.textContent || "").trim() : "";
+    if (!hrefEl) {
+      hrefEl = createElementNS(icon, "href");
+      icon.appendChild(hrefEl);
+    }
+    hrefEl.textContent = href;
+    return previous;
+  }
+
+  function setPlacemarkIconHref(placemarkEl, href) {
+    if (!placemarkEl || localName(placemarkEl) !== "placemark") {
+      return "";
+    }
+    var styleEl = childByLocalName(placemarkEl, "Style");
+    if (!styleEl) {
+      styleEl = createElementNS(placemarkEl, "Style");
+      var anchor = firstGeometryChild(placemarkEl);
+      if (anchor) {
+        placemarkEl.insertBefore(styleEl, anchor);
+      } else {
+        placemarkEl.appendChild(styleEl);
+      }
+    }
+    return setStyleIconHref(styleEl, href);
+  }
+
+  function setPlacemarkIconScale(placemarkEl, scale) {
+    if (!placemarkEl || localName(placemarkEl) !== "placemark") {
+      return;
+    }
+    var styleEl = childByLocalName(placemarkEl, "Style");
+    if (!styleEl) {
+      styleEl = createElementNS(placemarkEl, "Style");
+      var anchor = firstGeometryChild(placemarkEl);
+      if (anchor) {
+        placemarkEl.insertBefore(styleEl, anchor);
+      } else {
+        placemarkEl.appendChild(styleEl);
+      }
+    }
+    var iconStyle = ensureChild(styleEl, "IconStyle");
+    var scaleEl = childByLocalName(iconStyle, "scale");
+    if (!scaleEl) {
+      scaleEl = createElementNS(iconStyle, "scale");
+      iconStyle.appendChild(scaleEl);
+    }
+    var value = parseFloat(scale);
+    scaleEl.textContent = Number.isNaN(value) || value <= 0 ? "1" : String(value);
+  }
+
   function clearSource(node) {
     if (!node) {
       return;
@@ -236,6 +326,18 @@
     });
   }
 
+  function applyReplacementIcons(doc) {
+    if (!doc || !doc.replacementIcons || !doc.zip) {
+      return;
+    }
+    Object.keys(doc.replacementIcons).forEach(function (zipPath) {
+      var entry = doc.replacementIcons[zipPath];
+      if (entry && entry.blob) {
+        doc.zip.file(zipPath, entry.blob);
+      }
+    });
+  }
+
   function buildBlob(doc, root) {
     if (!doc || !doc.xmlDoc) {
       return Promise.reject(new Error("This file cannot be saved."));
@@ -246,6 +348,7 @@
       if (!doc.zip || !doc.kmlPath) {
         return Promise.reject(new Error("This KMZ cannot be saved."));
       }
+      applyReplacementIcons(doc);
       doc.zip.file(doc.kmlPath, xml);
       return generateKmz(doc.zip);
     }
@@ -275,6 +378,7 @@
     syncTree(root);
     var xml = serializeXml(doc.xmlDoc);
     if (doc.sourceKind === "kmz" && doc.zip && doc.kmlPath) {
+      applyReplacementIcons(doc);
       doc.zip.file(doc.kmlPath, xml);
       return generateKmz(doc.zip);
     }
@@ -293,6 +397,9 @@
 
   global.KmzSave = {
     setElementName: setElementName,
+    setStyleIconHref: setStyleIconHref,
+    setPlacemarkIconHref: setPlacemarkIconHref,
+    setPlacemarkIconScale: setPlacemarkIconScale,
     detachNode: detachNode,
     cloneSourceElement: cloneSourceElement,
     syncTree: syncTree,

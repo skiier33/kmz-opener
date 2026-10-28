@@ -88,7 +88,11 @@
           </div>
           <label class="basemap-label">
             <span class="toolbar-select-caption">Scale</span>
-            <select id="map-scale-select" title="Map scale (1:N at 96 DPI)" aria-label="Map scale">
+            <select
+              id="map-scale-select"
+              title="Map scale (1″ = feet or 1:N at 96 DPI)"
+              aria-label="Map scale"
+            >
               <option value="">Custom</option>
             </select>
           </label>
@@ -437,6 +441,7 @@
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <script src="https://unpkg.com/leaflet-rotate@0.5.1/dist/leaflet-rotate.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.4/purify.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -448,6 +453,7 @@
     <script src="js/measure.js"></script>
     <script src="js/directions.js"></script>
     <script src="js/screenshot.js"></script>
+    <script src="js/gui-prefs.js"></script>
     <script src="js/main.js"></script>
   </body>
 </html>

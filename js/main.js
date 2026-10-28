@@ -445,6 +445,181 @@
     return "Tool: Pan";
   }
 
+  function formatIconScale(scale) {
+    var value = parseFloat(scale);
+    if (Number.isNaN(value) || value <= 0) {
+      value = 1;
+    }
+    return value.toFixed(2) + "×";
+  }
+
+  function iconBasename(url) {
+    var s = String(url || "").split("?")[0].replace(/\\/g, "/");
+    var idx = s.lastIndexOf("/");
+    return idx >= 0 ? s.slice(idx + 1) : s;
+  }
+
+  function iconHrefWithFilename(previousHref, fileName) {
+    var prev = String(previousHref || fileName || "icon.png")
+      .trim()
+      .replace(/\\/g, "/");
+    var slash = prev.lastIndexOf("/");
+    var name = String(fileName || "icon.png").replace(/\\/g, "/").split("/").pop();
+    if (slash >= 0) {
+      return prev.slice(0, slash + 1) + name;
+    }
+    return name;
+  }
+
+  function kmzZipPathForHref(kmlPath, href) {
+    var baseDir = "";
+    if (kmlPath) {
+      var idx = kmlPath.lastIndexOf("/");
+      baseDir = idx >= 0 ? kmlPath.slice(0, idx + 1) : "";
+    }
+    var normalized = String(href || "").replace(/\\/g, "/").replace(/^\/+/, "");
+    return baseDir ? baseDir + normalized : normalized;
+  }
+
+  function readStyleIconHref(styleEl) {
+    if (!styleEl || !styleEl.getElementsByTagName) {
+      return "";
+    }
+    var icons = styleEl.getElementsByTagName("Icon");
+    var i;
+    var j;
+    for (i = 0; i < icons.length; i += 1) {
+      var hrefs = icons[i].getElementsByTagName("href");
+      for (j = 0; j < hrefs.length; j += 1) {
+        var text = (hrefs[j].textContent || "").trim();
+        if (text) {
+          return text;
+        }
+      }
+    }
+    return "";
+  }
+
+  function sourceIdFromNodeId(nodeId) {
+    if (!nodeId) {
+      return activeSourceId;
+    }
+    var idx = nodeId.indexOf(":");
+    return idx >= 0 ? nodeId.slice(0, idx) : activeSourceId;
+  }
+
+  function applyIconPngFile(file, info, applyShared) {
+    if (!file || !info) {
+      return Promise.resolve();
+    }
+    var lower = (file.name || "").toLowerCase();
+    if (!/\.png$/i.test(lower) && file.type && file.type !== "image/png") {
+      setMessage("Please choose a PNG file.");
+      return Promise.resolve();
+    }
+    var sourceId = sourceIdFromNodeId(info.id);
+    var source = findLoadedSource(sourceId);
+    if (!source || !source.doc) {
+      setMessage("Could not find the document for this feature.");
+      return Promise.resolve();
+    }
+
+    return file.arrayBuffer().then(function (buf) {
+      var blob = new Blob([buf], { type: file.type || "image/png" });
+      var objectUrl = URL.createObjectURL(blob);
+      currentBlobUrls.push(objectUrl);
+
+      var useShared = !!(applyShared && info.iconStyleKey);
+      var styleEl =
+        useShared && source.doc.styleElements
+          ? source.doc.styleElements[info.iconStyleKey] ||
+            source.doc.styleElements[String(info.iconStyleKey).replace(/^#/, "")]
+          : null;
+      var previousHref = styleEl
+        ? readStyleIconHref(styleEl)
+        : iconBasename(info.iconUrl) || "icon.png";
+      var kmlHref = iconHrefWithFilename(previousHref, file.name || "icon.png");
+
+      if (useShared && styleEl && KmzSave.setStyleIconHref) {
+        KmzSave.setStyleIconHref(styleEl, kmlHref);
+        if (source.doc.sourceKind === "kmz" && source.doc.zip) {
+          if (!source.doc.replacementIcons) {
+            source.doc.replacementIcons = {};
+          }
+          source.doc.replacementIcons[kmzZipPathForHref(source.doc.kmlPath, kmlHref)] = {
+            blob: blob,
+          };
+        }
+        var count = GisMap.setSharedStyleIconUrl(sourceId, info.iconStyleKey, objectUrl);
+        setMessage(
+          "Updated " +
+            (info.iconStyleKey || "style") +
+            " icon on " +
+            count +
+            " placemark" +
+            (count === 1 ? "" : "s") +
+            "."
+        );
+      } else {
+        if (source.doc.sourceKind === "kmz" && source.doc.zip) {
+          if (!source.doc.replacementIcons) {
+            source.doc.replacementIcons = {};
+          }
+          source.doc.replacementIcons[kmzZipPathForHref(source.doc.kmlPath, kmlHref)] = {
+            blob: blob,
+          };
+        }
+        GisMap.setFeatureIconUrl(info.id, objectUrl, { kmlHref: kmlHref, skipInspect: true });
+        setMessage("Updated icon for " + (info.name || "feature") + ".");
+      }
+      noteEdit();
+      GisMap.selectFeature(info.id, false);
+    });
+  }
+
+  function bindInspectIconChoose(info) {
+    var pickBtn = document.getElementById("inspect-icon-choose");
+    var fileInput = document.getElementById("inspect-icon-file");
+    var sharedToggle = document.getElementById("inspect-icon-shared");
+    if (!pickBtn || !fileInput || !info || !info.canChooseIcon) {
+      return;
+    }
+    pickBtn.addEventListener("click", function () {
+      fileInput.click();
+    });
+    fileInput.addEventListener("change", function () {
+      var file = fileInput.files && fileInput.files[0];
+      fileInput.value = "";
+      if (!file) {
+        return;
+      }
+      var applyShared = sharedToggle ? sharedToggle.checked : !!info.iconStyleKey;
+      applyIconPngFile(file, info, applyShared);
+    });
+  }
+
+  function bindInspectIconScale(info) {
+    var slider = document.getElementById("inspect-icon-scale");
+    var valueEl = document.getElementById("inspect-icon-scale-value");
+    if (!slider || !valueEl || !info || !info.canResizeIcon) {
+      return;
+    }
+    var percent = Math.round((info.iconScale || 1) * 100);
+    slider.value = String(Math.max(25, Math.min(400, percent)));
+    valueEl.textContent = formatIconScale(info.iconScale);
+
+    slider.addEventListener("input", function () {
+      var scale = parseInt(slider.value, 10) / 100;
+      var label = formatIconScale(scale);
+      valueEl.textContent = label;
+      slider.setAttribute("aria-valuetext", label);
+      GisMap.setFeatureIconScale(info.id, scale, { skipInspect: true });
+    });
+    slider.addEventListener("change", function () {
+      noteEdit();
+    });
+  }
+
   function renderInspect(info) {
     if (!info) {
       inspectEl.innerHTML = '<p class="muted">Click a feature on the map.</p>';
@@ -466,6 +641,46 @@
       html += "<dt>" + escapeText(row[0]) + "</dt><dd>" + escapeText(row[1]) + "</dd>";
     });
     html += "</dl>";
+    if (info.canResizeIcon) {
+      html +=
+        '<div class="inspect-icon-scale">' +
+        '<label for="inspect-icon-scale">Icon size</label>' +
+        '<div class="inspect-icon-scale-row">' +
+        '<input id="inspect-icon-scale" type="range" min="25" max="400" step="5" ' +
+        'value="' +
+        Math.round((info.iconScale || 1) * 100) +
+        '" aria-valuetext="' +
+        escapeText(formatIconScale(info.iconScale)) +
+        '" />' +
+        '<span id="inspect-icon-scale-value" class="inspect-icon-scale-value">' +
+        escapeText(formatIconScale(info.iconScale)) +
+        "</span>" +
+        "</div>" +
+        "</div>";
+    }
+    if (info.canChooseIcon) {
+      var iconLabel = iconBasename(info.iconUrl) || "icon.png";
+      html +=
+        '<div class="inspect-icon-choose">' +
+        '<label>Icon PNG</label>' +
+        '<p class="inspect-icon-current muted">' +
+        escapeText(iconLabel) +
+        (info.iconStyleKey ? " · " + escapeText(info.iconStyleKey) : "") +
+        "</p>" +
+        '<div class="inspect-icon-choose-row">' +
+        '<button type="button" class="btn" id="inspect-icon-choose">Choose PNG…</button>' +
+        '<input id="inspect-icon-file" type="file" accept="image/png,.png" hidden />' +
+        "</div>";
+      if (info.iconStyleKey) {
+        html +=
+          '<label class="inspect-icon-shared">' +
+          '<input id="inspect-icon-shared" type="checkbox" checked />' +
+          "Apply to all placemarks using " +
+          escapeText(info.iconStyleKey) +
+          "</label>";
+      }
+      html += "</div>";
+    }
     if (info.description) {
       html += '<div class="desc">' + sanitizeHtml(info.description) + "</div>";
     }
@@ -480,6 +695,8 @@
         "</div>";
     }
     inspectEl.innerHTML = html;
+    bindInspectIconScale(info);
+    bindInspectIconChoose(info);
     bindInspectDirections(info);
   }
 
@@ -1705,6 +1922,8 @@
       xmlDoc: parsed.xmlDoc || null,
       originalBuffer: parsed.originalBuffer || null,
       handle: handle || null,
+      styleElements: parsed.styleElements || {},
+      replacementIcons: {},
     };
   }
 
@@ -2616,6 +2835,30 @@
   function chooseTool(tool) {
     Measure.setTool(tool);
     setActiveToolButton(tool);
+    if (window.ViewerGuiPrefs) {
+      ViewerGuiPrefs.savePartial({ tool: tool });
+    }
+  }
+
+  function persistViewerGuiPrefs() {
+    if (!window.ViewerGuiPrefs) {
+      return;
+    }
+    ViewerGuiPrefs.save({
+      gisMap: GisMap,
+      measure: Measure,
+      map: map,
+      mapScaleSelect: mapScaleSelect,
+    });
+  }
+
+  function bindViewerGuiPrefsPersistence() {
+    if (!window.ViewerGuiPrefs || launchWindowParams) {
+      return;
+    }
+    map.on("zoomend moveend rotate", function () {
+      ViewerGuiPrefs.scheduleMapViewSave(persistViewerGuiPrefs);
+    });
   }
 
   createNodeHoverBalloon();
@@ -2772,17 +3015,23 @@
       });
     });
   }
-  if (externalEditorCommand) {
-    externalEditorCommand.addEventListener("change", function () {
-      ensureDesktop().then(function (desktop) {
-        if (!desktop || typeof desktop.api.set_external_editor !== "function") {
-          return null;
-        }
-        return Promise.resolve(
-          desktop.api.set_external_editor(externalEditorCommand.value || "")
-        );
-      });
+  function persistExternalEditorCommand() {
+    if (!externalEditorCommand) {
+      return;
+    }
+    ensureDesktop().then(function (desktop) {
+      if (!desktop || typeof desktop.api.set_external_editor !== "function") {
+        return null;
+      }
+      return Promise.resolve(
+        desktop.api.set_external_editor(externalEditorCommand.value || "")
+      );
     });
+  }
+
+  if (externalEditorCommand) {
+    externalEditorCommand.addEventListener("change", persistExternalEditorCommand);
+    externalEditorCommand.addEventListener("blur", persistExternalEditorCommand);
   }
 
   layerTreeEl.addEventListener("mouseover", function (event) {
@@ -3086,6 +3335,7 @@
       GisMap.setMapScaleDenominator(Number(raw));
       mapScaleSyncLock = false;
       syncMapScaleSelect();
+      persistViewerGuiPrefs();
     });
   }
 
@@ -3108,15 +3358,30 @@
   document.getElementById("basemap-select").addEventListener("change", function (event) {
     GisMap.setBasemap(event.target.value);
     syncImageryLabelsControl();
+    persistViewerGuiPrefs();
   });
 
   if (imageryLabelsInput) {
     imageryLabelsInput.addEventListener("change", function (event) {
       GisMap.setImageryLabelsEnabled(event.target.checked);
+      persistViewerGuiPrefs();
+    });
+  }
+
+  if (!launchWindowParams && window.ViewerGuiPrefs) {
+    ViewerGuiPrefs.apply({
+      gisMap: GisMap,
+      map: map,
+      basemapSelect: document.getElementById("basemap-select"),
+      chooseTool: chooseTool,
     });
   }
 
   syncImageryLabelsControl();
+  if (!launchWindowParams) {
+    syncMapScaleSelect();
+  }
+  bindViewerGuiPrefsPersistence();
 
   Array.prototype.forEach.call(document.querySelectorAll(".btn-tool"), function (btn) {
     btn.addEventListener("click", function () {

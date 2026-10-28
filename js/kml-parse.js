@@ -168,6 +168,7 @@
 
   function collectStyles(root, resolveHref) {
     var styles = {};
+    var styleElements = {};
     var maps = {};
     var nodes = root.getElementsByTagName("*");
     var i;
@@ -183,6 +184,8 @@
       if (localName(el) === "style") {
         styles["#" + id] = parseStyleNode(el, resolveHref);
         styles[id] = styles["#" + id];
+        styleElements["#" + id] = el;
+        styleElements[id] = el;
       }
       if (localName(el) === "stylemap") {
         maps["#" + id] = el;
@@ -190,22 +193,25 @@
       }
     }
 
-    function resolveStyleUrl(url, seen) {
+    function resolveStyleEntry(url, seen) {
       if (!url) {
-        return emptyStyle();
+        return { style: emptyStyle(), styleKey: "" };
       }
       var key = url.trim();
       seen = seen || {};
       if (seen[key]) {
-        return emptyStyle();
+        return { style: emptyStyle(), styleKey: "" };
       }
       seen[key] = true;
       if (styles[key]) {
-        return mergeStyle(emptyStyle(), styles[key]);
+        return {
+          style: mergeStyle(emptyStyle(), styles[key]),
+          styleKey: key.indexOf("#") === 0 ? key : "#" + key.replace(/^#/, ""),
+        };
       }
       var mapEl = maps[key];
       if (!mapEl) {
-        return emptyStyle();
+        return { style: emptyStyle(), styleKey: "" };
       }
       var pairs = childrenByName(mapEl, "Pair");
       var normalUrl = "";
@@ -217,10 +223,19 @@
       if (!normalUrl && pairs[0]) {
         normalUrl = textOf(pairs[0], "styleUrl");
       }
-      return resolveStyleUrl(normalUrl, seen);
+      return resolveStyleEntry(normalUrl, seen);
     }
 
-    return { styles: styles, resolveStyleUrl: resolveStyleUrl };
+    function resolveStyleUrl(url, seen) {
+      return resolveStyleEntry(url, seen).style;
+    }
+
+    return {
+      styles: styles,
+      styleElements: styleElements,
+      resolveStyleUrl: resolveStyleUrl,
+      resolveStyleEntry: resolveStyleEntry,
+    };
   }
 
   function parseExtendedData(el) {
@@ -378,9 +393,15 @@
       return null;
     }
     var inlineStyle = firstChild(el, "Style");
-    var style = styleBook.resolveStyleUrl(textOf(el, "styleUrl"));
+    var styleEntry = styleBook.resolveStyleEntry(textOf(el, "styleUrl"));
+    var style = styleEntry.style;
+    var iconStyleKey = styleEntry.styleKey || "";
     if (inlineStyle) {
-      mergeStyle(style, parseStyleNode(inlineStyle, resolveHref));
+      var inlineParsed = parseStyleNode(inlineStyle, resolveHref);
+      if (inlineParsed.iconUrl) {
+        iconStyleKey = "";
+      }
+      mergeStyle(style, inlineParsed);
     }
     var name = textOf(el, "name") || "Placemark " + (index + 1);
     return {
@@ -389,6 +410,7 @@
       type: "placemark",
       visible: textOf(el, "visibility") !== "0",
       sourceEl: el,
+      iconStyleKey: iconStyleKey,
       children: [],
       feature: {
         name: name,
@@ -490,6 +512,7 @@
       name: tree.name,
       tree: tree,
       warnings: warnings,
+      styleElements: styleBook.styleElements,
       counts: {
         folders: counters.folder,
         placemarks: counters.placemark,
