@@ -14,7 +14,7 @@
     <div id="app">
       <header class="toolbar">
         <div class="toolbar-group">
-          <button id="btn-open" class="btn" type="button" title="Open KMZ or KML">
+          <button id="btn-open" class="btn" type="button" title="Add KMZ or KML files to the map">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path
                 fill="currentColor"
@@ -38,10 +38,44 @@
             </svg>
             Save As…
           </button>
+          <button
+            id="btn-duplicate-window"
+            class="btn hidden"
+            type="button"
+            disabled
+            title="Open another window with the same file so you can pan and zoom independently (desktop app)"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"
+              />
+            </svg>
+            New window
+          </button>
+          <button
+            id="btn-edit-kml-external"
+            class="btn hidden"
+            type="button"
+            disabled
+            title="Open KML in Sublime Text or another editor (desktop app)"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"
+              />
+            </svg>
+            Edit KML
+          </button>
+          <div class="toolbar-file-cell" aria-live="polite">
+            <span id="toolbar-file-name" class="toolbar-file-name muted"></span>
+          </div>
           <input
             id="file-input"
             class="file-input"
             type="file"
+            multiple
             accept=".kmz,.kml,application/vnd.google-earth.kmz,application/vnd.google-earth.kml+xml"
             tabindex="-1"
             aria-hidden="true"
@@ -65,6 +99,14 @@
               <option value="satellite" selected>Esri Satellite</option>
               <option value="topo">Esri Topo</option>
             </select>
+          </label>
+          <label
+            class="basemap-label basemap-label-toggle"
+            id="imagery-labels-wrap"
+            title="Street and place names over satellite imagery"
+          >
+            <input id="imagery-labels" type="checkbox" checked aria-label="Labels on satellite" />
+            <span class="toolbar-select-caption">Labels</span>
           </label>
         </div>
 
@@ -131,6 +173,16 @@
             </div>
           </section>
 
+          <section class="sidebar-section sidebar-sources">
+            <h2>Data files</h2>
+            <div id="loaded-sources" class="loaded-sources" aria-label="Loaded KMZ and KML files">
+              <p class="muted empty-hint">No files loaded — use Open or drag files onto the map.</p>
+            </div>
+            <button type="button" class="btn btn-subtle" id="btn-clear-sources" disabled title="Remove all loaded files from the map">
+              Clear all
+            </button>
+          </section>
+
           <section class="sidebar-section">
             <h2>File</h2>
             <p id="file-label" class="muted">No file loaded</p>
@@ -143,6 +195,36 @@
                 title="Save a timestamped copy in the same folder as the original file"
               >
                 Save copy
+              </button>
+            </div>
+            <div id="external-edit-section" class="external-edit">
+              <p class="muted external-edit-hint">
+                Edit the KML in Sublime Text or another editor. The map reloads when you save.
+              </p>
+              <label class="external-edit-field">
+                <span class="external-edit-label">Editor command</span>
+                <div class="external-edit-row">
+                  <input
+                    id="external-editor-command"
+                    type="text"
+                    placeholder="Sublime Text (auto) if installed"
+                    spellcheck="false"
+                    autocomplete="off"
+                    title="Executable path or full command (e.g. C:\Program Files\Sublime Text\subl.exe)"
+                  />
+                  <button id="external-editor-browse" class="btn" type="button" title="Choose editor">
+                    Browse…
+                  </button>
+                </div>
+              </label>
+              <button
+                type="button"
+                class="btn external-edit-open"
+                id="file-edit-kml-external"
+                disabled
+                title="Open this file's KML in your external editor"
+              >
+                Edit KML externally…
               </button>
             </div>
           </section>
@@ -254,6 +336,71 @@
             </div>
           </section>
 
+          <section class="sidebar-section sidebar-screenshot">
+            <h2>Screenshot</h2>
+            <p class="muted screenshot-hint">
+              Set size, pan the map so the area you want sits inside the frame, then save.
+            </p>
+            <div class="screenshot-fields">
+              <label class="screenshot-field screenshot-field-wide">
+                <span class="screenshot-label">Box size units</span>
+                <select id="screenshot-dimension-unit" aria-label="Screenshot box size units">
+                  <option value="px" selected>Pixels (px)</option>
+                  <option value="in">Inches (in) at 96 DPI</option>
+                </select>
+              </label>
+              <label class="screenshot-field">
+                <span id="screenshot-width-label" class="screenshot-label">Width (px)</span>
+                <input id="screenshot-width" type="number" min="64" max="8192" step="1" value="1920" />
+              </label>
+              <label class="screenshot-field">
+                <span id="screenshot-height-label" class="screenshot-label">Height (px)</span>
+                <input id="screenshot-height" type="number" min="64" max="8192" step="1" value="1080" />
+              </label>
+              <label class="screenshot-field screenshot-field-wide">
+                <span class="screenshot-label">Base filename</span>
+                <input
+                  id="screenshot-base-name"
+                  type="text"
+                  value="map-screenshot"
+                  spellcheck="false"
+                  autocomplete="off"
+                />
+              </label>
+              <label class="screenshot-field screenshot-field-wide">
+                <span class="screenshot-label">Save directory</span>
+                <div class="screenshot-dir-row">
+                  <input
+                    id="screenshot-directory"
+                    type="text"
+                    placeholder="C:\Exports\maps"
+                    spellcheck="false"
+                    autocomplete="off"
+                  />
+                  <button id="screenshot-browse-dir" class="btn" type="button" title="Choose folder">
+                    Browse…
+                  </button>
+                </div>
+              </label>
+              <label class="screenshot-toggle">
+                <input id="screenshot-show-frame" type="checkbox" checked />
+                Show capture frame on map
+              </label>
+              <button id="screenshot-save" class="btn screenshot-save-btn" type="button">
+                Save screenshot
+              </button>
+            </div>
+          </section>
+
+          <div
+            class="sidebar-split-handle"
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Resize Inspect panel height"
+            tabindex="0"
+            hidden
+          ></div>
+
           <section class="sidebar-section sidebar-inspect">
             <h2>Inspect</h2>
             <div id="inspect-panel" class="inspect-panel">
@@ -263,6 +410,9 @@
         </aside>
 
         <main class="map-wrap">
+          <div id="screenshot-overlay" class="screenshot-overlay hidden" aria-hidden="true">
+            <div id="screenshot-frame" class="screenshot-frame"></div>
+          </div>
           <div id="map"></div>
           <div id="route-card" class="route-card hidden">
             <div id="route-card-title" class="route-card-title"></div>
@@ -289,6 +439,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.4/purify.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="js/kml-parse.js"></script>
     <script src="js/recent-files.js"></script>
     <script src="js/kmz-loader.js"></script>
@@ -296,6 +447,7 @@
     <script src="js/map.js"></script>
     <script src="js/measure.js"></script>
     <script src="js/directions.js"></script>
+    <script src="js/screenshot.js"></script>
     <script src="js/main.js"></script>
   </body>
 </html>

@@ -117,6 +117,7 @@
   function parseStyleNode(styleEl, resolveHref) {
     var style = emptyStyle();
     var iconStyle = firstChild(styleEl, "IconStyle");
+    var labelStyle = firstChild(styleEl, "LabelStyle");
     var lineStyle = firstChild(styleEl, "LineStyle");
     var polyStyle = firstChild(styleEl, "PolyStyle");
 
@@ -132,6 +133,13 @@
       }
       var iconColor = kmlColorToCss(textOf(iconStyle, "color"));
       style.stroke = iconColor.color;
+    }
+
+    if (labelStyle) {
+      var labelScale = parseFloat(textOf(labelStyle, "scale"));
+      if (!Number.isNaN(labelScale)) {
+        style.labelScale = labelScale;
+      }
     }
 
     if (lineStyle) {

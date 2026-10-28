@@ -6,12 +6,19 @@ import os
 import subprocess
 import sys
 from http.server import ThreadingHTTPServer
-from typing import Dict, Optional
+from typing import Dict, List, Optional
+from urllib.parse import urlencode
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
+from desktop.external_edit import (  # noqa: E402
+    ExternalEditManager,
+    decode_kml_payload,
+    editor_command,
+    set_editor_command,
+)
 from desktop.server import (  # noqa: E402
     DESKTOP_TOKEN,
     EXPORT_PATHS,
@@ -20,6 +27,9 @@ from desktop.server import (  # noqa: E402
     register_source,
     start_server,
 )
+
+_EXTERNAL_EDIT = ExternalEditManager()
+_VIEWER_BASE_URL: Optional[str] = None
 
 
 def _attach_log_if_no_console() -> None:
@@ -162,6 +172,14 @@ def _save_dialog_flag() -> object:
     return webview.SAVE_DIALOG
 
 
+def _folder_dialog_flag() -> object:
+    """Return the pywebview constant for a folder picker dialog."""
+    file_dialog = getattr(webview, "FileDialog", None)
+    if file_dialog is not None and hasattr(file_dialog, "FOLDER"):
+        return file_dialog.FOLDER
+    return getattr(webview, "FOLDER_DIALOG", 3)
+
+
 def kmz_export_name(file_name: str) -> str:
     """
     Return a .kmz file name derived from the loaded document name.
@@ -262,6 +280,30 @@ class DesktopApi:
             return None
         return _source_payload(path)
 
+    def choose_directory(self) -> Optional[dict]:
+        """
+        Show a native folder picker for screenshot export.
+
+        Returns:
+            The chosen folder path, or None if the dialog was cancelled.
+        """
+        windows = webview.windows
+        if not windows:
+            return None
+        window = windows[0]
+
+        def _pick() -> Optional[str]:
+            result = window.create_file_dialog(_folder_dialog_flag())
+            return _first_path(result)
+
+        path = _invoke_on_ui(window, _pick)
+        if not path or not isinstance(path, str):
+            return None
+        full = normalize_path(path)
+        if not os.path.isdir(full):
+            return None
+        return {"path": full}
+
     def choose_export_path(self, suggested_name: str) -> Optional[dict]:
         """
         Show a native save dialog for exporting the map as a KMZ file.
@@ -314,12 +356,194 @@ class DesktopApi:
         except OSError:
             return None
 
+    def external_editor_settings(self) -> dict:
+        """
+        Return the configured external KML editor command.
+
+        Returns:
+            Dict with ``command`` and whether Sublime would be used by default.
+        """
+        cmd = editor_command()
+        return {
+            "command": cmd,
+            "hasCustomCommand": bool(cmd),
+        }
+
+    def set_external_editor(self, command: str) -> dict:
+        """
+        Persist the command used to launch an external text editor.
+
+        Args:
+            command: Executable path or full command line; empty clears it.
+
+        Returns:
+            Updated settings dict from ``external_editor_settings``.
+        """
+        if command is None or not isinstance(command, str):
+            command = ""
+        set_editor_command(command.strip())
+        return self.external_editor_settings()
+
+    def choose_external_editor(self) -> Optional[dict]:
+        """
+        Pick an editor executable with a native open dialog.
+
+        Returns:
+            Updated settings after storing the chosen path, or None if cancelled.
+        """
+        windows = webview.windows
+        if not windows:
+            return None
+        window = windows[0]
+
+        def _pick() -> Optional[str]:
+            result = window.create_file_dialog(
+                _open_dialog_flag(),
+                allow_multiple=False,
+                file_types=("Programs (*.exe)", "All files (*.*)"),
+            )
+            return _first_path(result)
+
+        path = _invoke_on_ui(window, _pick)
+        if not path or not isinstance(path, str):
+            return None
+        set_editor_command(normalize_path(path))
+        return self.external_editor_settings()
+
+    def begin_external_kml_edit(
+        self,
+        source_path: str,
+        kml_inner_path: str,
+        kml_b64: str,
+    ) -> Optional[dict]:
+        """
+        Open the document KML in an external editor and watch for saves.
+
+        Args:
+            source_path: Absolute path to the opened KMZ or KML file.
+            kml_inner_path: KML path inside a KMZ, or empty for .kml files.
+            kml_b64: Base64-encoded UTF-8 KML currently shown in the viewer.
+
+        Returns:
+            Session metadata, or None when editing cannot start.
+        """
+        if not source_path or not isinstance(source_path, str):
+            return None
+        if kml_b64 is None or not isinstance(kml_b64, str) or not kml_b64:
+            return None
+        try:
+            payload = decode_kml_payload(kml_b64)
+        except ValueError:
+            return None
+        inner = kml_inner_path if isinstance(kml_inner_path, str) else ""
+        try:
+            return _EXTERNAL_EDIT.begin(source_path, inner, payload)
+        except (OSError, ValueError):
+            return None
+
+    def stop_external_kml_edit(self, session_id: str) -> None:
+        """
+        Stop watching an external edit session.
+
+        Args:
+            session_id: Value returned from ``begin_external_kml_edit``.
+
+        Returns:
+            None.
+        """
+        if session_id and isinstance(session_id, str):
+            _EXTERNAL_EDIT.stop_session(session_id)
+
+    def duplicate_window(
+        self,
+        source_paths: object,
+        lat: float,
+        lng: float,
+        zoom: float,
+        basemap: str = "",
+    ) -> bool:
+        """
+        Open another viewer window with the same on-disk KMZ or KML files.
+
+        Args:
+            source_paths: List of absolute paths already opened in this session.
+            lat: Map center latitude (WGS84) for the new window.
+            lng: Map center longitude (WGS84) for the new window.
+            zoom: Leaflet zoom level for the new window.
+            basemap: Basemap key (osm, satellite, topo) or empty for default.
+
+        Returns:
+            True when a new window was created.
+        """
+        if not _VIEWER_BASE_URL or not isinstance(source_paths, list) or not source_paths:
+            return False
+        paths: List[str] = []
+        for item in source_paths:
+            if not item or not isinstance(item, str):
+                continue
+            try:
+                full = normalize_path(item)
+            except (TypeError, ValueError):
+                continue
+            if full not in paths:
+                paths.append(full)
+        if not paths:
+            return False
+        try:
+            lat_f = float(lat)
+            lng_f = float(lng)
+            zoom_f = float(zoom)
+        except (TypeError, ValueError):
+            return False
+        query_pairs: List[tuple] = [
+            ("lat", f"{lat_f:.8f}"),
+            ("lng", f"{lng_f:.8f}"),
+            ("z", f"{zoom_f:.4f}"),
+        ]
+        bm = basemap.strip() if isinstance(basemap, str) else ""
+        if bm in {"osm", "satellite", "topo"}:
+            query_pairs.append(("bm", bm))
+        title_name = "KMZ GIS Viewer"
+        for path in paths:
+            try:
+                meta = _source_payload(path)
+            except OSError:
+                continue
+            query_pairs.append(("f", meta["token"]))
+            query_pairs.append(("p", meta["path"]))
+            query_pairs.append(("n", meta["name"]))
+            if title_name == "KMZ GIS Viewer":
+                title_name = f"KMZ GIS Viewer — {meta['name']}"
+        if not any(key == "f" for key, _ in query_pairs):
+            return False
+        url = _VIEWER_BASE_URL + "?" + urlencode(query_pairs)
+        webview.create_window(
+            title_name,
+            url,
+            width=1280,
+            height=820,
+            min_size=(900, 600),
+            js_api=DesktopApi(),
+        )
+        return True
+
+
+def _notify_external_kml_saved() -> None:
+    """Ask every viewer window to reload after an external save."""
+    script = "window.kmzExternalKmlSaved && window.kmzExternalKmlSaved();"
+    for window in webview.windows:
+        evaluate = getattr(window, "evaluate_js", None)
+        if evaluate is not None:
+            evaluate(script)
+
 
 def main() -> None:
     """Open the KMZ GIS Viewer in a native window."""
+    global _VIEWER_BASE_URL
     server: Optional[ThreadingHTTPServer] = None
     try:
         server, port = start_server(app_root())
+        _VIEWER_BASE_URL = f"http://127.0.0.1:{port}/"
         webview.create_window(
             "KMZ GIS Viewer",
             f"http://127.0.0.1:{port}/",
@@ -328,8 +552,11 @@ def main() -> None:
             min_size=(900, 600),
             js_api=DesktopApi(),
         )
+        _EXTERNAL_EDIT.set_notify(_notify_external_kml_saved)
         webview.start()
     finally:
+        _EXTERNAL_EDIT.set_notify(None)
+        _EXTERNAL_EDIT.stop_all()
         if server is not None:
             server.shutdown()
             server.server_close()

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import tempfile
 import threading
@@ -19,6 +20,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 # Fixed loopback port so the WebView origin stays stable and recent files persist.
 PREFERRED_PORT = 47821
 MAX_UPLOAD_BYTES = 1024 * 1024 * 1024
+MAX_SCREENSHOT_BYTES = 50 * 1024 * 1024
 DESKTOP_TOKEN = secrets.token_urlsafe(24)
 OPENED_PATHS: Set[str] = set()
 EXPORT_PATHS: Set[str] = set()
@@ -84,6 +86,37 @@ def register_source(path: str) -> str:
         OPENED_PATHS.add(full)
         FILE_TOKENS[token] = full
     return token
+
+
+def sanitize_png_base_name(base_name: str) -> str:
+    """Return a safe PNG stem from a user-provided base file name.
+
+    Args:
+        base_name: Desired base name without directory.
+
+    Returns:
+        A non-empty stem suitable for a timestamped PNG file name.
+    """
+    stem = os.path.basename(str(base_name or "").strip())
+    stem = re.sub(r'[/\\:*?"<>|]', "_", stem)
+    stem, _ext = os.path.splitext(stem)
+    if not stem or stem in {".", ".."}:
+        stem = "map-screenshot"
+    return stem[:120]
+
+
+def png_timestamped_name(base_name: str, when: datetime) -> str:
+    """Build a PNG file name with a local timestamp before the extension.
+
+    Args:
+        base_name: User-provided base file name.
+        when: Local time used in the suffix.
+
+    Returns:
+        A name such as map-screenshot_20260928-154205.png.
+    """
+    stem = sanitize_png_base_name(base_name)
+    return f"{stem}_{when.strftime('%Y%m%d-%H%M%S')}.png"
 
 
 def timestamped_name(file_name: str, when: datetime) -> str:
@@ -236,6 +269,9 @@ def _handler_class(viewer_root: str) -> type:
             if parsed.path == "/__desktop/export":
                 self._export_kmz()
                 return
+            if parsed.path == "/__desktop/save-screenshot":
+                self._save_screenshot()
+                return
             self._send_json(404, {"error": "Not found."})
 
         def _serve_source(self, query: str) -> None:
@@ -346,6 +382,58 @@ def _handler_class(viewer_root: str) -> type:
             except OSError as err:
                 self._send_json(
                     500, {"error": err.strerror or "Could not export the KMZ."}
+                )
+                return
+            self._send_json(
+                200, {"ok": True, "path": dest, "name": os.path.basename(dest)}
+            )
+
+        def _save_screenshot(self) -> None:
+            """Write a PNG screenshot to a folder chosen in the viewer."""
+            if not token_ok(self.headers.get("X-Desktop-Token")):
+                self._send_json(403, {"error": "Desktop access was denied."})
+                return
+            raw_dir = self.headers.get("X-Save-Directory")
+            if not raw_dir:
+                self._send_json(400, {"error": "Missing save directory."})
+                return
+            directory = normalize_path(unquote(raw_dir))
+            if not os.path.isdir(directory):
+                try:
+                    os.makedirs(directory, exist_ok=True)
+                except OSError as err:
+                    self._send_json(
+                        400,
+                        {"error": err.strerror or "That folder does not exist."},
+                    )
+                    return
+            if not os.path.isdir(directory):
+                self._send_json(400, {"error": "That folder does not exist."})
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0") or "0")
+            except ValueError:
+                self._send_json(400, {"error": "Invalid upload size."})
+                return
+            if length <= 0 or length > MAX_SCREENSHOT_BYTES:
+                self._send_json(
+                    400, {"error": "The screenshot is empty or too large."}
+                )
+                return
+            raw_base = unquote(self.headers.get("X-Base-Filename") or "")
+            preferred = png_timestamped_name(raw_base, datetime.now())
+            data = self.rfile.read(length)
+            if len(data) != length:
+                self._send_json(400, {"error": "The upload was incomplete."})
+                return
+            if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+                self._send_json(400, {"error": "Expected a PNG image."})
+                return
+            try:
+                dest = write_unique(directory, preferred, data)
+            except OSError as err:
+                self._send_json(
+                    500, {"error": err.strerror or "Could not save the screenshot."}
                 )
                 return
             self._send_json(

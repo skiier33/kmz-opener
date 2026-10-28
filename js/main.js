@@ -1,9 +1,52 @@
 (function () {
   "use strict";
 
+  var hostMatch = /[?&]host=([^&]+)/.exec(window.location.search || "");
+  if (hostMatch && hostMatch[1]) {
+    var hostSlug = hostMatch[1].replace(/[^a-z0-9_-]/gi, "");
+    if (hostSlug) {
+      document.body.classList.add("host-" + hostSlug);
+    }
+  }
+
+  function parseLaunchWindowParams() {
+    var params = new URLSearchParams(window.location.search || "");
+    var tokens = params.getAll("f");
+    if (!tokens.length) {
+      return null;
+    }
+    var paths = params.getAll("p");
+    var names = params.getAll("n");
+    var files = [];
+    tokens.forEach(function (token, index) {
+      if (!token) {
+        return;
+      }
+      files.push({
+        token: token,
+        path: paths[index] || "",
+        name: names[index] || "untitled.kmz",
+      });
+    });
+    if (!files.length) {
+      return null;
+    }
+    return {
+      files: files,
+      lat: params.get("lat"),
+      lng: params.get("lng"),
+      zoom: params.get("z"),
+      basemap: params.get("bm") || "",
+    };
+  }
+
+  var launchWindowParams = parseLaunchWindowParams();
+
   var fileInput = document.getElementById("file-input");
   var saveAsBtn = document.getElementById("btn-save-as");
+  var duplicateWindowBtn = document.getElementById("btn-duplicate-window");
   var fileLabel = document.getElementById("file-label");
+  var toolbarFileName = document.getElementById("toolbar-file-name");
   var recentFilesEl = document.getElementById("recent-files");
   var layerTreeEl = document.getElementById("layer-tree");
   var layersAllBtn = document.getElementById("layers-all");
@@ -20,6 +63,11 @@
   var layersSortBtn = document.getElementById("layers-sort");
   var layersExportBtn = document.getElementById("layers-export");
   var fileSaveBtn = document.getElementById("file-save-copy");
+  var fileEditKmlBtn = document.getElementById("file-edit-kml-external");
+  var toolbarEditKmlBtn = document.getElementById("btn-edit-kml-external");
+  var externalEditSection = document.getElementById("external-edit-section");
+  var externalEditorCommand = document.getElementById("external-editor-command");
+  var externalEditorBrowse = document.getElementById("external-editor-browse");
   var selectedIds = [];
   var anchorId = null;
   var focusId = null;
@@ -32,6 +80,310 @@
   var popupTimer = null;
   var TOGGLE_ICON =
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6z"/></svg>';
+  var SIDEBAR_SECTION_STORAGE_KEY = "kmz-sidebar-sections-collapsed";
+  var SIDEBAR_INSPECT_HEIGHT_KEY = "kmz-sidebar-inspect-height";
+  var SIDEBAR_INSPECT_MIN_H = 72;
+  var SIDEBAR_LAYERS_MIN_H = 96;
+
+  function sidebarSectionSlug(section, index) {
+    var parts = section.className.split(/\s+/);
+    for (var i = 0; i < parts.length; i += 1) {
+      var part = parts[i];
+      if (part.indexOf("sidebar-") === 0 && part !== "sidebar-section") {
+        return part.replace(/^sidebar-/, "");
+      }
+    }
+    return "section-" + index;
+  }
+
+  function readSidebarCollapsedState() {
+    try {
+      var raw = localStorage.getItem(SIDEBAR_SECTION_STORAGE_KEY);
+      if (!raw) {
+        return {};
+      }
+      var parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (err) {
+      return {};
+    }
+  }
+
+  function writeSidebarCollapsedState(state) {
+    try {
+      localStorage.setItem(SIDEBAR_SECTION_STORAGE_KEY, JSON.stringify(state));
+    } catch (err) {
+      /* ignore quota / private mode */
+    }
+  }
+
+  function setSidebarSectionCollapsed(section, head, collapsed, slug, state) {
+    section.classList.toggle("collapsed", collapsed);
+    head.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    var label = head.querySelector(".sidebar-section-title");
+    var title = (label && label.textContent) || "section";
+    head.setAttribute(
+      "aria-label",
+      (collapsed ? "Expand " : "Collapse ") + title + " section"
+    );
+    if (slug && state) {
+      if (collapsed) {
+        state[slug] = true;
+      } else {
+        delete state[slug];
+      }
+      writeSidebarCollapsedState(state);
+    }
+  }
+
+  function sidebarSectionDirectH2(section) {
+    var child = section.firstElementChild;
+    while (child) {
+      if (child.tagName === "H2") {
+        return child;
+      }
+      if (child.classList && child.classList.contains("sidebar-section-head")) {
+        return null;
+      }
+      child = child.nextElementSibling;
+    }
+    return null;
+  }
+
+  function initSidebarSectionFolding() {
+    var sections = document.querySelectorAll(".sidebar > .sidebar-section");
+    if (!sections.length) {
+      return;
+    }
+    var collapsedState = readSidebarCollapsedState();
+    for (var i = 0; i < sections.length; i += 1) {
+      var section = sections[i];
+      if (section.firstElementChild && section.firstElementChild.classList.contains("sidebar-section-head")) {
+        continue;
+      }
+      var heading = sidebarSectionDirectH2(section);
+      if (!heading) {
+        continue;
+      }
+      var slug = sidebarSectionSlug(section, i);
+      var bodyId = "sidebar-body-" + slug;
+      var title = heading.textContent.trim();
+      var head = document.createElement("button");
+      head.type = "button";
+      head.className = "sidebar-section-head";
+      head.setAttribute("aria-controls", bodyId);
+      head.setAttribute("aria-expanded", "true");
+      head.innerHTML =
+        '<span class="sidebar-section-chevron">' +
+        TOGGLE_ICON +
+        '</span><span class="sidebar-section-title"></span>';
+      head.querySelector(".sidebar-section-title").textContent = title;
+      heading.remove();
+
+      var body = document.createElement("div");
+      body.className = "sidebar-section-body";
+      body.id = bodyId;
+      while (section.firstChild) {
+        body.appendChild(section.firstChild);
+      }
+      section.appendChild(head);
+      section.appendChild(body);
+
+      var startCollapsed = collapsedState[slug] === true;
+      setSidebarSectionCollapsed(section, head, startCollapsed, null, null);
+      (function (sec, hd, sl, state) {
+        hd.addEventListener("click", function () {
+          var collapsed = !sec.classList.contains("collapsed");
+          setSidebarSectionCollapsed(sec, hd, collapsed, sl, state);
+        });
+      })(section, head, slug, collapsedState);
+    }
+  }
+
+  function readSidebarInspectHeight() {
+    try {
+      var raw = localStorage.getItem(SIDEBAR_INSPECT_HEIGHT_KEY);
+      if (!raw) {
+        return null;
+      }
+      var value = parseFloat(raw);
+      return Number.isFinite(value) && value > 0 ? value : null;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function writeSidebarInspectHeight(px) {
+    try {
+      localStorage.setItem(SIDEBAR_INSPECT_HEIGHT_KEY, String(Math.round(px)));
+    } catch (err) {
+      /* ignore */
+    }
+  }
+
+  function sidebarSectionVisibleHeight(section) {
+    if (!section || section.classList.contains("collapsed")) {
+      return 0;
+    }
+    return section.offsetHeight;
+  }
+
+  function clampSidebarInspectHeight(sidebar, layersSection, inspectSection, desiredPx) {
+    var sidebarH = sidebar.clientHeight;
+    var fixedH = 0;
+    Array.prototype.forEach.call(sidebar.children, function (child) {
+      if (
+        child === layersSection
+        || child === inspectSection
+        || (child.classList && child.classList.contains("sidebar-split-handle"))
+      ) {
+        return;
+      }
+      fixedH += sidebarSectionVisibleHeight(child);
+    });
+    var handleH = 7;
+    var maxInspect = Math.max(
+      SIDEBAR_INSPECT_MIN_H,
+      sidebarH - fixedH - handleH - SIDEBAR_LAYERS_MIN_H
+    );
+    return Math.min(Math.max(desiredPx, SIDEBAR_INSPECT_MIN_H), maxInspect);
+  }
+
+  function applySidebarInspectHeight(sidebar, layersSection, inspectSection, px, persist) {
+    var clamped = clampSidebarInspectHeight(sidebar, layersSection, inspectSection, px);
+    sidebar.style.setProperty("--sidebar-inspect-h", clamped + "px");
+    if (persist) {
+      writeSidebarInspectHeight(clamped);
+    }
+    return clamped;
+  }
+
+  function initSidebarPanelResize() {
+    var sidebar = document.querySelector(".sidebar");
+    var layersSection = document.querySelector(".sidebar-layers");
+    var inspectSection = document.querySelector(".sidebar-inspect");
+    var handle = document.querySelector(".sidebar-split-handle");
+    if (!sidebar || !layersSection || !inspectSection || !handle) {
+      return;
+    }
+
+    var stored = readSidebarInspectHeight();
+    if (stored !== null) {
+      applySidebarInspectHeight(sidebar, layersSection, inspectSection, stored, false);
+    }
+
+    function splitResizeEnabled() {
+      return (
+        !layersSection.classList.contains("collapsed")
+        && !inspectSection.classList.contains("collapsed")
+      );
+    }
+
+    function syncSplitHandle() {
+      var enabled = splitResizeEnabled();
+      handle.hidden = !enabled;
+      handle.setAttribute("aria-hidden", enabled ? "false" : "true");
+    }
+
+    syncSplitHandle();
+    var collapseObserver = new MutationObserver(syncSplitHandle);
+    collapseObserver.observe(layersSection, { attributes: true, attributeFilter: ["class"] });
+    collapseObserver.observe(inspectSection, { attributes: true, attributeFilter: ["class"] });
+
+    window.addEventListener("resize", function () {
+      if (!splitResizeEnabled()) {
+        return;
+      }
+      var current = parseFloat(
+        getComputedStyle(sidebar).getPropertyValue("--sidebar-inspect-h")
+      );
+      if (!Number.isFinite(current)) {
+        current = inspectSection.offsetHeight;
+      }
+      applySidebarInspectHeight(sidebar, layersSection, inspectSection, current, true);
+    });
+
+    var drag = null;
+
+    function finishDrag() {
+      if (!drag) {
+        return;
+      }
+      handle.classList.remove("is-dragging");
+      document.body.classList.remove("sidebar-panel-resizing");
+      drag = null;
+    }
+
+    function onPointerMove(event) {
+      if (!drag) {
+        return;
+      }
+      var delta = event.clientY - drag.startY;
+      applySidebarInspectHeight(
+        sidebar,
+        layersSection,
+        inspectSection,
+        drag.startHeight - delta,
+        false
+      );
+    }
+
+    function onPointerUp() {
+      if (!drag) {
+        return;
+      }
+      var current = parseFloat(
+        getComputedStyle(sidebar).getPropertyValue("--sidebar-inspect-h")
+      );
+      if (Number.isFinite(current)) {
+        writeSidebarInspectHeight(current);
+      }
+      finishDrag();
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
+    }
+
+    handle.addEventListener("pointerdown", function (event) {
+      if (!splitResizeEnabled() || event.button !== 0) {
+        return;
+      }
+      event.preventDefault();
+      var current = inspectSection.offsetHeight;
+      drag = { startY: event.clientY, startHeight: current };
+      handle.classList.add("is-dragging");
+      document.body.classList.add("sidebar-panel-resizing");
+      handle.setPointerCapture(event.pointerId);
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", onPointerUp);
+      window.addEventListener("pointercancel", onPointerUp);
+    });
+
+    handle.addEventListener("keydown", function (event) {
+      if (!splitResizeEnabled()) {
+        return;
+      }
+      var step = event.shiftKey ? 24 : 8;
+      var dir = 0;
+      if (event.key === "ArrowUp") {
+        dir = 1;
+      } else if (event.key === "ArrowDown") {
+        dir = -1;
+      } else {
+        return;
+      }
+      event.preventDefault();
+      var current = inspectSection.offsetHeight;
+      applySidebarInspectHeight(
+        sidebar,
+        layersSection,
+        inspectSection,
+        current + dir * step,
+        true
+      );
+    });
+  }
+
   var EYE_ICON =
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 5C7 5 2.7 8.1 1 12c1.7 3.9 6 7 11 7s9.3-3.1 11-7c-1.7-3.9-6-7-11-7zm0 11.5A4.5 4.5 0 1 1 12 7.5a4.5 4.5 0 0 1 0 9z"/><path fill="currentColor" d="M12 10.2a1.8 1.8 0 1 0 .01 0z"/></svg>';
   var EYE_OFF_ICON =
@@ -61,8 +413,16 @@
   var dragDepth = 0;
   var currentDoc = null;
   var docDirty = false;
+  var loadedSources = [];
+  var activeSourceId = null;
+  var nextSourceSeq = 0;
+  var loadedSourcesEl = document.getElementById("loaded-sources");
+  var clearSourcesBtn = document.getElementById("btn-clear-sources");
   var saveInFlight = false;
   var desktopSession = null;
+  var desktopExternalEditAvailable = false;
+  var externalEditSessionId = null;
+  var externalReloadTimer = null;
 
   function setMessage(text) {
     statusMessage.textContent = text || "";
@@ -1268,25 +1628,226 @@
     dragIds = null;
   }
 
+  function nextSourceId() {
+    nextSourceSeq += 1;
+    return "file-" + nextSourceSeq;
+  }
+
+  function findLoadedSource(sourceId) {
+    if (!sourceId) {
+      return null;
+    }
+    for (var i = 0; i < loadedSources.length; i += 1) {
+      if (loadedSources[i].id === sourceId) {
+        return loadedSources[i];
+      }
+    }
+    return null;
+  }
+
+  function activeLoadedSource() {
+    return findLoadedSource(activeSourceId);
+  }
+
+  function persistActiveSourceState() {
+    var active = activeLoadedSource();
+    if (active) {
+      active.docDirty = docDirty;
+    }
+  }
+
+  function syncCurrentDocFromActive() {
+    var active = activeLoadedSource();
+    if (!active) {
+      currentDoc = null;
+      docDirty = false;
+      return;
+    }
+    currentDoc = active.doc;
+    docDirty = !!active.docDirty;
+  }
+
+  function setActiveSource(sourceId) {
+    if (sourceId === activeSourceId) {
+      return;
+    }
+    persistActiveSourceState();
+    activeSourceId = sourceId;
+    syncCurrentDocFromActive();
+    refreshFileLabel();
+    updateFileActions();
+    renderLoadedSources();
+  }
+
+  function revokeAllBlobUrls() {
+    KmzLoader.revokeUrls(currentBlobUrls);
+    currentBlobUrls = [];
+  }
+
+  function revokeSourceBlobUrls(source) {
+    if (!source || !source.blobUrls || !source.blobUrls.length) {
+      return;
+    }
+    KmzLoader.revokeUrls(source.blobUrls);
+    currentBlobUrls = currentBlobUrls.filter(function (url) {
+      return source.blobUrls.indexOf(url) < 0;
+    });
+    source.blobUrls = [];
+  }
+
+  function buildSourceDoc(parsed, handle, sourcePath) {
+    return {
+      fileName: parsed.fileName,
+      sourceKind: parsed.sourceKind,
+      sourcePath: sourcePath || null,
+      zip: parsed.zip || null,
+      kmlPath: parsed.kmlPath || "",
+      xmlDoc: parsed.xmlDoc || null,
+      originalBuffer: parsed.originalBuffer || null,
+      handle: handle || null,
+    };
+  }
+
+  function getEditableRoot() {
+    if (activeSourceId) {
+      return GisMap.getDocumentSourceRoot(activeSourceId) || GisMap.getRoot();
+    }
+    return GisMap.getRoot();
+  }
+
+  function renderLoadedSources() {
+    if (!loadedSourcesEl) {
+      return;
+    }
+    if (!loadedSources.length) {
+      loadedSourcesEl.innerHTML =
+        '<p class="muted empty-hint">No files loaded — use Open or drag files onto the map.</p>';
+      if (clearSourcesBtn) {
+        clearSourcesBtn.disabled = true;
+      }
+      return;
+    }
+    loadedSourcesEl.innerHTML = "";
+    loadedSources.forEach(function (source) {
+      var row = document.createElement("div");
+      row.className = "loaded-source-row";
+      if (source.id === activeSourceId) {
+        row.classList.add("is-active");
+      }
+      row.dataset.sourceId = source.id;
+
+      var box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = source.visible !== false;
+      box.title = "Show or hide " + (source.doc.fileName || "file");
+
+      var nameBtn = document.createElement("button");
+      nameBtn.type = "button";
+      nameBtn.className = "loaded-source-name";
+      var edited = source.docDirty ? " *" : "";
+      nameBtn.textContent = (source.doc.fileName || "Untitled") + edited;
+      nameBtn.title = source.doc.sourcePath || source.doc.fileName || "Select for save and edit";
+
+      var removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "loaded-source-remove";
+      removeBtn.setAttribute("aria-label", "Remove " + (source.doc.fileName || "file"));
+      removeBtn.title = "Remove from map";
+      removeBtn.textContent = "×";
+
+      row.appendChild(box);
+      row.appendChild(nameBtn);
+      row.appendChild(removeBtn);
+      loadedSourcesEl.appendChild(row);
+    });
+    if (clearSourcesBtn) {
+      clearSourcesBtn.disabled = false;
+    }
+  }
+
+  function removeLoadedSource(sourceId) {
+    var idx = -1;
+    for (var i = 0; i < loadedSources.length; i += 1) {
+      if (loadedSources[i].id === sourceId) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx < 0) {
+      return;
+    }
+    var source = loadedSources[idx];
+    revokeSourceBlobUrls(source);
+    GisMap.removeDocumentSource(sourceId);
+    loadedSources.splice(idx, 1);
+    if (activeSourceId === sourceId) {
+      activeSourceId = loadedSources.length ? loadedSources[Math.min(idx, loadedSources.length - 1)].id : null;
+      syncCurrentDocFromActive();
+    }
+    if (!loadedSources.length) {
+      resetSelectionState();
+      Directions.clear();
+    }
+    refreshFileLabel();
+    updateFileActions();
+    renderLoadedSources();
+    renderTree(GisMap.getRoot());
+    renderInspect(null);
+  }
+
+  function clearAllSources() {
+    if (!loadedSources.length) {
+      return;
+    }
+    revokeAllBlobUrls();
+    loadedSources = [];
+    activeSourceId = null;
+    GisMap.clearDocument();
+    Directions.clear();
+    resetFileUi();
+  }
+
   function resetFileUi() {
     resetSelectionState();
+    loadedSources = [];
+    activeSourceId = null;
     currentDoc = null;
     docDirty = false;
     refreshFileLabel();
     updateFileActions();
+    renderLoadedSources();
     renderTree(null);
     renderInspect(null);
   }
 
   function refreshFileLabel() {
     if (!currentDoc) {
-      fileLabel.textContent = "No file loaded";
-      fileLabel.title = "";
+      if (fileLabel) {
+        fileLabel.textContent = "No file loaded";
+        fileLabel.title = "";
+      }
+      if (toolbarFileName) {
+        toolbarFileName.textContent = "";
+        toolbarFileName.title = "";
+      }
       return;
     }
     var kind = currentDoc.sourceKind === "kmz" ? " (KMZ)" : " (KML)";
-    fileLabel.textContent = currentDoc.fileName + kind + (docDirty ? " — edited" : "");
-    fileLabel.title = currentDoc.sourcePath || currentDoc.fileName;
+    var edited = docDirty ? " — edited" : "";
+    var title = currentDoc.sourcePath || currentDoc.fileName;
+    var extra =
+      loadedSources.length > 1
+        ? " — " + loadedSources.length + " files on map"
+        : "";
+    if (fileLabel) {
+      fileLabel.textContent = currentDoc.fileName + kind + edited + extra;
+      fileLabel.title = title;
+    }
+    if (toolbarFileName) {
+      toolbarFileName.textContent = currentDoc.fileName + edited + extra;
+      toolbarFileName.title = title;
+    }
+    renderLoadedSources();
   }
 
   function updateFileActions() {
@@ -1297,10 +1858,225 @@
     if (saveAsBtn) {
       saveAsBtn.disabled = !canWrite;
     }
+    refreshDuplicateWindowButton();
     if (layersExportBtn) {
       layersExportBtn.disabled = !canWrite;
     }
+    var editKmlDisabled =
+      !canWrite || !desktopExternalEditAvailable || !(currentDoc && currentDoc.sourcePath);
+    if (fileEditKmlBtn) {
+      fileEditKmlBtn.disabled = editKmlDisabled;
+    }
+    if (toolbarEditKmlBtn) {
+      toolbarEditKmlBtn.disabled = editKmlDisabled;
+    }
   }
+
+  function utf8ToBase64(text) {
+    return btoa(unescape(encodeURIComponent(String(text || ""))));
+  }
+
+  function isLikelyDesktopViewer() {
+    if (window.pywebview) {
+      return true;
+    }
+    return location.protocol === "http:" && location.hostname === "127.0.0.1";
+  }
+
+  function collectDuplicateSourcePaths() {
+    var paths = [];
+    loadedSources.forEach(function (source) {
+      var path = source.doc && source.doc.sourcePath;
+      if (!path || paths.indexOf(path) >= 0) {
+        return;
+      }
+      paths.push(path);
+    });
+    return paths;
+  }
+
+  function refreshDuplicateWindowButton() {
+    if (!duplicateWindowBtn) {
+      return;
+    }
+    var api = getDesktopApi();
+    var hasApi = !!(api && typeof api.duplicate_window === "function");
+    duplicateWindowBtn.classList.toggle("hidden", !hasApi);
+    duplicateWindowBtn.disabled = !hasApi || !collectDuplicateSourcePaths().length;
+  }
+
+  function applyLaunchMapView(params) {
+    if (!params || !map) {
+      return;
+    }
+    var lat = parseFloat(params.lat);
+    var lng = parseFloat(params.lng);
+    var zoom = parseFloat(params.zoom);
+    if (Number.isFinite(lat) && Number.isFinite(lng) && Number.isFinite(zoom)) {
+      map.setView([lat, lng], zoom);
+    }
+    var basemap = params.basemap;
+    if (basemap === "osm" || basemap === "satellite" || basemap === "topo") {
+      GisMap.setBasemap(basemap);
+      var basemapSelect = document.getElementById("basemap-select");
+      if (basemapSelect) {
+        basemapSelect.value = basemap;
+      }
+      syncImageryLabelsControl();
+    }
+    syncMapScaleSelect();
+  }
+
+  function loadLaunchWindowFiles(params) {
+    if (!params || !params.files || !params.files.length) {
+      return Promise.resolve();
+    }
+    return ensureDesktop().then(function (desktop) {
+      if (!desktop) {
+        return null;
+      }
+      var chain = Promise.resolve();
+      params.files.forEach(function (meta, index) {
+        chain = chain.then(function () {
+          return readDesktopFile(desktop.token, meta, {
+            replaceAll: index === 0,
+            keepMapView: true,
+          });
+        });
+      });
+      return chain.then(function () {
+        applyLaunchMapView(params);
+      });
+    });
+  }
+
+  function scheduleExternalEditUiRetries() {
+    if (!isLikelyDesktopViewer() || desktopExternalEditAvailable) {
+      return;
+    }
+    var attempts = 0;
+    function tick() {
+      refreshExternalEditorUi();
+      attempts += 1;
+      if (attempts < 15 && !desktopExternalEditAvailable && isLikelyDesktopViewer()) {
+        setTimeout(tick, 400);
+      }
+    }
+    tick();
+  }
+
+  function desktopApiFn(api, name) {
+    if (!api || typeof api[name] !== "function") {
+      return null;
+    }
+    return api[name];
+  }
+
+  function setExternalEditVisible(visible) {
+    if (externalEditSection) {
+      externalEditSection.classList.toggle("hidden", !visible);
+    }
+    if (toolbarEditKmlBtn) {
+      toolbarEditKmlBtn.classList.toggle("hidden", !visible);
+    }
+  }
+
+  function refreshExternalEditorUi() {
+    var api = getDesktopApi();
+    var hasEditApi = !!desktopApiFn(api, "begin_external_kml_edit");
+    var showChrome = hasEditApi || isLikelyDesktopViewer();
+    desktopExternalEditAvailable = hasEditApi;
+    setExternalEditVisible(showChrome);
+    updateFileActions();
+    if (!hasEditApi || !desktopApiFn(api, "external_editor_settings")) {
+      return;
+    }
+    Promise.resolve(api.external_editor_settings()).then(function (settings) {
+      if (externalEditorCommand && settings) {
+        externalEditorCommand.value = settings.command || "";
+      }
+    }).catch(function () {});
+  }
+
+  function reloadFromSourcePath() {
+    if (!currentDoc || !currentDoc.sourcePath) {
+      return Promise.resolve();
+    }
+    var path = currentDoc.sourcePath;
+    var replaceSourceId = activeSourceId;
+    return ensureDesktop().then(function (desktop) {
+      if (!desktop || typeof desktop.api.register_path !== "function") {
+        throw new Error("Could not reload that file.");
+      }
+      return Promise.resolve(desktop.api.register_path(path)).then(function (meta) {
+        if (!meta || !meta.token) {
+          throw new Error("Could not reload that file.");
+        }
+        return readDesktopFile(desktop.token, meta, { replaceSourceId: replaceSourceId });
+      });
+    });
+  }
+
+  function openExternalKmlEdit() {
+    if (!currentDoc || !currentDoc.sourcePath || !currentDoc.xmlDoc) {
+      setMessage("Open a KMZ or KML from disk to edit its KML externally.");
+      return;
+    }
+    if (!desktopExternalEditAvailable) {
+      setMessage("External KML editing is only available in the desktop app.");
+      return;
+    }
+    var root = getEditableRoot();
+    var kmlText = KmzSave.buildKmlText(currentDoc, root);
+    if (!kmlText) {
+      setMessage("This file cannot be edited as KML.");
+      return;
+    }
+    ensureDesktop().then(function (desktop) {
+      if (!desktop || typeof desktop.api.begin_external_kml_edit !== "function") {
+        setMessage("External KML editing is not available.");
+        return null;
+      }
+      if (
+        externalEditSessionId &&
+        typeof desktop.api.stop_external_kml_edit === "function"
+      ) {
+        desktop.api.stop_external_kml_edit(externalEditSessionId);
+        externalEditSessionId = null;
+      }
+      return Promise.resolve(
+        desktop.api.begin_external_kml_edit(
+          currentDoc.sourcePath,
+          currentDoc.kmlPath || "",
+          utf8ToBase64(kmlText)
+        )
+      ).then(function (result) {
+        if (!result || !result.sessionId) {
+          setMessage("Could not open an external editor.");
+          return;
+        }
+        externalEditSessionId = result.sessionId;
+        setMessage(
+          "Editing KML externally — save in your editor to refresh the map."
+        );
+      });
+    }).catch(function (err) {
+      setMessage((err && err.message) || "Could not open an external editor.");
+    });
+  }
+
+  window.kmzExternalKmlSaved = function () {
+    if (externalReloadTimer) {
+      clearTimeout(externalReloadTimer);
+    }
+    externalReloadTimer = setTimeout(function () {
+      externalReloadTimer = null;
+      setMessage("Reloading after external save…");
+      reloadFromSourcePath().catch(function (err) {
+        setMessage((err && err.message) || "Could not reload after external save.");
+      });
+    }, 120);
+  };
 
   function noteEdit() {
     if (!currentDoc) {
@@ -1311,6 +2087,10 @@
       return;
     }
     docDirty = true;
+    var active = activeLoadedSource();
+    if (active) {
+      active.docDirty = true;
+    }
     refreshFileLabel();
   }
 
@@ -1403,7 +2183,7 @@
     ];
   }
 
-  function readDesktopFile(token, meta) {
+  function readDesktopFile(token, meta, openOptions) {
     return fetch("/__desktop/file?token=" + encodeURIComponent(meta.token), {
       headers: { "X-Desktop-Token": token },
     }).then(function (response) {
@@ -1416,7 +2196,7 @@
       }
       return response.arrayBuffer().then(function (buffer) {
         var file = new File([buffer], meta.name || "untitled.kmz");
-        openFile(file, null, meta.path);
+        return openFile(file, null, meta.path, openOptions);
       });
     });
   }
@@ -1454,7 +2234,7 @@
   }
 
   function outputBlob() {
-    var root = GisMap.getRoot();
+    var root = getEditableRoot();
     if (!currentDoc || !root) {
       return Promise.reject(new Error("Open a KMZ or KML file first."));
     }
@@ -1535,7 +2315,7 @@
       return;
     }
     var downloadName = KmzSave.kmzFileName(currentDoc.fileName);
-    var root = GisMap.getRoot();
+    var root = getEditableRoot();
     saveInFlight = true;
     updateFileActions();
     setMessage("Saving " + downloadName + "…");
@@ -1679,7 +2459,7 @@
     return permit.then(function () {
       return RecentFiles.resolve(item);
     }).then(function (resolved) {
-      openFile(resolved.file, resolved.handle, item.path || null);
+      openFile(resolved.file, resolved.handle, item.path || null, { replaceAll: true });
     });
   }
 
@@ -1690,7 +2470,7 @@
         if (desktop && item.path && typeof desktop.api.register_path === "function") {
           return Promise.resolve(desktop.api.register_path(item.path)).then(function (meta) {
             if (meta && meta.token) {
-              return readDesktopFile(desktop.token, meta);
+              return readDesktopFile(desktop.token, meta, { replaceAll: true });
             }
             return openRecentFallback(item);
           });
@@ -1706,50 +2486,125 @@
       });
   }
 
-  function openFile(file, handle, sourcePath) {
+  function applyParsedFile(file, handle, sourcePath, parsed, openOptions) {
+    var replaceSourceId = openOptions && openOptions.replaceSourceId;
+    var replaceAll = !!(openOptions && openOptions.replaceAll);
+    var mapOptions =
+      openOptions && openOptions.keepMapView ? { keepMapView: true } : null;
+    var sourceId = replaceSourceId || nextSourceId();
+    var blobUrls = parsed.blobUrls || [];
+
+    var existing = replaceSourceId ? findLoadedSource(replaceSourceId) : null;
+    if (replaceSourceId && !existing) {
+      replaceSourceId = null;
+      sourceId = nextSourceId();
+    }
+
+    if (replaceSourceId && existing) {
+      revokeSourceBlobUrls(existing);
+      GisMap.replaceDocumentSource(replaceSourceId, parsed);
+      currentBlobUrls = currentBlobUrls.concat(blobUrls);
+      existing.doc = buildSourceDoc(parsed, handle, sourcePath || existing.doc.sourcePath);
+      existing.blobUrls = blobUrls;
+      existing.docDirty = false;
+      existing.visible = true;
+      activeSourceId = replaceSourceId;
+      syncCurrentDocFromActive();
+    } else if (replaceAll || !loadedSources.length) {
+      revokeAllBlobUrls();
+      loadedSources = [];
+      activeSourceId = null;
+      GisMap.loadDocument(parsed, sourceId, mapOptions);
+      currentBlobUrls = blobUrls.slice();
+      loadedSources.push({
+        id: sourceId,
+        doc: buildSourceDoc(parsed, handle, sourcePath),
+        blobUrls: blobUrls,
+        visible: true,
+        docDirty: false,
+      });
+      activeSourceId = sourceId;
+      syncCurrentDocFromActive();
+      Directions.clear();
+      resetSelectionState();
+    } else {
+      GisMap.appendDocument(parsed, sourceId, mapOptions);
+      currentBlobUrls = currentBlobUrls.concat(blobUrls);
+      loadedSources.push({
+        id: sourceId,
+        doc: buildSourceDoc(parsed, handle, sourcePath),
+        blobUrls: blobUrls,
+        visible: true,
+        docDirty: false,
+      });
+      activeSourceId = sourceId;
+      syncCurrentDocFromActive();
+      resetSelectionState();
+    }
+
+    docDirty = false;
+    refreshFileLabel();
+    updateFileActions();
+    renderTree(GisMap.getRoot());
+    renderInspect(null);
+    var warn = (parsed.warnings || []).join(" ");
+    setMessage(warn || "Loaded " + (parsed.fileName || file.name) + ".");
+    RecentFiles.remember(file, handle || null, sourcePath || null).then(renderRecent).catch(function () {});
+    refreshDuplicateWindowButton();
+  }
+
+  function openFile(file, handle, sourcePath, openOptions) {
     if (!file) {
-      return;
+      return Promise.resolve();
     }
     var lower = (file.name || "").toLowerCase();
     if (!/\.(kmz|kml)$/.test(lower)) {
       setMessage("Please choose a .kmz or .kml file.");
-      return;
+      return Promise.resolve();
     }
     setMessage("Loading " + file.name + "…");
-    KmzLoader.revokeUrls(currentBlobUrls);
-    currentBlobUrls = [];
 
-    KmzLoader.loadKmzOrKml(file)
+    return KmzLoader.loadKmzOrKml(file)
       .then(function (parsed) {
-        currentBlobUrls = parsed.blobUrls || [];
-        GisMap.loadDocument(parsed);
-        Directions.clear();
-        resetSelectionState();
-        currentDoc = {
-          fileName: parsed.fileName,
-          sourceKind: parsed.sourceKind,
-          sourcePath: sourcePath || null,
-          zip: parsed.zip || null,
-          kmlPath: parsed.kmlPath || "",
-          xmlDoc: parsed.xmlDoc || null,
-          originalBuffer: parsed.originalBuffer || null,
-          handle: handle || null,
-        };
-        docDirty = false;
-        refreshFileLabel();
-        updateFileActions();
-        renderTree(parsed.tree);
-        renderInspect(null);
-        var warn = (parsed.warnings || []).join(" ");
-        setMessage(warn || "");
-        RecentFiles.remember(file, handle || null, sourcePath || null).then(renderRecent).catch(function () {});
+        applyParsedFile(file, handle, sourcePath, parsed, openOptions);
       })
       .catch(function (err) {
-        GisMap.clearDocument();
-        Directions.clear();
-        resetFileUi();
+        if (!loadedSources.length) {
+          GisMap.clearDocument();
+          Directions.clear();
+          resetFileUi();
+        }
         setMessage(err.message || "Could not open that file.");
       });
+  }
+
+  function openFilesFromList(files, openOptions) {
+    if (!files || !files.length) {
+      return;
+    }
+    var list = Array.prototype.slice.call(files);
+    var valid = list.filter(function (file) {
+      return file && /\.(kmz|kml)$/i.test(file.name || "");
+    });
+    if (!valid.length) {
+      setMessage("Please choose .kmz or .kml files.");
+      return;
+    }
+    var chain = Promise.resolve();
+    valid.forEach(function (file, index) {
+      chain = chain.then(function () {
+        var options = index === 0 && openOptions ? openOptions : null;
+        if (index > 0 && openOptions && openOptions.replaceAll) {
+          options = null;
+        }
+        return KmzLoader.loadKmzOrKml(file).then(function (parsed) {
+          applyParsedFile(file, null, null, parsed, options);
+        });
+      });
+    });
+    chain.catch(function (err) {
+      setMessage((err && err.message) || "Could not open one of the files.");
+    });
   }
 
   function setActiveToolButton(tool) {
@@ -1764,6 +2619,8 @@
   }
 
   createNodeHoverBalloon();
+  initSidebarSectionFolding();
+  initSidebarPanelResize();
 
   var map = GisMap.init("map");
   GisMap.onFeatureHover(function (hit, related) {
@@ -1891,6 +2748,42 @@
   if (fileSaveBtn) {
     fileSaveBtn.addEventListener("click", saveTimestampedCopy);
   }
+  if (fileEditKmlBtn) {
+    fileEditKmlBtn.addEventListener("click", openExternalKmlEdit);
+  }
+  if (toolbarEditKmlBtn) {
+    toolbarEditKmlBtn.addEventListener("click", openExternalKmlEdit);
+  }
+  window.addEventListener("pywebviewready", function () {
+    refreshExternalEditorUi();
+    refreshDuplicateWindowButton();
+  });
+  if (externalEditorBrowse) {
+    externalEditorBrowse.addEventListener("click", function () {
+      ensureDesktop().then(function (desktop) {
+        if (!desktop || typeof desktop.api.choose_external_editor !== "function") {
+          return null;
+        }
+        return Promise.resolve(desktop.api.choose_external_editor()).then(function (settings) {
+          if (externalEditorCommand && settings) {
+            externalEditorCommand.value = settings.command || "";
+          }
+        });
+      });
+    });
+  }
+  if (externalEditorCommand) {
+    externalEditorCommand.addEventListener("change", function () {
+      ensureDesktop().then(function (desktop) {
+        if (!desktop || typeof desktop.api.set_external_editor !== "function") {
+          return null;
+        }
+        return Promise.resolve(
+          desktop.api.set_external_editor(externalEditorCommand.value || "")
+        );
+      });
+    });
+  }
 
   layerTreeEl.addEventListener("mouseover", function (event) {
     var row = event.target.closest(".layer-row");
@@ -1994,7 +2887,7 @@
     var picker;
     try {
       picker = window.showOpenFilePicker({
-        multiple: false,
+        multiple: true,
         types: browserFileTypes(),
       });
     } catch (err) {
@@ -2008,10 +2901,15 @@
         if (!handles.length) {
           return null;
         }
-        var handle = handles[0];
-        return handle.getFile().then(function (file) {
-          openFile(file, handle, null);
+        var chain = Promise.resolve();
+        handles.forEach(function (handle, index) {
+          chain = chain.then(function () {
+            return handle.getFile().then(function (file) {
+              openFile(file, handle, null, index === 0 && !loadedSources.length ? { replaceAll: true } : null);
+            });
+          });
         });
+        return chain;
       })
       .catch(function (err) {
         if (err && err.name === "AbortError") {
@@ -2054,12 +2952,75 @@
   }
 
   document.getElementById("btn-open").addEventListener("click", promptOpenFile);
+  if (duplicateWindowBtn) {
+    duplicateWindowBtn.addEventListener("click", function () {
+      var paths = collectDuplicateSourcePaths();
+      if (!paths.length) {
+        return;
+      }
+      ensureDesktop().then(function (desktop) {
+        if (!desktop || typeof desktop.api.duplicate_window !== "function") {
+          return null;
+        }
+        var center = map.getCenter();
+        var zoom = map.getZoom();
+        var basemap = GisMap.getActiveBasemapKey();
+        return Promise.resolve(
+          desktop.api.duplicate_window(paths, center.lat, center.lng, zoom, basemap)
+        ).then(function (ok) {
+          if (ok === false) {
+            setMessage("Could not open another window.");
+          }
+        });
+      });
+    });
+  }
   fileInput.addEventListener("change", function () {
-    if (fileInput.files && fileInput.files[0]) {
-      openFile(fileInput.files[0], null);
+    if (fileInput.files && fileInput.files.length) {
+      openFilesFromList(fileInput.files, loadedSources.length ? null : { replaceAll: true });
       fileInput.value = "";
     }
   });
+
+  if (loadedSourcesEl) {
+    loadedSourcesEl.addEventListener("change", function (event) {
+      var target = event.target;
+      if (!target || target.type !== "checkbox") {
+        return;
+      }
+      var row = target.closest(".loaded-source-row");
+      if (!row || !row.dataset.sourceId) {
+        return;
+      }
+      var source = findLoadedSource(row.dataset.sourceId);
+      if (source) {
+        source.visible = target.checked;
+      }
+      GisMap.setDocumentSourceVisible(row.dataset.sourceId, target.checked);
+      refreshHoverBalloon();
+    });
+    loadedSourcesEl.addEventListener("click", function (event) {
+      var removeBtn = event.target.closest(".loaded-source-remove");
+      if (removeBtn) {
+        var removeRow = removeBtn.closest(".loaded-source-row");
+        if (removeRow && removeRow.dataset.sourceId) {
+          removeLoadedSource(removeRow.dataset.sourceId);
+        }
+        return;
+      }
+      var nameBtn = event.target.closest(".loaded-source-name");
+      if (nameBtn) {
+        var nameRow = nameBtn.closest(".loaded-source-row");
+        if (nameRow && nameRow.dataset.sourceId) {
+          setActiveSource(nameRow.dataset.sourceId);
+        }
+      }
+    });
+  }
+
+  if (clearSourcesBtn) {
+    clearSourcesBtn.addEventListener("click", clearAllSources);
+  }
 
   var mapScaleSelect = document.getElementById("map-scale-select");
   var mapScaleSyncLock = false;
@@ -2128,9 +3089,34 @@
     });
   }
 
+  var imageryLabelsInput = document.getElementById("imagery-labels");
+  var imageryLabelsWrap = document.getElementById("imagery-labels-wrap");
+
+  function syncImageryLabelsControl() {
+    if (!imageryLabelsInput || !imageryLabelsWrap) {
+      return;
+    }
+    var key = GisMap.getActiveBasemapKey();
+    var supported = GisMap.basemapSupportsImageryLabels(key);
+    imageryLabelsInput.disabled = !supported;
+    imageryLabelsWrap.classList.toggle("is-disabled", !supported);
+    if (supported) {
+      imageryLabelsInput.checked = GisMap.getImageryLabelsEnabled();
+    }
+  }
+
   document.getElementById("basemap-select").addEventListener("change", function (event) {
     GisMap.setBasemap(event.target.value);
+    syncImageryLabelsControl();
   });
+
+  if (imageryLabelsInput) {
+    imageryLabelsInput.addEventListener("change", function (event) {
+      GisMap.setImageryLabelsEnabled(event.target.checked);
+    });
+  }
+
+  syncImageryLabelsControl();
 
   Array.prototype.forEach.call(document.querySelectorAll(".btn-tool"), function (btn) {
     btn.addEventListener("click", function () {
@@ -2228,31 +3214,59 @@
     dragDepth = 0;
     dropOverlay.classList.add("hidden");
     var transfer = event.dataTransfer;
-    var file = transfer && transfer.files && transfer.files[0];
+    var files = transfer && transfer.files;
+    if (files && files.length > 1) {
+      openFilesFromList(files, loadedSources.length ? null : { replaceAll: true });
+      return;
+    }
+    var file = files && files[0];
     var item = transfer && transfer.items && transfer.items[0];
     if (item && typeof item.getAsFileSystemHandle === "function") {
       item
         .getAsFileSystemHandle()
         .then(function (handle) {
           var fileHandle = handle && handle.kind === "file" ? handle : null;
-          openFile(file, fileHandle);
+          openFile(file, fileHandle, null, loadedSources.length ? null : { replaceAll: true });
         })
         .catch(function () {
-          openFile(file, null);
+          openFile(file, null, null, loadedSources.length ? null : { replaceAll: true });
         });
       return;
     }
-    openFile(file, null);
+    openFile(file, null, null, loadedSources.length ? null : { replaceAll: true });
   });
 
   function restoreLastFile(items) {
-    if (currentDoc || !items || !items.length) {
+    if (launchWindowParams || currentDoc || !items || !items.length) {
       return;
     }
     openRecent(items[0]);
   }
 
+  if (window.MapScreenshot) {
+    window.MapScreenshot.init({
+      mapWrap: mapWrap,
+      ensureDesktop: ensureDesktop,
+      setMessage: setMessage,
+      readJsonResponse: readJsonResponse,
+    });
+  }
+
   resetFileUi();
+  whenDesktopReady().then(function () {
+    refreshExternalEditorUi();
+    refreshDuplicateWindowButton();
+    scheduleExternalEditUiRetries();
+  });
+  if (launchWindowParams) {
+    whenDesktopReady()
+      .then(function () {
+        return loadLaunchWindowFiles(launchWindowParams);
+      })
+      .catch(function () {
+        setMessage("Could not open the file for this window.");
+      });
+  }
   if (recentFilesEl && window.RecentFiles) {
     Promise.all([RecentFiles.load(), whenDesktopReady()])
       .then(function (results) {
@@ -2262,6 +3276,10 @@
       })
       .catch(function () {
         renderRecent([]);
+      })
+      .then(function () {
+        refreshExternalEditorUi();
+        scheduleExternalEditUiRetries();
       });
   }
 })();

@@ -1,6 +1,6 @@
 # KMZ GIS Viewer
 
-A local, no-build web app that opens KMZ and KML files on a Leaflet map. It includes OSM/satellite/topo basemaps, a folder layer tree, feature inspection, and geodesic distance/area tools.
+A local, no-build web app that opens KMZ and KML files on a Leaflet map. It includes OSM/satellite/topo basemaps (satellite can show Esri road and place labels), a folder layer tree, feature inspection, and geodesic distance/area tools.
 
 ## Run
 
@@ -44,6 +44,7 @@ Use **Open** or drag a `.kmz` / `.kml` file onto the map. Demo files: `examples/
 | Edit layers | Copy, Cut, Paste, Delete, and Rename act on the selection. Double-click a feature or press `F2` to rename. Show and Hide apply to every selected layer |
 | Sort | **Sort** orders every folder’s contents by name |
 | Save copy | **Save copy** writes a new KMZ or KML beside the original, with a timestamp added to the file name |
+| Edit KML externally | Desktop app only: **Edit KML externally…** opens the document in Sublime Text (if installed) or another editor you choose. Saving in the editor reloads the map. Set a custom launcher under **Editor command**, or use the `KMZ_GIS_EDITOR` environment variable |
 
 The status bar shows cursor lat/lon, the active tool, and the last measurement in metric and imperial units. A scale bar stays on the map.
 

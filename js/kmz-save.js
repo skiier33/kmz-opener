@@ -283,11 +283,21 @@
     return generateKmz(zip);
   }
 
+  function buildKmlText(doc, root) {
+    if (!doc || !doc.xmlDoc) {
+      return null;
+    }
+    syncTree(root);
+    return serializeXml(doc.xmlDoc);
+  }
+
   global.KmzSave = {
     setElementName: setElementName,
     detachNode: detachNode,
     cloneSourceElement: cloneSourceElement,
     syncTree: syncTree,
+    serializeXml: serializeXml,
+    buildKmlText: buildKmlText,
     kmzFileName: kmzFileName,
     timestampedName: timestampedName,
     buildBlob: buildBlob,

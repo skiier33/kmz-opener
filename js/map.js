@@ -4,6 +4,9 @@
   var map = null;
   var basemaps = {};
   var activeBasemap = null;
+  var activeBasemapKey = "satellite";
+  var imageryLabelOverlays = null;
+  var imageryLabelsEnabled = true;
   var dataGroup = null;
   var layersById = {};
   var inspectCallback = null;
@@ -32,6 +35,62 @@
         }
       ),
     };
+  }
+
+  function createImageryLabelOverlays() {
+    var transportAttribution =
+      "Transportation &copy; Esri, HERE, Garmin, (c) OpenStreetMap contributors, and the GIS user community";
+    var placesAttribution = "Boundaries &amp; Places &copy; Esri";
+    return [
+      L.tileLayer(
+        "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}",
+        {
+          maxZoom: 19,
+          attribution: transportAttribution,
+        }
+      ),
+      L.tileLayer(
+        "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
+        {
+          maxZoom: 19,
+          attribution: placesAttribution,
+        }
+      ),
+    ];
+  }
+
+  function basemapSupportsImageryLabels(key) {
+    return key === "satellite";
+  }
+
+  function syncImageryLabelOverlays() {
+    if (!map || !imageryLabelOverlays) {
+      return;
+    }
+    imageryLabelOverlays.forEach(function (layer) {
+      if (map.hasLayer(layer)) {
+        map.removeLayer(layer);
+      }
+    });
+    if (!basemapSupportsImageryLabels(activeBasemapKey) || !imageryLabelsEnabled) {
+      return;
+    }
+    imageryLabelOverlays.forEach(function (layer) {
+      layer.addTo(map);
+    });
+  }
+
+  function setImageryLabelsEnabled(enabled) {
+    imageryLabelsEnabled = !!enabled;
+    syncImageryLabelOverlays();
+  }
+
+  function getImageryLabelsEnabled() {
+    return imageryLabelsEnabled;
+  }
+
+  function getActiveBasemapKey() {
+    return activeBasemapKey;
   }
 
   function sanitizeHtml(html) {
@@ -200,6 +259,9 @@
   }
 
   function bindPointLabel(marker, text, style) {
+    if (style && style.labelScale === 0) {
+      return;
+    }
     var label = text || "";
     if (!label) {
       return;
@@ -287,7 +349,8 @@
 
     (feature.geometries || []).forEach(function (geom) {
       if (geom.type === "Point") {
-        var pointLabel = node.name || node.type;
+        var pointLabel =
+          style && style.labelScale === 0 ? "" : node.name || node.type;
         geom.latlngs.forEach(function (ll) {
           var marker = pointToLayer(ll, style);
           bindPointLabel(marker, pointLabel, style);
@@ -779,16 +842,54 @@
   }
 
   var currentRoot = null;
+  var COMPOSITE_ROOT_ID = "__composite__";
+  var documentSources = [];
+
+  function prefixNodeIds(node, prefix) {
+    if (!node) {
+      return;
+    }
+    node.id = prefix + node.id;
+    (node.children || []).forEach(function (child) {
+      prefixNodeIds(child, prefix);
+    });
+  }
+
+  function rebuildCompositeRoot() {
+    if (!documentSources.length) {
+      currentRoot = null;
+      return null;
+    }
+    if (documentSources.length === 1) {
+      currentRoot = documentSources[0].root;
+      return currentRoot;
+    }
+    currentRoot = {
+      id: COMPOSITE_ROOT_ID,
+      name: "All layers",
+      type: "folder",
+      visible: true,
+      expanded: true,
+      children: documentSources.map(function (source) {
+        return source.root;
+      }),
+      feature: null,
+    };
+    return currentRoot;
+  }
 
   function init(divId) {
     basemaps = createBasemaps();
+    imageryLabelOverlays = createImageryLabelOverlays();
     map = L.map(divId, {
       zoomControl: true,
       doubleClickZoom: true,
       attributionControl: true,
     }).setView([20, 0], 2);
 
+    activeBasemapKey = "satellite";
     activeBasemap = basemaps.satellite.addTo(map);
+    syncImageryLabelOverlays();
     L.control.scale({ metric: true, imperial: true, position: "bottomleft" }).addTo(map);
     dataGroup = L.featureGroup().addTo(map);
     return map;
@@ -796,13 +897,15 @@
 
   function setBasemap(key) {
     var next = basemaps[key];
-    if (!next || next === activeBasemap) {
+    if (!next || key === activeBasemapKey) {
       return;
     }
     if (activeBasemap) {
       map.removeLayer(activeBasemap);
     }
+    activeBasemapKey = key;
     activeBasemap = next.addTo(map);
+    syncImageryLabelOverlays();
   }
 
   function clearDocument() {
@@ -811,6 +914,7 @@
     }
     layersById = {};
     currentRoot = null;
+    documentSources = [];
     selectedId = null;
     nodeSeq = 0;
     if (inspectCallback) {
@@ -818,15 +922,106 @@
     }
   }
 
-  function loadDocument(parsed) {
+  function loadDocument(parsed, sourceId, mapOptions) {
     clearDocument();
-    currentRoot = parsed.tree;
+    var id = sourceId || "file-1";
+    prefixNodeIds(parsed.tree, id + ":");
+    documentSources.push({ id: id, root: parsed.tree, visible: true });
+    rebuildCompositeRoot();
     var bounds = L.latLngBounds([]);
     walkAdd(parsed.tree, bounds);
-    if (bounds.isValid()) {
+    if (bounds.isValid() && !(mapOptions && mapOptions.keepMapView)) {
       map.fitBounds(bounds.pad(0.08));
     }
     return parsed.tree;
+  }
+
+  function appendDocument(parsed, sourceId, mapOptions) {
+    if (!sourceId) {
+      throw new Error("Source id is required.");
+    }
+    prefixNodeIds(parsed.tree, sourceId + ":");
+    documentSources.push({ id: sourceId, root: parsed.tree, visible: true });
+    var bounds = L.latLngBounds([]);
+    walkAdd(parsed.tree, bounds);
+    rebuildCompositeRoot();
+    if (bounds.isValid() && !(mapOptions && mapOptions.keepMapView)) {
+      var current = map.getBounds();
+      if (current && current.isValid()) {
+        bounds.extend(current);
+      }
+      map.fitBounds(bounds.pad(0.08));
+    }
+    return parsed.tree;
+  }
+
+  function replaceDocumentSource(sourceId, parsed) {
+    var idx = -1;
+    for (var i = 0; i < documentSources.length; i += 1) {
+      if (documentSources[i].id === sourceId) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx < 0) {
+      return false;
+    }
+    removeLayers(documentSources[idx].root);
+    prefixNodeIds(parsed.tree, sourceId + ":");
+    documentSources[idx].root = parsed.tree;
+    documentSources[idx].visible = true;
+    walkAdd(parsed.tree, L.latLngBounds([]));
+    rebuildCompositeRoot();
+    return true;
+  }
+
+  function removeDocumentSource(sourceId) {
+    var idx = -1;
+    for (var i = 0; i < documentSources.length; i += 1) {
+      if (documentSources[i].id === sourceId) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx < 0) {
+      return false;
+    }
+    removeLayers(documentSources[idx].root);
+    documentSources.splice(idx, 1);
+    rebuildCompositeRoot();
+    return true;
+  }
+
+  function setDocumentSourceVisible(sourceId, visible) {
+    var searchRoot = currentRoot;
+    for (var i = 0; i < documentSources.length; i += 1) {
+      if (documentSources[i].id !== sourceId) {
+        continue;
+      }
+      documentSources[i].visible = visible;
+      setLayerVisible(documentSources[i].root.id, visible, searchRoot || documentSources[i].root);
+      return true;
+    }
+    return false;
+  }
+
+  function getDocumentSourceRoot(sourceId) {
+    for (var i = 0; i < documentSources.length; i += 1) {
+      if (documentSources[i].id === sourceId) {
+        return documentSources[i].root;
+      }
+    }
+    return null;
+  }
+
+  function listDocumentSources() {
+    return documentSources.map(function (source) {
+      return {
+        id: source.id,
+        name: source.root.name || source.id,
+        visible: source.visible !== false,
+      };
+    });
   }
 
   function setFeatureClicksEnabled(enabled) {
@@ -932,7 +1127,17 @@
   global.GisMap = {
     init: init,
     setBasemap: setBasemap,
+    setImageryLabelsEnabled: setImageryLabelsEnabled,
+    getImageryLabelsEnabled: getImageryLabelsEnabled,
+    getActiveBasemapKey: getActiveBasemapKey,
+    basemapSupportsImageryLabels: basemapSupportsImageryLabels,
     loadDocument: loadDocument,
+    appendDocument: appendDocument,
+    replaceDocumentSource: replaceDocumentSource,
+    removeDocumentSource: removeDocumentSource,
+    setDocumentSourceVisible: setDocumentSourceVisible,
+    getDocumentSourceRoot: getDocumentSourceRoot,
+    listDocumentSources: listDocumentSources,
     clearDocument: clearDocument,
     setLayerVisible: setLayerVisible,
     setFeatureClicksEnabled: setFeatureClicksEnabled,
