@@ -1359,7 +1359,22 @@
     });
   }
 
+  function hostedDesktopSession() {
+    if (!window.__kmzDesktopToken) {
+      return null;
+    }
+    return {
+      api: window.__kmzDesktopApi || {},
+      token: window.__kmzDesktopToken,
+    };
+  }
+
   function ensureDesktop() {
+    var hosted = hostedDesktopSession();
+    if (hosted) {
+      desktopSession = hosted;
+      return Promise.resolve(hosted);
+    }
     var api = getDesktopApi();
     if (!api || typeof api.session_token !== "function") {
       return Promise.resolve(null);
@@ -1405,6 +1420,20 @@
       });
     });
   }
+
+  window.kmzHostLoad = function (meta) {
+    if (!meta || !meta.token) {
+      return Promise.reject(new Error("That KMZ could not be opened."));
+    }
+    if (meta.session) {
+      window.__kmzDesktopToken = meta.session;
+    }
+    var token = window.__kmzDesktopToken;
+    if (!token) {
+      return Promise.reject(new Error("Map file access is not ready."));
+    }
+    return readDesktopFile(token, meta);
+  };
 
   function downloadBlob(blob, downloadName) {
     var url = URL.createObjectURL(blob);

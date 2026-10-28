@@ -16,9 +16,11 @@ datas += webview_datas
 binaries += webview_binaries
 hiddenimports += webview_hidden
 
+hiddenimports.append("desktop.server")
+
 a = Analysis(
     ["desktop/app.py"],
-    pathex=[],
+    pathex=["."],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
