@@ -7,6 +7,7 @@ import json
 import os
 import secrets
 import shlex
+import shutil
 import subprocess
 import threading
 import time
@@ -28,6 +29,76 @@ _SUBLIME_CANDIDATES = (
     r"%ProgramFiles%\Sublime Text 3\subl.exe",
     r"%LocalAppData%\Programs\Sublime Text\subl.exe",
 )
+
+_GOTO_PATH = os.path.join(_SETTINGS_DIR, "editor-goto.json")
+
+_SUBLIME_GOTO_PLUGIN = '''\
+import json
+import os
+
+import sublime
+import sublime_plugin
+
+
+def _goto_path():
+    base = os.path.join(os.environ.get("LOCALAPPDATA", ""), "KMZ-GIS-Viewer")
+    return os.path.join(base, "editor-goto.json")
+
+
+class KmzGisGotoListener(sublime_plugin.EventListener):
+    """Select a KML element range after KMZ GIS Viewer opens a file."""
+
+    def on_load(self, view):
+        self._maybe_goto(view)
+
+    def on_activated(self, view):
+        self._maybe_goto(view)
+
+    def _maybe_goto(self, view):
+        path = _goto_path()
+        file_name = view.file_name()
+        if not file_name or not os.path.isfile(path):
+            return
+        try:
+            with open(path, encoding="utf-8") as handle:
+                data = json.load(handle)
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            return
+        if not isinstance(data, dict):
+            return
+        target = os.path.normcase(os.path.normpath(data.get("path", "")))
+        current = os.path.normcase(os.path.normpath(file_name))
+        if target != current:
+            return
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        start_line = max(1, int(data.get("startLine", 1)))
+        start_col = max(1, int(data.get("startColumn", 1)))
+        end_line = max(start_line, int(data.get("endLine", start_line)))
+        end_col = max(1, int(data.get("endColumn", start_col)))
+        try:
+            start_pt = view.text_point(start_line - 1, start_col - 1)
+            end_pt = view.text_point(end_line - 1, end_col - 1)
+        except (ValueError, TypeError):
+            return
+        if end_pt < start_pt:
+            end_pt = start_pt
+        view.sel().clear()
+        view.sel().add(sublime.Region(start_pt, end_pt))
+        view.show(start_pt)
+'''
+
+
+@dataclass(frozen=True)
+class EditorGoto:
+    """Line/column range (1-based) to reveal in an external editor."""
+
+    start_line: int
+    start_column: int
+    end_line: int
+    end_column: int
 
 
 def _expand(path: str) -> str:
@@ -84,22 +155,147 @@ def _find_sublime() -> Optional[str]:
     return None
 
 
-def _launch_editor(edit_path: str) -> None:
+def _sublime_packages_dir() -> Optional[str]:
+    """Return the Sublime Text Packages directory, if present."""
+    appdata = os.environ.get("APPDATA") or ""
+    for name in ("Sublime Text", "Sublime Text 3"):
+        path = os.path.join(appdata, name, "Packages")
+        if os.path.isdir(path):
+            return path
+    return None
+
+
+def _ensure_sublime_goto_plugin() -> None:
+    """Install a small Sublime plugin that selects the opened KML node range."""
+    packages = _sublime_packages_dir()
+    if not packages:
+        return
+    plugin_dir = os.path.join(packages, "KmzGisGoto")
+    plugin_path = os.path.join(plugin_dir, "kmz_gis_goto.py")
+    try:
+        os.makedirs(plugin_dir, exist_ok=True)
+        existing = ""
+        if os.path.isfile(plugin_path):
+            with open(plugin_path, encoding="utf-8") as handle:
+                existing = handle.read()
+        if existing != _SUBLIME_GOTO_PLUGIN:
+            with open(plugin_path, "w", encoding="utf-8") as handle:
+                handle.write(_SUBLIME_GOTO_PLUGIN)
+    except OSError:
+        pass
+
+
+def _write_editor_goto(edit_path: str, goto: EditorGoto) -> None:
+    """Persist goto metadata for editors that read it after launch."""
+    payload = {
+        "path": os.path.normpath(edit_path),
+        "startLine": goto.start_line,
+        "startColumn": goto.start_column,
+        "endLine": goto.end_line,
+        "endColumn": goto.end_column,
+    }
+    try:
+        os.makedirs(_SETTINGS_DIR, exist_ok=True)
+        with open(_GOTO_PATH, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle)
+    except OSError:
+        pass
+
+
+def _expand_editor_command(command: str, edit_path: str, goto: Optional[EditorGoto]) -> List[str]:
+    """Split a configured editor command and substitute goto placeholders."""
+    mapping = {
+        "{path}": edit_path,
+        "{line}": str(goto.start_line if goto else 1),
+        "{column}": str(goto.start_column if goto else 1),
+        "{lineEnd}": str(goto.end_line if goto else 1),
+        "{columnEnd}": str(goto.end_column if goto else 1),
+    }
+    expanded = command
+    for key, value in mapping.items():
+        expanded = expanded.replace(key, value)
+    parts = shlex.split(expanded, posix=os.name != "nt")
+    if not parts:
+        return []
+    has_path = "{path}" in command
+    if not has_path and edit_path not in parts:
+        if goto:
+            parts.append(f"{edit_path}:{goto.start_line}:{goto.start_column}")
+        else:
+            parts.append(edit_path)
+    return parts
+
+
+def _find_vscode() -> Optional[str]:
+    """Return the VS Code launcher, if available on PATH."""
+    for name in ("code", "code.cmd"):
+        path = shutil.which(name)
+        if path:
+            return path
+    return None
+
+
+def _launch_editor(edit_path: str, goto: Optional[EditorGoto] = None) -> None:
     """Open the KML file in the user's configured or default editor."""
+    if goto:
+        _write_editor_goto(edit_path, goto)
     command = editor_command()
     if command:
-        parts = shlex.split(command, posix=os.name != "nt")
+        parts = _expand_editor_command(command, edit_path, goto)
         if parts:
-            subprocess.Popen(parts + [edit_path], close_fds=True)
+            subprocess.Popen(parts, close_fds=True)
             return
     sublime = _find_sublime()
     if sublime:
-        subprocess.Popen([sublime, edit_path], close_fds=True)
+        _ensure_sublime_goto_plugin()
+        target = edit_path
+        if goto:
+            target = f"{edit_path}:{goto.start_line}:{goto.start_column}"
+        subprocess.Popen([sublime, target], close_fds=True)
+        return
+    vscode = _find_vscode()
+    if vscode and goto:
+        spec = (
+            f"{edit_path}:{goto.start_line}:{goto.start_column}"
+            f"-{goto.end_line}:{goto.end_column}"
+        )
+        subprocess.Popen([vscode, "-g", spec], close_fds=True)
+        return
+    if vscode:
+        subprocess.Popen([vscode, "-g", edit_path], close_fds=True)
         return
     if os.name == "nt":
         os.startfile(edit_path)  # noqa: S606
         return
     subprocess.Popen(["xdg-open", edit_path], close_fds=True)
+
+
+def parse_editor_goto(
+    start_line: object,
+    start_column: object,
+    end_line: object,
+    end_column: object,
+) -> Optional[EditorGoto]:
+    """Build an EditorGoto when the caller passed valid line/column values."""
+    try:
+        sl = int(start_line or 0)
+        sc = int(start_column or 0)
+        el = int(end_line or 0)
+        ec = int(end_column or 0)
+    except (TypeError, ValueError):
+        return None
+    if sl < 1 or sc < 1:
+        return None
+    if el < 1:
+        el = sl
+    if ec < 1:
+        ec = sc
+    return EditorGoto(
+        start_line=sl,
+        start_column=sc,
+        end_line=max(sl, el),
+        end_column=ec,
+    )
 
 
 def _normalize_zip_path(path: str) -> str:
@@ -200,6 +396,7 @@ class ExternalEditManager:
         source_path: str,
         kml_inner_path: str,
         kml_bytes: bytes,
+        goto: Optional[EditorGoto] = None,
     ) -> dict:
         """Write KML for editing, launch the editor, and start watching for saves.
 
@@ -207,6 +404,7 @@ class ExternalEditManager:
             source_path: Absolute path to the opened .kml or .kmz file.
             kml_inner_path: KML entry inside a KMZ, or empty for plain .kml files.
             kml_bytes: UTF-8 KML document to open in the editor.
+            goto: Optional 1-based line/column range to reveal in the editor.
 
         Returns:
             Metadata for the page, including session_id and edit_path.
@@ -261,7 +459,7 @@ class ExternalEditManager:
         with self._lock:
             self._sessions[session_id] = session
 
-        _launch_editor(edit_path)
+        _launch_editor(edit_path, goto)
 
         return {
             "sessionId": session_id,

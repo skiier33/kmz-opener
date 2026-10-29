@@ -68,6 +68,32 @@
     nameEl.textContent = name;
   }
 
+  function setPlacemarkDescription(placemarkEl, description) {
+    if (!placemarkEl || localName(placemarkEl) !== "placemark") {
+      return;
+    }
+    var text = String(description != null ? description : "");
+    var descEl = childByLocalName(placemarkEl, "description");
+    if (!text.trim()) {
+      if (descEl) {
+        placemarkEl.removeChild(descEl);
+      }
+      return;
+    }
+    if (!descEl) {
+      descEl = createElementNS(placemarkEl, "description");
+      var nameEl = childByLocalName(placemarkEl, "name");
+      if (nameEl && nameEl.nextSibling) {
+        placemarkEl.insertBefore(descEl, nameEl.nextSibling);
+      } else if (nameEl) {
+        placemarkEl.appendChild(descEl);
+      } else {
+        placemarkEl.insertBefore(descEl, placemarkEl.firstChild);
+      }
+    }
+    descEl.textContent = text;
+  }
+
   function createElementNS(parent, localName) {
     var ns = parent.namespaceURI;
     return ns
@@ -99,6 +125,121 @@
       }
     }
     return null;
+  }
+
+  function deepFirst(el, name) {
+    if (!el) {
+      return null;
+    }
+    var wanted = name.toLowerCase();
+    if (localName(el) === wanted) {
+      return el;
+    }
+    var nodes = el.getElementsByTagName("*");
+    for (var i = 0; i < nodes.length; i += 1) {
+      if (localName(nodes[i]) === wanted) {
+        return nodes[i];
+      }
+    }
+    return null;
+  }
+
+  function firstPointElement(placemarkEl) {
+    if (!placemarkEl || localName(placemarkEl) !== "placemark") {
+      return null;
+    }
+    var direct = childByLocalName(placemarkEl, "Point");
+    if (direct) {
+      return direct;
+    }
+    var multi = childByLocalName(placemarkEl, "MultiGeometry");
+    if (multi) {
+      return deepFirst(multi, "Point");
+    }
+    return deepFirst(placemarkEl, "Point");
+  }
+
+  function readCoordinateAltitude(coordsEl) {
+    if (!coordsEl || !coordsEl.textContent) {
+      return 0;
+    }
+    var parts = coordsEl.textContent.trim().split(",");
+    if (parts.length < 3) {
+      return 0;
+    }
+    var alt = parseFloat(parts[2]);
+    return Number.isNaN(alt) ? 0 : alt;
+  }
+
+  function setPlacemarkPointCoordinates(placemarkEl, lat, lng, alt) {
+    var pointEl = firstPointElement(placemarkEl);
+    if (!pointEl) {
+      return false;
+    }
+    var coordsEl = childByLocalName(pointEl, "coordinates");
+    if (!coordsEl) {
+      coordsEl = createElementNS(pointEl, "coordinates");
+      pointEl.appendChild(coordsEl);
+    }
+    var elevation = alt;
+    if (elevation === undefined || elevation === null || Number.isNaN(elevation)) {
+      elevation = readCoordinateAltitude(coordsEl);
+    }
+    coordsEl.textContent = lng + "," + lat + "," + elevation;
+    return true;
+  }
+
+  function findExtendedDataField(extEl, fieldName) {
+    if (!extEl || !fieldName) {
+      return null;
+    }
+    var wanted = String(fieldName).toLowerCase();
+    var dataEls = extEl.getElementsByTagName("*");
+    var i;
+    for (i = 0; i < dataEls.length; i += 1) {
+      var el = dataEls[i];
+      var tag = localName(el);
+      if (tag !== "data" && tag !== "simpledata") {
+        continue;
+      }
+      if ((el.getAttribute("name") || "").toLowerCase() !== wanted) {
+        continue;
+      }
+      return el;
+    }
+    return null;
+  }
+
+  function setExtendedDataValue(placemarkEl, fieldName, value) {
+    if (!placemarkEl || localName(placemarkEl) !== "placemark" || !fieldName) {
+      return;
+    }
+    var extEl = childByLocalName(placemarkEl, "ExtendedData");
+    if (!extEl) {
+      extEl = createElementNS(placemarkEl, "ExtendedData");
+      var anchor = firstGeometryChild(placemarkEl);
+      if (anchor) {
+        placemarkEl.insertBefore(extEl, anchor);
+      } else {
+        placemarkEl.appendChild(extEl);
+      }
+    }
+    var fieldEl = findExtendedDataField(extEl, fieldName);
+    if (!fieldEl) {
+      fieldEl = createElementNS(extEl, "Data");
+      fieldEl.setAttribute("name", fieldName);
+      extEl.appendChild(fieldEl);
+    }
+    if (localName(fieldEl) === "simpledata") {
+      fieldEl.textContent = String(value);
+      return;
+    }
+    var valueEl = childByLocalName(fieldEl, "value");
+    if (!valueEl) {
+      valueEl = createElementNS(fieldEl, "value");
+      fieldEl.appendChild(valueEl);
+    }
+    valueEl.textContent = String(value);
   }
 
   function setStyleIconHref(styleEl, href) {
@@ -418,6 +559,81 @@
     return xml;
   }
 
+  function offsetToLineColumn(text, offset) {
+    var line = 1;
+    var column = 1;
+    var i = 0;
+    var len = Math.min(offset, text.length);
+    while (i < len) {
+      var ch = text.charCodeAt(i);
+      if (ch === 10) {
+        line += 1;
+        column = 1;
+      } else if (ch !== 13) {
+        column += 1;
+      }
+      i += 1;
+    }
+    return { line: line, column: column };
+  }
+
+  /** Return 1-based line/column range for a live KML element in the document. */
+  function findSourceElementRange(xmlDoc, sourceEl) {
+    if (!xmlDoc || !sourceEl || !sourceEl.parentNode) {
+      return null;
+    }
+    var uid =
+      "KMZGIS" +
+      String(Date.now()) +
+      Math.random().toString(36).slice(2, 10);
+    var parent = sourceEl.parentNode;
+    var cStart = xmlDoc.createComment("B" + uid);
+    var cEnd = xmlDoc.createComment("E" + uid);
+    parent.insertBefore(cStart, sourceEl);
+    if (sourceEl.nextSibling) {
+      parent.insertBefore(cEnd, sourceEl.nextSibling);
+    } else {
+      parent.appendChild(cEnd);
+    }
+    var text;
+    try {
+      text = serializeXml(xmlDoc);
+    } finally {
+      if (cStart.parentNode) {
+        cStart.parentNode.removeChild(cStart);
+      }
+      if (cEnd.parentNode) {
+        cEnd.parentNode.removeChild(cEnd);
+      }
+    }
+    var mStart = "<!--B" + uid + "-->";
+    var mEnd = "<!--E" + uid + "-->";
+    var i0 = text.indexOf(mStart);
+    var i1 = text.indexOf(mEnd);
+    if (i0 < 0 || i1 < 0 || i1 <= i0) {
+      return null;
+    }
+    var start = i0 + mStart.length;
+    while (start < text.length && /\s/.test(text.charAt(start))) {
+      start += 1;
+    }
+    var end = i1;
+    while (end > start && /\s/.test(text.charAt(end - 1))) {
+      end -= 1;
+    }
+    if (end <= start) {
+      return null;
+    }
+    var startPos = offsetToLineColumn(text, start);
+    var endPos = offsetToLineColumn(text, end);
+    return {
+      startLine: startPos.line,
+      startColumn: startPos.column,
+      endLine: endPos.line,
+      endColumn: endPos.column,
+    };
+  }
+
   function pad(value) {
     return value < 10 ? "0" + value : String(value);
   }
@@ -552,6 +768,7 @@
 
   global.KmzSave = {
     setElementName: setElementName,
+    setPlacemarkDescription: setPlacemarkDescription,
     setStyleIconHref: setStyleIconHref,
     clearStyleIconHref: clearStyleIconHref,
     setStyleIconColor: setStyleIconColor,
@@ -560,11 +777,14 @@
     clearPlacemarkIconHref: clearPlacemarkIconHref,
     setPlacemarkIconScale: setPlacemarkIconScale,
     setPlacemarkIconColor: setPlacemarkIconColor,
+    setPlacemarkPointCoordinates: setPlacemarkPointCoordinates,
+    setExtendedDataValue: setExtendedDataValue,
     materializePointIcons: materializePointIcons,
     detachNode: detachNode,
     cloneSourceElement: cloneSourceElement,
     syncTree: syncTree,
     serializeXml: serializeXml,
+    findSourceElementRange: findSourceElementRange,
     buildKmlText: buildKmlText,
     kmzFileName: kmzFileName,
     timestampedName: timestampedName,

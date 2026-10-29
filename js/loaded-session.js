@@ -47,12 +47,24 @@
     if (!raw || typeof raw !== "object" || !Array.isArray(raw.entries)) {
       return null;
     }
-    var entries = raw.entries.filter(function (entry) {
-      if (!entry || !entry.name) {
-        return false;
-      }
-      return !!(entry.path || entry.handle || entry.snapshot);
-    });
+    var entries = raw.entries
+      .filter(function (entry) {
+        if (!entry || !entry.name) {
+          return false;
+        }
+        return !!(entry.path || entry.handle || entry.snapshot);
+      })
+      .map(function (entry) {
+        return {
+          name: entry.name,
+          path: entry.path || null,
+          visible: entry.visible !== false,
+          handle: entry.handle || null,
+          snapshot: entry.snapshot || null,
+          preferSnapshot: !!entry.preferSnapshot,
+          hiddenNamePaths: Array.isArray(entry.hiddenNamePaths) ? entry.hiddenNamePaths : [],
+        };
+      });
     if (!entries.length) {
       return null;
     }
@@ -60,7 +72,11 @@
     if (!Number.isFinite(activeIndex) || activeIndex < 0 || activeIndex >= entries.length) {
       activeIndex = 0;
     }
-    return { entries: entries, activeIndex: activeIndex };
+    var session = { entries: entries, activeIndex: activeIndex };
+    if (raw.gui && typeof raw.gui === "object") {
+      session.gui = raw.gui;
+    }
+    return session;
   }
 
   function readSession() {

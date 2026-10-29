@@ -18,6 +18,7 @@ from desktop.external_edit import (  # noqa: E402
     decode_kml_payload,
     editor_command,
     set_editor_command,
+    parse_editor_goto,
 )
 from desktop.server import (  # noqa: E402
     DESKTOP_TOKEN,
@@ -452,6 +453,10 @@ class DesktopApi:
         source_path: str,
         kml_inner_path: str,
         kml_b64: str,
+        goto_start_line: int = 0,
+        goto_start_column: int = 0,
+        goto_end_line: int = 0,
+        goto_end_column: int = 0,
     ) -> Optional[dict]:
         """
         Open the document KML in an external editor and watch for saves.
@@ -460,6 +465,10 @@ class DesktopApi:
             source_path: Absolute path to the opened KMZ or KML file.
             kml_inner_path: KML path inside a KMZ, or empty for .kml files.
             kml_b64: Base64-encoded UTF-8 KML currently shown in the viewer.
+            goto_start_line: Optional 1-based start line to reveal in the editor.
+            goto_start_column: Optional 1-based start column to reveal.
+            goto_end_line: Optional 1-based end line for selection highlight.
+            goto_end_column: Optional 1-based end column for selection highlight.
 
         Returns:
             Session metadata, or None when editing cannot start.
@@ -473,8 +482,14 @@ class DesktopApi:
         except ValueError:
             return None
         inner = kml_inner_path if isinstance(kml_inner_path, str) else ""
+        goto = parse_editor_goto(
+            goto_start_line,
+            goto_start_column,
+            goto_end_line,
+            goto_end_column,
+        )
         try:
-            return _EXTERNAL_EDIT.begin(source_path, inner, payload)
+            return _EXTERNAL_EDIT.begin(source_path, inner, payload, goto)
         except (OSError, ValueError):
             return None
 

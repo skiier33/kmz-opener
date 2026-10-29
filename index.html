@@ -12,32 +12,103 @@
   </head>
   <body>
     <div id="app">
+      <nav class="menubar" aria-label="Application menu">
+        <div class="menubar-root">
+          <div class="menubar-menu" id="menubar-file">
+            <button
+              type="button"
+              class="menubar-top-item"
+              id="menubar-file-trigger"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="menubar-file-popup"
+            >
+              File
+            </button>
+            <div class="menubar-popup hidden" id="menubar-file-popup" role="menu" aria-labelledby="menubar-file-trigger">
+              <button
+                id="btn-open"
+                class="menubar-menu-item"
+                type="button"
+                role="menuitem"
+                title="Add KMZ or KML files to the map"
+              >
+                Open…
+              </button>
+              <button
+                id="btn-save-as"
+                class="menubar-menu-item"
+                type="button"
+                role="menuitem"
+                disabled
+                title="Save the current map as a KMZ file"
+              >
+                Save As…
+              </button>
+              <button
+                id="btn-save-all"
+                class="menubar-menu-item"
+                type="button"
+                role="menuitem"
+                disabled
+                title="Save all edited KMZ and KML files in this session back to their original locations"
+              >
+                Save All
+              </button>
+              <div class="menubar-sep" role="separator"></div>
+              <button
+                type="button"
+                class="menubar-menu-item"
+                id="btn-save-app-state"
+                role="menuitem"
+                disabled
+                title="Save loaded files, map view, and layer visibility to a JSON file"
+              >
+                Save state…
+              </button>
+              <button
+                type="button"
+                class="menubar-menu-item"
+                id="btn-load-app-state"
+                role="menuitem"
+                title="Load a previously saved viewer state file"
+              >
+                Load state…
+              </button>
+              <button
+                type="button"
+                class="menubar-menu-item"
+                id="btn-clear-sources"
+                role="menuitem"
+                disabled
+                title="Remove all loaded files from the map"
+              >
+                Clear all files
+              </button>
+            </div>
+          </div>
+        </div>
+        <input
+          id="file-input"
+          class="file-input"
+          type="file"
+          multiple
+          accept=".kmz,.kml,application/vnd.google-earth.kmz,application/vnd.google-earth.kml+xml"
+          tabindex="-1"
+          aria-hidden="true"
+        />
+        <input
+          id="app-state-file-input"
+          type="file"
+          accept=".json,.kmzgis-state.json,application/json"
+          hidden
+          tabindex="-1"
+          aria-hidden="true"
+        />
+      </nav>
+
       <header class="toolbar">
         <div class="toolbar-group">
-          <button id="btn-open" class="btn" type="button" title="Add KMZ or KML files to the map">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                fill="currentColor"
-                d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"
-              />
-            </svg>
-            Open
-          </button>
-          <button
-            id="btn-save-as"
-            class="btn"
-            type="button"
-            disabled
-            title="Save the current map as a KMZ file"
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                fill="currentColor"
-                d="M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-4-4zm-5 16a3 3 0 1 1 0-6 3 3 0 0 1 0 6zm3-10H5V5h10v4z"
-              />
-            </svg>
-            Save As…
-          </button>
           <button
             id="btn-duplicate-window"
             class="btn hidden"
@@ -71,15 +142,6 @@
           <div class="toolbar-file-cell" aria-live="polite">
             <span id="toolbar-file-name" class="toolbar-file-name muted"></span>
           </div>
-          <input
-            id="file-input"
-            class="file-input"
-            type="file"
-            multiple
-            accept=".kmz,.kml,application/vnd.google-earth.kmz,application/vnd.google-earth.kml+xml"
-            tabindex="-1"
-            aria-hidden="true"
-          />
         </div>
 
         <div class="toolbar-basemap-group">
@@ -224,9 +286,6 @@
             <div id="loaded-sources" class="loaded-sources" aria-label="Loaded KMZ and KML files">
               <p class="muted empty-hint">No files loaded — use Open or drag files onto the map.</p>
             </div>
-            <button type="button" class="btn btn-subtle" id="btn-clear-sources" disabled title="Remove all loaded files from the map">
-              Clear all
-            </button>
           </section>
 
           <section class="sidebar-section">
@@ -243,7 +302,44 @@
                 Save copy
               </button>
             </div>
-            <div id="file-point-icons" class="file-point-icons" hidden aria-label="Point icon settings"></div>
+          </section>
+
+          <section class="sidebar-section sidebar-point-icons" id="point-icons-section" hidden>
+            <h2>Point icons</h2>
+            <div id="file-point-icons" class="file-point-icons" aria-label="Point icon settings"></div>
+          </section>
+
+          <section class="sidebar-section sidebar-csv-coords">
+            <h2>Coords from CSV</h2>
+            <div class="csv-coords" aria-label="Update coordinates from CSV">
+              <p class="muted csv-coords-hint">
+                Choose a CSV with columns <strong>BH_ID</strong>, <strong>LAT</strong>, and
+                <strong>LONG</strong>, then a KMZ or KML. Each point placemark must have
+                <strong>&lt;Point&gt;&lt;coordinates&gt;</strong>. Match CSV rows by ExtendedData
+                <strong>BH_ID</strong> or by <strong>&lt;name&gt;</strong> (e.g. B6A). The file is
+                checked before any edits. <strong>BH_ID</strong> matching tolerates common
+                spelling differences (e.g. B6A vs B-6A, B06A, or BH-6A).
+              </p>
+              <button type="button" class="btn" id="btn-csv-coords-update" title="Pick CSV, then KMZ, and update matching point placemarks">
+                Update from CSV…
+              </button>
+              <input
+                id="csv-coords-input"
+                type="file"
+                accept=".csv,text/csv"
+                hidden
+                tabindex="-1"
+                aria-hidden="true"
+              />
+              <input
+                id="csv-coords-kmz-input"
+                type="file"
+                accept=".kmz,.kml,application/vnd.google-earth.kmz,application/vnd.google-earth.kml+xml"
+                hidden
+                tabindex="-1"
+                aria-hidden="true"
+              />
+            </div>
           </section>
 
           <section class="sidebar-section sidebar-kml-editor hidden" id="external-edit-section">
@@ -252,6 +348,14 @@
               <p class="muted external-edit-hint">
                 Edit the KML in Sublime Text or another editor. The map reloads when you save.
               </p>
+              <label class="external-edit-field hidden" id="external-edit-source-wrap">
+                <span class="external-edit-label">File to edit</span>
+                <select
+                  id="external-edit-source"
+                  aria-label="Loaded KMZ or KML to edit externally"
+                  disabled
+                ></select>
+              </label>
               <label class="external-edit-field">
                 <span class="external-edit-label">Editor command</span>
                 <div class="external-edit-row">
@@ -261,7 +365,7 @@
                     placeholder="Sublime Text (auto) if installed"
                     spellcheck="false"
                     autocomplete="off"
-                    title="Executable path or full command (e.g. C:\Program Files\Sublime Text\subl.exe)"
+                    title="Executable or full command. Optional placeholders: {path}, {line}, {column}, {lineEnd}, {columnEnd}"
                   />
                   <button id="external-editor-browse" class="btn" type="button" title="Choose editor">
                     Browse…
@@ -414,6 +518,46 @@
           <div id="drop-overlay" class="drop-overlay hidden" aria-hidden="true">
             <div class="drop-card">Drop KMZ or KML to open</div>
           </div>
+          <div
+            id="feature-properties-dialog"
+            class="feature-properties-dialog hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="feature-properties-title"
+            aria-hidden="true"
+          >
+            <div class="feature-properties-panel">
+              <header class="feature-properties-header">
+                <div>
+                  <h2 id="feature-properties-title">Properties</h2>
+                  <p id="feature-properties-subtitle" class="muted feature-properties-subtitle"></p>
+                </div>
+                <button
+                  type="button"
+                  class="btn btn-subtle feature-properties-close"
+                  id="feature-properties-close"
+                  aria-label="Close properties"
+                >
+                  ×
+                </button>
+              </header>
+              <div class="feature-properties-table-wrap">
+                <table class="feature-properties-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Tag</th>
+                      <th scope="col">Value</th>
+                    </tr>
+                  </thead>
+                  <tbody id="feature-properties-body"></tbody>
+                </table>
+              </div>
+              <footer class="feature-properties-footer">
+                <button type="button" class="btn btn-subtle" id="feature-properties-cancel">Cancel</button>
+                <button type="button" class="btn" id="feature-properties-save" disabled>Save to KML</button>
+              </footer>
+            </div>
+          </div>
         </main>
 
         <div
@@ -548,11 +692,6 @@
                     </svg>
                   </button>
                 </div>
-                <div class="layer-toolbar-group" role="group" aria-label="Export">
-                  <button type="button" class="layer-toolbar-btn" id="layers-export" disabled title="Export the current map to a KMZ file">
-                    Export
-                  </button>
-                </div>
               </div>
               <div id="layer-tree" class="layer-tree" role="tree" aria-multiselectable="true">
                 <p class="muted empty-hint">Open or add a KMZ or KML file (+) to see folders and features.</p>
@@ -577,10 +716,14 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="js/point-icons.js"></script>
     <script src="js/kml-parse.js"></script>
+    <script src="js/kml-properties.js"></script>
+    <script src="js/bh-id-match.js"></script>
     <script src="js/recent-files.js"></script>
     <script src="js/loaded-session.js"></script>
+    <script src="js/app-state.js"></script>
     <script src="js/kmz-loader.js"></script>
     <script src="js/kmz-save.js"></script>
+    <script src="js/csv-coords.js"></script>
     <script src="js/map.js"></script>
     <script src="js/measure.js"></script>
     <script src="js/directions.js"></script>

@@ -44,6 +44,8 @@ Use **Open** or drag a `.kmz` / `.kml` file onto the map. Demo files: `examples/
 | Edit layers | Copy, Cut, Paste, Delete, and Rename act on the selection. Double-click a feature or press `F2` to rename. Show and Hide apply to every selected layer |
 | Sort | **Sort** orders every folder’s contents by name |
 | Save copy | **Save copy** writes a new KMZ or KML beside the original, with a timestamp added to the file name |
+| Save / load state | **Data files → Save state…** writes a `.kmzgis-state.json` file (loaded files, unsaved edits, layer visibility, map view, basemap, and tool). **Load state…** restores it. The app also auto-saves the same session to IndexedDB on quit for the next launch |
+| Coords from CSV | **File → Coords from CSV → Update from CSV…** — pick a CSV (`BH_ID`, `LAT`, `LONG`), then a KMZ/KML. Validates point placemarks (`<Point><coordinates>`) and matches CSV **BH_ID** to ExtendedData **BH_ID** or placemark **&lt;name&gt;** (e.g. B6A), including common spelling variants (B-6A, B06A, BH-6A). Use **Save copy** to write changes |
 | Edit KML externally | Desktop app only: **Edit KML externally…** opens the document in Sublime Text (if installed) or another editor you choose. Saving in the editor reloads the map. Set a custom launcher under **Editor command**, or use the `KMZ_GIS_EDITOR` environment variable |
 
 The status bar shows cursor lat/lon, the active tool, and the last measurement in metric and imperial units. A scale bar stays on the map.

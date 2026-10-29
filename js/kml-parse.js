@@ -243,16 +243,92 @@
     if (!ext) {
       return [];
     }
-    return childrenByName(ext, "Data")
-      .map(function (dataEl) {
-        return {
+    var rows = [];
+    childrenByName(ext, "Data").forEach(function (dataEl) {
+      var value = textOf(dataEl, "value");
+      if (value) {
+        rows.push({
           name: dataEl.getAttribute("name") || "Data",
-          value: textOf(dataEl, "value"),
-        };
-      })
-      .filter(function (row) {
-        return row.value;
+          value: value,
+        });
+      }
+    });
+    childrenByName(ext, "SchemaData").forEach(function (schemaEl) {
+      childrenByName(schemaEl, "SimpleData").forEach(function (dataEl) {
+        var simpleValue = dataEl.textContent ? dataEl.textContent.trim() : "";
+        if (simpleValue) {
+          rows.push({
+            name: dataEl.getAttribute("name") || "Data",
+            value: simpleValue,
+          });
+        }
       });
+    });
+    return rows;
+  }
+
+  function extendedDataValue(rows, fieldName) {
+    if (!rows || !rows.length || !fieldName) {
+      return "";
+    }
+    var wanted = String(fieldName).toLowerCase();
+    for (var i = 0; i < rows.length; i += 1) {
+      if ((rows[i].name || "").toLowerCase() === wanted) {
+        return String(rows[i].value || "").trim();
+      }
+    }
+    return "";
+  }
+
+  function placemarkBhId(placemarkEl, rows) {
+    var match = placemarkCsvMatchId(placemarkEl, rows);
+    return match.id;
+  }
+
+  function placemarkCsvMatchId(placemarkEl, rows) {
+    if (!placemarkEl) {
+      return { id: "", idSource: "" };
+    }
+    rows = rows && rows.length ? rows : parseExtendedData(placemarkEl);
+    var fromExtended = extendedDataValue(rows, "BH_ID");
+    if (fromExtended) {
+      return { id: fromExtended, idSource: "extended" };
+    }
+    var name = textOf(placemarkEl, "name").trim();
+    if (name) {
+      return { id: name, idSource: "name" };
+    }
+    return { id: "", idSource: "" };
+  }
+
+  function placemarkHasPointCoordinates(placemarkEl) {
+    if (!placemarkEl || localName(placemarkEl) !== "placemark") {
+      return false;
+    }
+    var point = firstChild(placemarkEl, "Point");
+    if (!point) {
+      point = deepFirst(placemarkEl, "Point");
+    }
+    if (!point) {
+      return false;
+    }
+    var coords = firstChild(point, "coordinates");
+    if (!coords || !coords.textContent || !coords.textContent.trim()) {
+      return false;
+    }
+    var parsed = parseCoordinates(coords.textContent);
+    return parsed.length > 0;
+  }
+
+  function placemarkUsesExtendedDataCoords(rows) {
+    if (!rows || !rows.length) {
+      return false;
+    }
+    return !!(
+      extendedDataValue(rows, "BH_ID") ||
+      extendedDataValue(rows, "LAT") ||
+      extendedDataValue(rows, "LONG")
+    );
   }
 
   function parseGeometry(el, geometries) {
@@ -431,7 +507,7 @@
       name: name,
       type: "folder",
       visible: textOf(el, "visibility") !== "0",
-      expanded: textOf(el, "open") !== "0",
+      expanded: textOf(el, "open") === "1",
       sourceEl: el,
       children: [],
       feature: null,
@@ -493,7 +569,7 @@
         name: textOf(root, "name") || "KML",
         type: "folder",
         visible: true,
-        expanded: true,
+        expanded: false,
         sourceEl: root,
         children: [],
         feature: null,
@@ -521,9 +597,31 @@
     };
   }
 
+  function placemarkFeatureFields(placemarkEl) {
+    if (!placemarkEl || localName(placemarkEl) !== "placemark") {
+      return null;
+    }
+    var geometries = collectGeometries(placemarkEl);
+    return {
+      name: textOf(placemarkEl, "name") || "",
+      description: textOf(placemarkEl, "description"),
+      geometries: geometries,
+      geometryType: geometries.length > 1 ? "MultiGeometry" : geometries[0] ? geometries[0].type : "",
+      extendedData: parseExtendedData(placemarkEl),
+      coordinatesText: summarizeCoords(geometries),
+    };
+  }
+
   global.KmlParse = {
     parseKmlDocument: parseKmlDocument,
     parseCoordinates: parseCoordinates,
     kmlColorToCss: kmlColorToCss,
+    parseExtendedData: parseExtendedData,
+    extendedDataValue: extendedDataValue,
+    placemarkBhId: placemarkBhId,
+    placemarkCsvMatchId: placemarkCsvMatchId,
+    placemarkHasPointCoordinates: placemarkHasPointCoordinates,
+    placemarkUsesExtendedDataCoords: placemarkUsesExtendedDataCoords,
+    placemarkFeatureFields: placemarkFeatureFields,
   };
 })(window);

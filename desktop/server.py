@@ -458,6 +458,9 @@ def _handler_class(viewer_root: str) -> type:
             if parsed.path == "/__desktop/save-copy":
                 self._save_copy()
                 return
+            if parsed.path == "/__desktop/save-source":
+                self._save_source()
+                return
             if parsed.path == "/__desktop/export":
                 self._export_kmz()
                 return
@@ -538,6 +541,46 @@ def _handler_class(viewer_root: str) -> type:
                 return
             self._send_json(
                 200, {"ok": True, "path": dest, "name": os.path.basename(dest)}
+            )
+
+        def _save_source(self) -> None:
+            """Overwrite a KMZ or KML file that is open in this session."""
+            if not token_ok(self.headers.get("X-Desktop-Token")):
+                self._send_json(403, {"error": "Desktop access was denied."})
+                return
+            raw_path = self.headers.get("X-Source-Path")
+            if not raw_path:
+                self._send_json(400, {"error": "Missing source file."})
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0") or "0")
+            except ValueError:
+                self._send_json(400, {"error": "Invalid upload size."})
+                return
+            if length <= 0 or length > MAX_UPLOAD_BYTES:
+                self._send_json(400, {"error": "The file is empty or too large."})
+                return
+            source = normalize_path(unquote(raw_path))
+            with STATE_LOCK:
+                allowed = source in OPENED_PATHS
+            if not allowed or not is_kmz_or_kml(source):
+                self._send_json(
+                    403, {"error": "That file was not opened in this session."}
+                )
+                return
+            data = self.rfile.read(length)
+            if len(data) != length:
+                self._send_json(400, {"error": "The upload was incomplete."})
+                return
+            try:
+                write_bytes(source, data)
+            except OSError as err:
+                self._send_json(
+                    500, {"error": err.strerror or "Could not save the file."}
+                )
+                return
+            self._send_json(
+                200, {"ok": True, "path": source, "name": os.path.basename(source)}
             )
 
         def _export_kmz(self) -> None:

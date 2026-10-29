@@ -38,6 +38,7 @@
   var layersById = {};
   var inspectCallback = null;
   var featureHoverCallback = null;
+  var featureContextMenuCallback = null;
   var featureClicksEnabled = true;
   var selectedId = null;
 
@@ -386,6 +387,17 @@
       L.DomEvent.stopPropagation(event);
       selectFeature(node.id, true, "map");
     });
+    layer.on("contextmenu", function (event) {
+      if (!featureContextMenuCallback || !event.originalEvent) {
+        return;
+      }
+      L.DomEvent.stop(event);
+      featureContextMenuCallback({
+        id: node.id,
+        x: event.originalEvent.clientX,
+        y: event.originalEvent.clientY,
+      });
+    });
     return layer;
   }
 
@@ -410,7 +422,9 @@
     (feature.geometries || []).forEach(function (geom) {
       if (geom.type === "Point") {
         var pointLabel =
-          style && style.labelScale === 0 ? "" : node.name || node.type;
+          pointNameLabelsHiddenForNode(node) || (style && style.labelScale === 0)
+            ? ""
+            : node.name || node.type;
         geom.latlngs.forEach(function (ll) {
           var marker = pointToLayer(ll, style);
           bindPointLabel(marker, pointLabel, style);
@@ -577,6 +591,60 @@
     return loc.node;
   }
 
+  function getDocumentSource(sourceId) {
+    for (var i = 0; i < documentSources.length; i += 1) {
+      if (documentSources[i].id === sourceId) {
+        return documentSources[i];
+      }
+    }
+    return null;
+  }
+
+  function sourceIdFromNodeId(nodeId) {
+    if (!nodeId) {
+      return null;
+    }
+    var idx = nodeId.indexOf(":");
+    return idx >= 0 ? nodeId.slice(0, idx) : null;
+  }
+
+  function pointNameLabelsHiddenForNode(node) {
+    if (!node || !node.id) {
+      return false;
+    }
+    var sourceId = sourceIdFromNodeId(node.id);
+    if (!sourceId) {
+      return false;
+    }
+    var source = getDocumentSource(sourceId);
+    return !!(source && source.hidePointNameLabels);
+  }
+
+  function refreshSourceLayers(sourceId) {
+    walkSourceRoot(sourceId, function (root) {
+      walkTree(root, function (node) {
+        if (node.feature) {
+          refreshNodeLayer(node);
+        }
+      });
+    });
+  }
+
+  function setSourcePointNameLabelsHidden(sourceId, hidden) {
+    var source = getDocumentSource(sourceId);
+    if (!source) {
+      return false;
+    }
+    source.hidePointNameLabels = !!hidden;
+    refreshSourceLayers(sourceId);
+    return true;
+  }
+
+  function getSourcePointNameLabelsHidden(sourceId) {
+    var source = getDocumentSource(sourceId);
+    return !!(source && source.hidePointNameLabels);
+  }
+
   function walkSourceRoot(sourceId, fn) {
     for (var i = 0; i < documentSources.length; i += 1) {
       if (documentSources[i].id === sourceId && documentSources[i].root) {
@@ -595,6 +663,37 @@
     (node.children || []).forEach(function (child) {
       walkTree(child, fn);
     });
+  }
+
+  function syncPlacemarkFromSource(node) {
+    if (
+      !node
+      || !node.feature
+      || !node.sourceEl
+      || !global.KmlParse
+      || typeof global.KmlParse.placemarkFeatureFields !== "function"
+    ) {
+      return false;
+    }
+    var fields = global.KmlParse.placemarkFeatureFields(node.sourceEl);
+    if (!fields) {
+      return false;
+    }
+    if (fields.name) {
+      node.name = fields.name;
+    }
+    node.feature.name = fields.name || node.feature.name;
+    node.feature.description = fields.description;
+    node.feature.geometries = fields.geometries;
+    node.feature.geometryType = fields.geometryType;
+    node.feature.extendedData = fields.extendedData;
+    node.feature.coordinatesText = fields.coordinatesText;
+    refreshNodeLayer(node);
+    refreshFeaturePresentation(node);
+    if (selectedId === node.id) {
+      selectFeature(node.id, false);
+    }
+    return true;
   }
 
   function refreshNodeLayer(node) {
@@ -774,6 +873,227 @@
       });
     });
     return count;
+  }
+
+  function syncFeatureExtendedData(feature, fieldName, value) {
+    if (!feature) {
+      return;
+    }
+    var rows = feature.extendedData || [];
+    var wanted = String(fieldName).toLowerCase();
+    var found = false;
+    var i;
+    for (i = 0; i < rows.length; i += 1) {
+      if ((rows[i].name || "").toLowerCase() === wanted) {
+        rows[i].value = String(value);
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      rows.push({ name: fieldName, value: String(value) });
+    }
+    feature.extendedData = rows;
+  }
+
+  function formatPointCoordinateText(lat, lng) {
+    return lng.toFixed(6) + ", " + lat.toFixed(6);
+  }
+
+  function updateNodePointFromCsvRow(node, row, syncExtendedData) {
+    if (!node || !node.feature || !node.sourceEl || !row) {
+      return false;
+    }
+    if (!global.KmzSave || !global.KmzSave.setPlacemarkPointCoordinates) {
+      return false;
+    }
+    if (!global.KmzSave.setPlacemarkPointCoordinates(node.sourceEl, row.lat, row.lng)) {
+      return false;
+    }
+    (node.feature.geometries || []).forEach(function (geom) {
+      if (geom.type === "Point" && geom.latlngs && geom.latlngs[0]) {
+        geom.latlngs[0].lat = row.lat;
+        geom.latlngs[0].lng = row.lng;
+      }
+    });
+    node.feature.coordinatesText = formatPointCoordinateText(row.lat, row.lng);
+    if (syncExtendedData && global.KmzSave.setExtendedDataValue) {
+      global.KmzSave.setExtendedDataValue(node.sourceEl, "LAT", row.lat);
+      global.KmzSave.setExtendedDataValue(node.sourceEl, "LONG", row.lng);
+      syncFeatureExtendedData(node.feature, "LAT", row.lat);
+      syncFeatureExtendedData(node.feature, "LONG", row.lng);
+    }
+    refreshNodeLayer(node);
+    return true;
+  }
+
+  function resolveCsvBhRow(lookup, placemarkId) {
+    if (global.CsvCoords && global.CsvCoords.resolveBhCoordRow) {
+      return global.CsvCoords.resolveBhCoordRow(lookup, placemarkId);
+    }
+    if (!lookup || !placemarkId) {
+      return null;
+    }
+    return lookup[String(placemarkId).trim()] || null;
+  }
+
+  function validateBhCoordCsvToSource(sourceId, lookup) {
+    var result = {
+      ok: false,
+      errors: [],
+      warnings: [],
+      pointPlacemarks: 0,
+      matchable: 0,
+      idSource: "",
+    };
+    if (!sourceId || !lookup || !global.KmlParse) {
+      result.errors.push("Could not validate the file for CSV coordinate update.");
+      return result;
+    }
+    var matchByName = 0;
+    var matchByExtended = 0;
+    var badStructure = [];
+    var missingIdPoints = 0;
+    walkSourceRoot(sourceId, function (root) {
+      walkTree(root, function (node) {
+        if (node.type !== "placemark" || !node.feature || !node.sourceEl) {
+          return;
+        }
+        if (!featureHasPointGeometry(node.feature)) {
+          return;
+        }
+        result.pointPlacemarks += 1;
+        if (!global.KmlParse.placemarkHasPointCoordinates(node.sourceEl)) {
+          badStructure.push(node.name || "Placemark");
+          return;
+        }
+        var rows = node.feature.extendedData || [];
+        if (
+          global.KmlParse.parseExtendedData &&
+          (!rows.length || !global.KmlParse.extendedDataValue(rows, "BH_ID"))
+        ) {
+          rows = global.KmlParse.parseExtendedData(node.sourceEl);
+        }
+        var match = global.KmlParse.placemarkCsvMatchId(node.sourceEl, rows);
+        if (!match.id) {
+          missingIdPoints += 1;
+          return;
+        }
+        if (!resolveCsvBhRow(lookup, match.id)) {
+          return;
+        }
+        result.matchable += 1;
+        if (match.idSource === "name") {
+          matchByName += 1;
+        } else if (match.idSource === "extended") {
+          matchByExtended += 1;
+        }
+      });
+    });
+    if (!result.pointPlacemarks) {
+      result.errors.push(
+        "This file has no point placemarks. Expected <Placemark> with <Point><coordinates>…</coordinates></Point>."
+      );
+      return result;
+    }
+    if (badStructure.length) {
+      var sample = badStructure.slice(0, 3).join(", ");
+      var extra = badStructure.length > 3 ? " (+" + (badStructure.length - 3) + " more)" : "";
+      result.errors.push(
+        "Some point placemarks are missing valid <Point><coordinates>: " + sample + extra + "."
+      );
+      return result;
+    }
+    if (!result.matchable) {
+      result.errors.push(
+        "No placemarks match the CSV BH_ID column. Use ExtendedData <Data name=\"BH_ID\"> or put the id in <name> (e.g. B6A) on each point placemark."
+      );
+      return result;
+    }
+    if (matchByName && matchByExtended) {
+      result.idSource = "mixed";
+      result.warnings.push("Some ids come from <name> and others from ExtendedData BH_ID.");
+    } else if (matchByName) {
+      result.idSource = "name";
+    } else {
+      result.idSource = "extended";
+    }
+    if (missingIdPoints) {
+      result.warnings.push(
+        missingIdPoints + " point placemark(s) have no <name> or BH_ID and were skipped."
+      );
+    }
+    result.ok = true;
+    return result;
+  }
+
+  function applyBhCoordCsvToSource(sourceId, lookup) {
+    var stats = {
+      updated: 0,
+      noBhId: 0,
+      notInCsv: 0,
+      notPoint: 0,
+      fuzzyMatched: 0,
+      unusedCsvIds: [],
+    };
+    if (!sourceId || !lookup || !global.KmlParse) {
+      return stats;
+    }
+    var used = {};
+    walkSourceRoot(sourceId, function (root) {
+      walkTree(root, function (node) {
+        if (node.type !== "placemark" || !node.feature || !node.sourceEl) {
+          return;
+        }
+        var rows = node.feature.extendedData || [];
+        if (
+          global.KmlParse.parseExtendedData &&
+          (!rows.length || !global.KmlParse.extendedDataValue(rows, "BH_ID"))
+        ) {
+          rows = global.KmlParse.parseExtendedData(node.sourceEl);
+          node.feature.extendedData = rows;
+        }
+        var match = global.KmlParse.placemarkCsvMatchId(node.sourceEl, rows);
+        if (!featureHasPointGeometry(node.feature)) {
+          if (match.id) {
+            stats.notPoint += 1;
+          }
+          return;
+        }
+        if (!match.id) {
+          stats.noBhId += 1;
+          return;
+        }
+        if (!global.KmlParse.placemarkHasPointCoordinates(node.sourceEl)) {
+          return;
+        }
+        var resolved = resolveCsvBhRow(lookup, match.id);
+        if (!resolved) {
+          stats.notInCsv += 1;
+          return;
+        }
+        var syncExtended =
+          global.KmlParse.placemarkUsesExtendedDataCoords(rows) ||
+          match.idSource === "extended";
+        if (updateNodePointFromCsvRow(node, resolved, syncExtended)) {
+          used[resolved.canonical || resolved.csvLabel] = true;
+          stats.updated += 1;
+          if (resolved.matchedVia === "canonical") {
+            stats.fuzzyMatched += 1;
+          }
+        }
+      });
+    });
+    Object.keys(lookup).forEach(function (canonKey) {
+      if (!used[canonKey]) {
+        var entry = lookup[canonKey];
+        stats.unusedCsvIds.push(entry && entry.csvLabel ? entry.csvLabel : canonKey);
+      }
+    });
+    if (stats.updated && selectedId) {
+      selectFeature(selectedId, false);
+    }
+    return stats;
   }
 
   function setSharedStylePointIcon(sourceId, iconStyleKey, spec) {
@@ -1011,7 +1331,7 @@
       name: node.name,
       type: node.type,
       visible: node.visible !== false,
-      expanded: node.expanded !== false,
+      expanded: node.expanded === true,
       nameEdited: !!node.nameEdited,
       children: [],
       feature: node.feature ? JSON.parse(JSON.stringify(node.feature)) : null,
@@ -1218,7 +1538,7 @@
       name: "All layers",
       type: "folder",
       visible: true,
-      expanded: true,
+      expanded: false,
       children: documentSources.map(function (source) {
         return source.root;
       }),
@@ -1485,6 +1805,10 @@
     featureHoverCallback = fn;
   }
 
+  function onFeatureContextMenu(fn) {
+    featureContextMenuCallback = fn;
+  }
+
   function getMap() {
     return map;
   }
@@ -1627,12 +1951,14 @@
     setFeatureClicksEnabled: setFeatureClicksEnabled,
     onInspect: onInspect,
     onFeatureHover: onFeatureHover,
+    onFeatureContextMenu: onFeatureContextMenu,
     selectFeature: selectFeature,
     getMap: getMap,
     getSelectedId: getSelectedId,
     findNode: function (id) {
       return currentRoot ? findNode(currentRoot, id) : null;
     },
+    syncPlacemarkFromSource: syncPlacemarkFromSource,
     getRoot: function () {
       return currentRoot;
     },
@@ -1654,6 +1980,10 @@
     setFeaturePointIcon: setFeaturePointIcon,
     applySourcePointIcon: applySourcePointIcon,
     countSourcePointPlacemarks: countSourcePointPlacemarks,
+    setSourcePointNameLabelsHidden: setSourcePointNameLabelsHidden,
+    getSourcePointNameLabelsHidden: getSourcePointNameLabelsHidden,
+    validateBhCoordCsvToSource: validateBhCoordCsvToSource,
+    applyBhCoordCsvToSource: applyBhCoordCsvToSource,
     setSharedStyleIconUrl: setSharedStyleIconUrl,
     setSharedStylePointIcon: setSharedStylePointIcon,
     deleteNodes: deleteNodes,
