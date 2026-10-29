@@ -2,6 +2,7 @@
   "use strict";
 
   var STORAGE_KEY = "kmz-screenshot-settings";
+  var SEQUENCE_STORAGE_KEY = "kmz-screenshot-sequence";
   var MIN_DIM = 64;
   var MAX_DIM = 8192;
   var SCREENSHOT_DPI = 96;
@@ -18,10 +19,16 @@
   var widthInput = null;
   var heightInput = null;
   var baseNameInput = null;
+  var nameSuffixSelect = null;
   var dirInput = null;
   var browseBtn = null;
   var saveBtn = null;
   var showToggle = null;
+  var takeTwoToggle = null;
+  var takeTwoPanelEl = null;
+  var takeTwoSourcesEl = null;
+  var getLoadedSourcesFn = null;
+  var setLoadedSourceVisibleFn = null;
   var ensureDesktopFn = null;
   var setMessageFn = null;
   var readJsonResponseFn = null;
@@ -78,8 +85,11 @@
           width: widthInput.value,
           height: heightInput.value,
           baseName: baseNameInput ? baseNameInput.value : "",
+          nameSuffix: nameSuffixMode(),
           directory: dirInput ? dirInput.value : "",
           showFrame: showToggle ? showToggle.checked : true,
+          takeTwo: takeTwoToggle ? takeTwoToggle.checked : false,
+          takeTwoHideIds: readTakeTwoHideIds(),
         })
       );
     } catch (err) {
@@ -223,8 +233,68 @@
     }
   }
 
-  function buildFileName(baseName) {
-    return sanitizeBaseName(baseName) + "_" + timestampSuffix() + ".png";
+  function nameSuffixMode() {
+    if (!nameSuffixSelect) {
+      return "timestamp";
+    }
+    var mode = String(nameSuffixSelect.value || "timestamp");
+    if (mode === "counter" || mode === "both") {
+      return mode;
+    }
+    return "timestamp";
+  }
+
+  function readSequenceMap() {
+    try {
+      var raw = localStorage.getItem(SEQUENCE_STORAGE_KEY);
+      if (!raw) {
+        return {};
+      }
+      return JSON.parse(raw);
+    } catch (err) {
+      return {};
+    }
+  }
+
+  function sequenceStorageKey(baseStem, directory, extraSuffix) {
+    return (directory || "__download__") + "\n" + sanitizeBaseName(baseStem) + (extraSuffix || "");
+  }
+
+  function allocateSequenceNumber(baseStem, directory, extraSuffix) {
+    var key = sequenceStorageKey(baseStem, directory, extraSuffix);
+    var map = readSequenceMap();
+    var next = (map[key] || 0) + 1;
+    map[key] = next;
+    try {
+      localStorage.setItem(SEQUENCE_STORAGE_KEY, JSON.stringify(map));
+    } catch (err) {
+      /* ignore quota errors */
+    }
+    return next;
+  }
+
+  function buildFileName(baseName, opts) {
+    opts = opts || {};
+    var stem = sanitizeBaseName(baseName) + (opts.suffix || "");
+    var mode = opts.mode != null ? opts.mode : nameSuffixMode();
+    var extra = "";
+    if (mode === "timestamp" || mode === "both") {
+      extra += "_" + timestampSuffix(opts.when);
+    }
+    if (mode === "counter" || mode === "both") {
+      var seq = opts.sequenceNumber;
+      if (seq == null || !isFinite(seq) || seq < 1) {
+        seq = 1;
+      }
+      extra += "_" + String(Math.floor(seq));
+    }
+    return stem + extra + ".png";
+  }
+
+  function waitMs(ms) {
+    return new Promise(function (resolve) {
+      setTimeout(resolve, ms);
+    });
   }
 
   function waitForRepaint() {
@@ -314,6 +384,200 @@
       });
   }
 
+  function listLoadedSources() {
+    if (!getLoadedSourcesFn) {
+      return [];
+    }
+    return getLoadedSourcesFn() || [];
+  }
+
+  function syncTakeTwoPanelVisibility() {
+    if (!takeTwoPanelEl) {
+      return;
+    }
+    var show = takeTwoToggle && takeTwoToggle.checked;
+    takeTwoPanelEl.classList.toggle("hidden", !show);
+  }
+
+  function readTakeTwoHideIds() {
+    if (!takeTwoSourcesEl) {
+      return [];
+    }
+    var ids = [];
+    takeTwoSourcesEl.querySelectorAll('input[type="checkbox"][data-source-id]').forEach(function (input) {
+      if (input.checked) {
+        ids.push(input.dataset.sourceId);
+      }
+    });
+    return ids;
+  }
+
+  function refreshTakeTwoSources() {
+    if (!takeTwoSourcesEl) {
+      return;
+    }
+    syncTakeTwoPanelVisibility();
+    var sources = listLoadedSources();
+    var previous = {};
+    takeTwoSourcesEl.querySelectorAll('input[type="checkbox"][data-source-id]').forEach(function (input) {
+      previous[input.dataset.sourceId] = input.checked;
+    });
+    var storedIds = (readSettings() || {}).takeTwoHideIds;
+    takeTwoSourcesEl.innerHTML = "";
+    if (!sources.length) {
+      takeTwoSourcesEl.innerHTML =
+        '<p class="muted empty-hint">Load KMZ/KML files to choose which map to hide, or use Layers None for the 2nd shot.</p>';
+      return;
+    }
+    sources.forEach(function (source) {
+      var checked = true;
+      if (Object.prototype.hasOwnProperty.call(previous, source.id)) {
+        checked = previous[source.id];
+      } else if (Array.isArray(storedIds)) {
+        checked = storedIds.indexOf(source.id) >= 0;
+        if (
+          !checked
+          && storedIds.length
+          && storedIds.some(function (storedId) {
+            return sources.some(function (entry) {
+              return entry.id === storedId;
+            });
+          })
+        ) {
+          checked = true;
+        }
+      }
+      var label = document.createElement("label");
+      label.className = "screenshot-take-two-source";
+      var box = document.createElement("input");
+      box.type = "checkbox";
+      box.dataset.sourceId = source.id;
+      box.checked = checked;
+      box.title = "Hide " + (source.label || "file") + " in the second screenshot";
+      var text = document.createElement("span");
+      text.textContent = source.label || source.id;
+      label.appendChild(box);
+      label.appendChild(text);
+      box.addEventListener("change", writeSettings);
+      takeTwoSourcesEl.appendChild(label);
+    });
+  }
+
+  function secondShotFilenameSuffix(hideIds, sources) {
+    if (!hideIds.length) {
+      return "-off";
+    }
+    if (hideIds.length === sources.length) {
+      return "-none";
+    }
+    if (hideIds.length === 1) {
+      var match = null;
+      sources.forEach(function (source) {
+        if (source.id === hideIds[0]) {
+          match = source;
+        }
+      });
+      var stem = match && match.label ? match.label.replace(/\.(kmz|kml)$/i, "") : "layer";
+      return "-without-" + sanitizeBaseName(stem).slice(0, 48);
+    }
+    return "-off-" + hideIds.length;
+  }
+
+  function hideSourcesForSecondShot(hideIds) {
+    var snapshot = [];
+    hideIds.forEach(function (id) {
+      var priorVisible = true;
+      listLoadedSources().forEach(function (source) {
+        if (source.id === id) {
+          priorVisible = source.visible !== false;
+        }
+      });
+      snapshot.push({ id: id, visible: priorVisible });
+      if (setLoadedSourceVisibleFn) {
+        setLoadedSourceVisibleFn(id, false);
+      }
+    });
+    return snapshot;
+  }
+
+  function restoreSourceVisibilitySnapshot(snapshot) {
+    (snapshot || []).forEach(function (item) {
+      if (setLoadedSourceVisibleFn) {
+        setLoadedSourceVisibleFn(item.id, item.visible);
+      }
+    });
+  }
+
+  function clickLayersToolbarButton(id) {
+    var btn = document.getElementById(id);
+    if (btn && !btn.disabled) {
+      btn.click();
+    }
+  }
+
+  function applySecondShotLayerHiding(hideIds) {
+    if (hideIds.length && setLoadedSourceVisibleFn) {
+      return hideSourcesForSecondShot(hideIds);
+    }
+    clickLayersToolbarButton("layers-none");
+    return null;
+  }
+
+  function restoreSecondShotLayerHiding(snapshot) {
+    if (snapshot && snapshot.length) {
+      restoreSourceVisibilitySnapshot(snapshot);
+      return;
+    }
+    clickLayersToolbarButton("layers-all");
+  }
+
+  function persistBlob(blob, baseNameStem, nameOpts) {
+    nameOpts = nameOpts || {};
+    var directory = dirInput ? String(dirInput.value || "").trim() : "";
+    var mode = nameSuffixMode();
+    var sequenceNumber = null;
+    var extraSuffix = nameOpts.suffix || "";
+    if (mode === "counter" || mode === "both") {
+      sequenceNumber = allocateSequenceNumber(baseNameStem, directory, extraSuffix);
+    }
+    var downloadName = buildFileName(baseNameStem, {
+      suffix: extraSuffix,
+      mode: mode,
+      sequenceNumber: sequenceNumber,
+      when: new Date(),
+    });
+    return (ensureDesktopFn ? ensureDesktopFn() : Promise.resolve(null)).then(function (desktop) {
+      if (desktop) {
+        if (!directory) {
+          throw new Error("Enter a save directory.");
+        }
+        return fetch("/__desktop/save-screenshot", {
+          method: "POST",
+          headers: {
+            "Content-Type": "image/png",
+            "X-Desktop-Token": desktop.token,
+            "X-Save-Directory": encodeURIComponent(directory),
+            "X-Preferred-Filename": encodeURIComponent(downloadName),
+            "X-Base-Filename": encodeURIComponent(sanitizeBaseName(baseNameStem)),
+          },
+          body: blob,
+        }).then(function (response) {
+          return (readJsonResponseFn || defaultReadJson)(response).then(function (result) {
+            if (!result.ok) {
+              throw new Error((result.payload && result.payload.error) || "Could not save the screenshot.");
+            }
+            return {
+              name: result.payload && result.payload.name ? result.payload.name : downloadName,
+              downloaded: false,
+            };
+          });
+        });
+      }
+      downloadBlob(blob, downloadName);
+      return { name: downloadName, downloaded: true };
+    });
+  }
+
   function downloadBlob(blob, fileName) {
     var url = URL.createObjectURL(blob);
     var link = document.createElement("a");
@@ -331,50 +595,80 @@
     if (saveInFlight) {
       return;
     }
-    var fileName = buildFileName(baseNameInput && baseNameInput.value);
-    var directory = dirInput ? String(dirInput.value || "").trim() : "";
+    var baseStem = baseNameInput && baseNameInput.value;
+    var takeTwo = takeTwoToggle && takeTwoToggle.checked;
+    var loadedSources = listLoadedSources();
+    var hideIds = takeTwo ? readTakeTwoHideIds() : [];
+    var visibilitySnapshot = null;
+    if (takeTwo && loadedSources.length && !hideIds.length) {
+      if (setMessageFn) {
+        setMessageFn("Select at least one loaded file to hide for the second screenshot.");
+      }
+      return;
+    }
     saveInFlight = true;
     if (saveBtn) {
       saveBtn.disabled = true;
     }
     if (setMessageFn) {
-      setMessageFn("Capturing screenshot…");
+      setMessageFn(takeTwo ? "Capturing screenshot 1 of 2…" : "Capturing screenshot…");
     }
     writeSettings();
+    var savedResults = [];
     captureMapPng()
       .then(function (blob) {
-        return (ensureDesktopFn ? ensureDesktopFn() : Promise.resolve(null)).then(function (desktop) {
-          if (desktop) {
-            if (!directory) {
-              throw new Error("Enter a save directory.");
-            }
-            return fetch("/__desktop/save-screenshot", {
-              method: "POST",
-              headers: {
-                "Content-Type": "image/png",
-                "X-Desktop-Token": desktop.token,
-                "X-Save-Directory": encodeURIComponent(directory),
-                "X-Base-Filename": encodeURIComponent(sanitizeBaseName(baseNameInput && baseNameInput.value)),
-              },
-              body: blob,
-            }).then(function (response) {
-              return (readJsonResponseFn || defaultReadJson)(response).then(function (result) {
-                if (!result.ok) {
-                  throw new Error((result.payload && result.payload.error) || "Could not save the screenshot.");
-                }
-                if (setMessageFn) {
-                  setMessageFn("Saved " + (result.payload.name || fileName) + ".");
-                }
-              });
-            });
+        return persistBlob(blob, baseStem).then(function (result) {
+          savedResults.push(result);
+          if (!takeTwo) {
+            return;
           }
-          downloadBlob(blob, fileName);
           if (setMessageFn) {
-            setMessageFn("Downloaded " + fileName + ".");
+            setMessageFn("Hiding layers for screenshot 2 of 2…");
           }
+          visibilitySnapshot = applySecondShotLayerHiding(hideIds);
+          return waitForRepaint().then(function () {
+            return waitMs(150);
+          });
         });
       })
+      .then(function () {
+        if (!takeTwo) {
+          return;
+        }
+        if (setMessageFn) {
+          setMessageFn("Capturing screenshot 2 of 2…");
+        }
+        var suffix = secondShotFilenameSuffix(hideIds, loadedSources);
+        return captureMapPng().then(function (blob) {
+          return persistBlob(blob, baseStem, { suffix: suffix }).then(function (result) {
+            savedResults.push(result);
+          });
+        });
+      })
+      .then(function () {
+        if (!takeTwo) {
+          return;
+        }
+        restoreSecondShotLayerHiding(visibilitySnapshot);
+        return waitForRepaint();
+      })
+      .then(function () {
+        if (!setMessageFn || !savedResults.length) {
+          return;
+        }
+        function describeResult(result) {
+          return (result.downloaded ? "Downloaded " : "Saved ") + result.name;
+        }
+        if (savedResults.length === 1) {
+          setMessageFn(describeResult(savedResults[0]) + ".");
+          return;
+        }
+        setMessageFn(describeResult(savedResults[0]) + " and " + describeResult(savedResults[1]) + ".");
+      })
       .catch(function (err) {
+        if (takeTwo) {
+          restoreSecondShotLayerHiding(visibilitySnapshot);
+        }
         if (setMessageFn) {
           setMessageFn((err && err.message) || "Could not save the screenshot.");
         }
@@ -442,10 +736,19 @@
     if (unitSelect) {
       unitSelect.addEventListener("change", onDimensionUnitChange);
     }
+    if (nameSuffixSelect) {
+      nameSuffixSelect.addEventListener("change", writeSettings);
+    }
     if (showToggle) {
       showToggle.addEventListener("change", function () {
         writeSettings();
         setOverlayVisible(showToggle.checked);
+      });
+    }
+    if (takeTwoToggle) {
+      takeTwoToggle.addEventListener("change", function () {
+        syncTakeTwoPanelVisibility();
+        writeSettings();
       });
     }
     if (saveBtn) {
@@ -476,12 +779,24 @@
     if (baseNameInput) {
       baseNameInput.value = settings.baseName || "map-screenshot";
     }
+    if (nameSuffixSelect) {
+      var suffixMode = settings.nameSuffix;
+      if (suffixMode === "counter" || suffixMode === "both") {
+        nameSuffixSelect.value = suffixMode;
+      } else {
+        nameSuffixSelect.value = "timestamp";
+      }
+    }
     if (dirInput && settings.directory) {
       dirInput.value = settings.directory;
     }
     if (showToggle) {
       showToggle.checked = settings.showFrame !== false;
     }
+    if (takeTwoToggle) {
+      takeTwoToggle.checked = !!settings.takeTwo;
+    }
+    syncTakeTwoPanelVisibility();
   }
 
   function init(options) {
@@ -495,10 +810,16 @@
     widthInput = document.getElementById("screenshot-width");
     heightInput = document.getElementById("screenshot-height");
     baseNameInput = document.getElementById("screenshot-base-name");
+    nameSuffixSelect = document.getElementById("screenshot-name-suffix");
     dirInput = document.getElementById("screenshot-directory");
     browseBtn = document.getElementById("screenshot-browse-dir");
     saveBtn = document.getElementById("screenshot-save");
     showToggle = document.getElementById("screenshot-show-frame");
+    takeTwoToggle = document.getElementById("screenshot-take-two");
+    takeTwoPanelEl = document.getElementById("screenshot-take-two-panel");
+    takeTwoSourcesEl = document.getElementById("screenshot-take-two-sources");
+    getLoadedSourcesFn = options.getLoadedSources || null;
+    setLoadedSourceVisibleFn = options.setLoadedSourceVisible || null;
     ensureDesktopFn = options.ensureDesktop || null;
     setMessageFn = options.setMessage || null;
     readJsonResponseFn = options.readJsonResponse || null;
@@ -510,6 +831,7 @@
     applyStoredSettings(readSettings());
     bindInputs();
     bindBrowse();
+    refreshTakeTwoSources();
     setOverlayVisible(showToggle ? showToggle.checked : true);
 
     (ensureDesktopFn ? ensureDesktopFn() : Promise.resolve(null)).then(function (desktop) {
@@ -522,5 +844,6 @@
   global.MapScreenshot = {
     init: init,
     layoutFrame: layoutFrame,
+    refreshTakeTwoSources: refreshTakeTwoSources,
   };
 })(window);

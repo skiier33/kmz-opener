@@ -119,6 +119,25 @@ def png_timestamped_name(base_name: str, when: datetime) -> str:
     return f"{stem}_{when.strftime('%Y%m%d-%H%M%S')}.png"
 
 
+def sanitize_png_file_name(file_name: str) -> str:
+    """Return a safe PNG file name from a client-provided full name.
+
+    Args:
+        file_name: Desired file name, with or without a directory.
+
+    Returns:
+        A basename ending in .png, or a timestamped fallback when invalid.
+    """
+    name = os.path.basename(str(file_name or "").strip())
+    name = re.sub(r'[/\\:*?"<>|]', "_", name)
+    stem, ext = os.path.splitext(name)
+    if not stem or stem in {".", ".."}:
+        return png_timestamped_name("map-screenshot", datetime.now())
+    if ext.lower() != ".png":
+        ext = ".png"
+    return f"{stem[:120]}{ext}"
+
+
 def timestamped_name(file_name: str, when: datetime) -> str:
     """Build a file name with a local timestamp before the extension.
 
@@ -241,6 +260,13 @@ def _handler_class(viewer_root: str) -> type:
 
         def log_message(self, format: str, *args) -> None:
             return
+
+        def end_headers(self) -> None:
+            """Disable caching so a browser reload picks up edited viewer files."""
+            parsed = urlparse(self.path)
+            if self.command == "GET" and not parsed.path.startswith("/__desktop"):
+                self.send_header("Cache-Control", "no-store")
+            super().end_headers()
 
         def _send_json(self, code: int, payload: dict) -> None:
             """Send a JSON response and close the body."""
@@ -420,8 +446,12 @@ def _handler_class(viewer_root: str) -> type:
                     400, {"error": "The screenshot is empty or too large."}
                 )
                 return
-            raw_base = unquote(self.headers.get("X-Base-Filename") or "")
-            preferred = png_timestamped_name(raw_base, datetime.now())
+            raw_preferred = unquote(self.headers.get("X-Preferred-Filename") or "")
+            if raw_preferred:
+                preferred = sanitize_png_file_name(raw_preferred)
+            else:
+                raw_base = unquote(self.headers.get("X-Base-Filename") or "")
+                preferred = png_timestamped_name(raw_base, datetime.now())
             data = self.rfile.read(length)
             if len(data) != length:
                 self._send_json(400, {"error": "The upload was incomplete."})

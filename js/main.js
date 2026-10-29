@@ -65,6 +65,7 @@
   var fileSaveBtn = document.getElementById("file-save-copy");
   var fileEditKmlBtn = document.getElementById("file-edit-kml-external");
   var toolbarEditKmlBtn = document.getElementById("btn-edit-kml-external");
+  var reloadAppBtn = document.getElementById("btn-reload-app");
   var externalEditSection = document.getElementById("external-edit-section");
   var externalEditorCommand = document.getElementById("external-editor-command");
   var externalEditorBrowse = document.getElementById("external-editor-browse");
@@ -1934,6 +1935,48 @@
     return GisMap.getRoot();
   }
 
+  function listLoadedSourcesForScreenshot() {
+    return loadedSources.map(function (source) {
+      return {
+        id: source.id,
+        label: source.doc.fileName || "Untitled",
+        visible: source.visible !== false,
+      };
+    });
+  }
+
+  function applyLoadedSourceVisibility(sourceId, visible) {
+    var source = findLoadedSource(sourceId);
+    if (source) {
+      source.visible = visible;
+    }
+    GisMap.setDocumentSourceVisible(sourceId, visible);
+    if (loadedSourcesEl) {
+      var row = loadedSourcesEl.querySelector('.loaded-source-row[data-source-id="' + sourceId + '"]');
+      if (row) {
+        var box = row.querySelector('input[type="checkbox"]');
+        if (box) {
+          box.checked = visible;
+        }
+      }
+    }
+    var root = GisMap.getDocumentSourceRoot(sourceId);
+    if (root && layerTreeEl) {
+      var ids = GisMap.subtreeIds(root.id).concat([root.id]);
+      ids.forEach(function (id) {
+        var nodeWrap = layerTreeEl.querySelector('.layer-node[data-id="' + id + '"]');
+        if (!nodeWrap) {
+          return;
+        }
+        var treeBox = nodeWrap.querySelector('.layer-row input[type="checkbox"]');
+        if (treeBox) {
+          treeBox.checked = visible;
+        }
+      });
+    }
+    refreshHoverBalloon();
+  }
+
   function renderLoadedSources() {
     if (!loadedSourcesEl) {
       return;
@@ -1981,6 +2024,9 @@
     });
     if (clearSourcesBtn) {
       clearSourcesBtn.disabled = false;
+    }
+    if (window.MapScreenshot && typeof window.MapScreenshot.refreshTakeTwoSources === "function") {
+      window.MapScreenshot.refreshTakeTwoSources();
     }
   }
 
@@ -2122,6 +2168,13 @@
     var hasApi = !!(api && typeof api.duplicate_window === "function");
     duplicateWindowBtn.classList.toggle("hidden", !hasApi);
     duplicateWindowBtn.disabled = !hasApi || !collectDuplicateSourcePaths().length;
+  }
+
+  function refreshReloadAppButton() {
+    if (!reloadAppBtn) {
+      return;
+    }
+    reloadAppBtn.classList.toggle("hidden", !isLikelyDesktopViewer());
   }
 
   function applyLaunchMapView(params) {
@@ -3000,7 +3053,14 @@
   window.addEventListener("pywebviewready", function () {
     refreshExternalEditorUi();
     refreshDuplicateWindowButton();
+    refreshReloadAppButton();
   });
+  refreshReloadAppButton();
+  if (reloadAppBtn) {
+    reloadAppBtn.addEventListener("click", function () {
+      location.reload();
+    });
+  }
   if (externalEditorBrowse) {
     externalEditorBrowse.addEventListener("click", function () {
       ensureDesktop().then(function (desktop) {
@@ -3241,12 +3301,7 @@
       if (!row || !row.dataset.sourceId) {
         return;
       }
-      var source = findLoadedSource(row.dataset.sourceId);
-      if (source) {
-        source.visible = target.checked;
-      }
-      GisMap.setDocumentSourceVisible(row.dataset.sourceId, target.checked);
-      refreshHoverBalloon();
+      applyLoadedSourceVisibility(row.dataset.sourceId, target.checked);
     });
     loadedSourcesEl.addEventListener("click", function (event) {
       var removeBtn = event.target.closest(".loaded-source-remove");
@@ -3514,6 +3569,8 @@
       ensureDesktop: ensureDesktop,
       setMessage: setMessage,
       readJsonResponse: readJsonResponse,
+      getLoadedSources: listLoadedSourcesForScreenshot,
+      setLoadedSourceVisible: applyLoadedSourceVisibility,
     });
   }
 

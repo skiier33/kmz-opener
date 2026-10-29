@@ -166,6 +166,23 @@
             Clear
           </button>
         </div>
+
+        <div class="toolbar-spacer" aria-hidden="true"></div>
+
+        <button
+          id="btn-reload-app"
+          class="btn btn-subtle hidden"
+          type="button"
+          title="Reload the app to pick up HTML, CSS, and JS changes"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08a5.99 5.99 0 0 1-5.65 4c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"
+            />
+          </svg>
+          Reload
+        </button>
       </header>
 
       <div class="workspace">
@@ -372,6 +389,14 @@
                 />
               </label>
               <label class="screenshot-field screenshot-field-wide">
+                <span class="screenshot-label">Name suffix</span>
+                <select id="screenshot-name-suffix" aria-label="Screenshot filename suffix">
+                  <option value="timestamp" selected>Timestamp</option>
+                  <option value="counter">Sequence number</option>
+                  <option value="both">Timestamp and sequence number</option>
+                </select>
+              </label>
+              <label class="screenshot-field screenshot-field-wide">
                 <span class="screenshot-label">Save directory</span>
                 <div class="screenshot-dir-row">
                   <input
@@ -390,9 +415,24 @@
                 <input id="screenshot-show-frame" type="checkbox" checked />
                 Show capture frame on map
               </label>
-              <button id="screenshot-save" class="btn screenshot-save-btn" type="button">
-                Save screenshot
-              </button>
+              <div class="screenshot-save-row">
+                <label class="screenshot-toggle screenshot-save-option">
+                  <input id="screenshot-take-two" type="checkbox" />
+                  Take 2
+                </label>
+                <div id="screenshot-take-two-panel" class="screenshot-take-two-panel hidden">
+                  <span class="screenshot-label">Hide for 2nd screenshot</span>
+                  <div
+                    id="screenshot-take-two-sources"
+                    class="screenshot-take-two-sources"
+                    role="group"
+                    aria-label="Files to hide for second screenshot"
+                  ></div>
+                </div>
+                <button id="screenshot-save" class="btn screenshot-save-btn" type="button">
+                  Save screenshot
+                </button>
+              </div>
             </div>
           </section>
 
