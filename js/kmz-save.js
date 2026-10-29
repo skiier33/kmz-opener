@@ -171,6 +171,57 @@
     return Number.isNaN(alt) ? 0 : alt;
   }
 
+  function resolveFeatureContainer(parentEl) {
+    if (!parentEl) {
+      return null;
+    }
+    var tag = localName(parentEl);
+    if (tag === "document" || tag === "folder") {
+      return parentEl;
+    }
+    if (tag === "kml") {
+      var documentEl = childByLocalName(parentEl, "Document");
+      if (documentEl) {
+        return documentEl;
+      }
+      documentEl = createElementNS(parentEl, "Document");
+      setElementName(documentEl, "Document");
+      parentEl.appendChild(documentEl);
+      return documentEl;
+    }
+    return null;
+  }
+
+  function createFolder(parentEl, name) {
+    var container = resolveFeatureContainer(parentEl);
+    if (!container) {
+      return null;
+    }
+    var folder = createElementNS(container, "Folder");
+    setElementName(folder, name);
+    container.appendChild(folder);
+    return folder;
+  }
+
+  function createPointPlacemark(parentEl, name, lat, lng) {
+    var container = resolveFeatureContainer(parentEl);
+    if (!container) {
+      return null;
+    }
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return null;
+    }
+    var placemark = createElementNS(container, "Placemark");
+    setElementName(placemark, name);
+    var pointEl = createElementNS(placemark, "Point");
+    var coordsEl = createElementNS(pointEl, "coordinates");
+    coordsEl.textContent = lng + "," + lat + ",0";
+    pointEl.appendChild(coordsEl);
+    placemark.appendChild(pointEl);
+    container.appendChild(placemark);
+    return placemark;
+  }
+
   function setPlacemarkPointCoordinates(placemarkEl, lat, lng, alt) {
     var pointEl = firstPointElement(placemarkEl);
     if (!pointEl) {
@@ -325,6 +376,82 @@
       hex = "0" + hex;
     }
     return hex + abgr.slice(2);
+  }
+
+  function removePlacemarkGeometry(placemarkEl) {
+    if (!placemarkEl || localName(placemarkEl) !== "placemark") {
+      return;
+    }
+    var toRemove = [];
+    Array.prototype.forEach.call(placemarkEl.children || [], function (child) {
+      var name = localName(child);
+      if (
+        name === "point"
+        || name === "polygon"
+        || name === "linestring"
+        || name === "multigeometry"
+        || name === "linearring"
+      ) {
+        toRemove.push(child);
+      }
+    });
+    toRemove.forEach(function (child) {
+      placemarkEl.removeChild(child);
+    });
+  }
+
+  function ringCoordinatesText(ring) {
+    if (!ring || !ring.length) {
+      return "";
+    }
+    var coords = ring.slice();
+    var first = coords[0];
+    var last = coords[coords.length - 1];
+    if (
+      !last
+      || first.lat !== last.lat
+      || first.lng !== last.lng
+    ) {
+      coords.push({ lat: first.lat, lng: first.lng });
+    }
+    return coords
+      .map(function (point) {
+        return point.lng + "," + point.lat + ",0";
+      })
+      .join(" ");
+  }
+
+  function syncViewportPlacemarkGeometry(placemarkEl, lat, lng, ring) {
+    if (
+      !placemarkEl
+      || localName(placemarkEl) !== "placemark"
+      || !Number.isFinite(lat)
+      || !Number.isFinite(lng)
+      || !ring
+      || ring.length < 3
+    ) {
+      return false;
+    }
+    removePlacemarkGeometry(placemarkEl);
+    var multi = createElementNS(placemarkEl, "MultiGeometry");
+    var pointEl = createElementNS(multi, "Point");
+    var pointCoords = createElementNS(pointEl, "coordinates");
+    pointCoords.textContent = lng + "," + lat + ",0";
+    pointEl.appendChild(pointCoords);
+    multi.appendChild(pointEl);
+    var polygonEl = createElementNS(multi, "Polygon");
+    var tessellate = createElementNS(polygonEl, "tessellate");
+    tessellate.textContent = "1";
+    var outer = createElementNS(polygonEl, "outerBoundaryIs");
+    var linearRing = createElementNS(outer, "LinearRing");
+    var ringCoords = createElementNS(linearRing, "coordinates");
+    ringCoords.textContent = ringCoordinatesText(ring);
+    linearRing.appendChild(ringCoords);
+    outer.appendChild(linearRing);
+    polygonEl.appendChild(outer);
+    multi.appendChild(polygonEl);
+    placemarkEl.appendChild(multi);
+    return true;
   }
 
   function syncPointChainLineFolder(documentEl, chainExport) {
@@ -918,6 +1045,10 @@
     clearPlacemarkIconHref: clearPlacemarkIconHref,
     setPlacemarkIconScale: setPlacemarkIconScale,
     setPlacemarkIconColor: setPlacemarkIconColor,
+    resolveFeatureContainer: resolveFeatureContainer,
+    createFolder: createFolder,
+    createPointPlacemark: createPointPlacemark,
+    syncViewportPlacemarkGeometry: syncViewportPlacemarkGeometry,
     setPlacemarkPointCoordinates: setPlacemarkPointCoordinates,
     setExtendedDataValue: setExtendedDataValue,
     setExtendedDataOnElement: setExtendedDataOnElement,

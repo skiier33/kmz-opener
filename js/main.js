@@ -53,6 +53,7 @@
   var fileLabel = document.getElementById("file-label");
   var toolbarFileName = document.getElementById("toolbar-file-name");
   var recentFilesEl = document.getElementById("recent-files");
+  var closeMenubarMenus = null;
   var layerTreeEl = document.getElementById("layer-tree");
   var layersAllBtn = document.getElementById("layers-all");
   var layersNoneBtn = document.getElementById("layers-none");
@@ -67,6 +68,7 @@
   var layersHideBtn = document.getElementById("layers-hide");
   var layersSortBtn = document.getElementById("layers-sort");
   var layersAddBtn = document.getElementById("layers-add");
+  var layersNewViewportsBtn = document.getElementById("layers-new-viewports");
   var fileSaveBtn = document.getElementById("file-save-copy");
   var fileEditKmlBtn = document.getElementById("file-edit-kml-external");
   var toolbarEditKmlBtn = document.getElementById("btn-edit-kml-external");
@@ -683,6 +685,375 @@
       collapseLabel: "Collapse layers panel",
       expandLabel: "Expand layers panel",
     });
+  }
+
+  var toolWindowStack = 0;
+  var TOOL_WINDOW_GEOMETRY_KEY = "kmz-tool-window-geometry";
+  var TOOL_WINDOW_MIN_W = 260;
+  var TOOL_WINDOW_MIN_H = 120;
+  var TOOL_WINDOW_VIEWPORT_EDGE = 8;
+
+  function toolWindowChromeTop() {
+    var root = getComputedStyle(document.documentElement);
+    var menubar = parseFloat(root.getPropertyValue("--menubar-h")) || 28;
+    var toolbar = parseFloat(root.getPropertyValue("--toolbar-h")) || 48;
+    return menubar + toolbar;
+  }
+
+  function readToolWindowGeometryStore() {
+    try {
+      var raw = localStorage.getItem(TOOL_WINDOW_GEOMETRY_KEY);
+      if (!raw) {
+        return {};
+      }
+      var parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (err) {
+      return {};
+    }
+  }
+
+  function writeToolWindowGeometry(toolId, rect) {
+    if (!toolId || !rect) {
+      return;
+    }
+    try {
+      var store = readToolWindowGeometryStore();
+      store[toolId] = {
+        left: Math.round(rect.left),
+        top: Math.round(rect.top),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+      };
+      localStorage.setItem(TOOL_WINDOW_GEOMETRY_KEY, JSON.stringify(store));
+    } catch (err) {
+      /* ignore storage errors */
+    }
+  }
+
+  function clampToolWindowRect(rect) {
+    var chromeTop = toolWindowChromeTop();
+    var maxW = Math.max(
+      TOOL_WINDOW_MIN_W,
+      window.innerWidth - TOOL_WINDOW_VIEWPORT_EDGE * 2
+    );
+    var maxH = Math.max(
+      TOOL_WINDOW_MIN_H,
+      window.innerHeight - chromeTop - TOOL_WINDOW_VIEWPORT_EDGE
+    );
+    var width = Math.min(Math.max(rect.width, TOOL_WINDOW_MIN_W), maxW);
+    var height = Math.min(Math.max(rect.height, TOOL_WINDOW_MIN_H), maxH);
+    var left = Math.min(
+      Math.max(rect.left, TOOL_WINDOW_VIEWPORT_EDGE),
+      window.innerWidth - width - TOOL_WINDOW_VIEWPORT_EDGE
+    );
+    var top = Math.min(
+      Math.max(rect.top, chromeTop + TOOL_WINDOW_VIEWPORT_EDGE),
+      window.innerHeight - height - TOOL_WINDOW_VIEWPORT_EDGE
+    );
+    return { left: left, top: top, width: width, height: height };
+  }
+
+  function defaultToolWindowRect(toolId) {
+    var chromeTop = toolWindowChromeTop();
+    var baseTop = chromeTop + 12;
+    var presets = {
+      "point-icons": { left: 16, top: baseTop, width: 380, height: 340 },
+      "point-chain": { left: 36, top: baseTop + 24, width: 380, height: 400 },
+      "csv-coords": { left: 56, top: baseTop + 48, width: 380, height: 320 },
+      "kml-editor": { left: 76, top: baseTop + 72, width: 380, height: 300 },
+      screenshot: { left: 16, top: baseTop, width: 400, height: 620 },
+      "screenshot-settings-filename": { left: 420, top: baseTop, width: 360, height: 480 },
+      "screenshot-settings-style": { left: 440, top: baseTop + 24, width: 340, height: 280 },
+      "screenshot-settings-viewport": { left: 460, top: baseTop + 48, width: 340, height: 420 },
+    };
+    var rect = presets[toolId] || { left: 16, top: baseTop, width: 380, height: 360 };
+    if (toolId === "screenshot") {
+      var rightW =
+        parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--right-pane-w")) ||
+        300;
+      rect.left = window.innerWidth - rightW - 24 - rect.width;
+    }
+    return clampToolWindowRect(rect);
+  }
+
+  function applyToolWindowRect(win, rect) {
+    if (!win || !rect) {
+      return;
+    }
+    win.style.left = rect.left + "px";
+    win.style.top = rect.top + "px";
+    win.style.width = rect.width + "px";
+    win.style.height = rect.height + "px";
+    win.style.right = "auto";
+  }
+
+  function ensureToolWindowGeometry(win) {
+    if (!win) {
+      return;
+    }
+    var toolId = win.getAttribute("data-tool-window");
+    if (!toolId) {
+      return;
+    }
+    if (win.dataset.geometryReady === "true") {
+      return;
+    }
+    var store = readToolWindowGeometryStore();
+    var stored = store[toolId];
+    var rect =
+      stored &&
+      Number.isFinite(stored.left) &&
+      Number.isFinite(stored.top) &&
+      Number.isFinite(stored.width) &&
+      Number.isFinite(stored.height)
+        ? clampToolWindowRect(stored)
+        : defaultToolWindowRect(toolId);
+    applyToolWindowRect(win, rect);
+    win.dataset.geometryReady = "true";
+  }
+
+  function initToolWindowDrag(win) {
+    var head = win.querySelector(".tool-window-head");
+    if (!head || head.dataset.dragBound === "true") {
+      return;
+    }
+    head.dataset.dragBound = "true";
+
+    var drag = null;
+
+    function finishDrag() {
+      if (!drag) {
+        return;
+      }
+      head.classList.remove("is-dragging");
+      document.body.classList.remove("tool-window-interacting");
+      writeToolWindowGeometry(drag.toolId, drag.rect);
+      drag = null;
+    }
+
+    function onPointerMove(event) {
+      if (!drag) {
+        return;
+      }
+      var next = clampToolWindowRect({
+        left: drag.startLeft + (event.clientX - drag.startX),
+        top: drag.startTop + (event.clientY - drag.startY),
+        width: drag.width,
+        height: drag.height,
+      });
+      drag.rect = next;
+      applyToolWindowRect(win, next);
+    }
+
+    function onPointerUp() {
+      finishDrag();
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
+    }
+
+    head.addEventListener("pointerdown", function (event) {
+      if (event.button !== 0 || win.classList.contains("hidden")) {
+        return;
+      }
+      if (event.target.closest(".tool-window-close")) {
+        return;
+      }
+      var toolId = win.getAttribute("data-tool-window");
+      bringToolWindowToFront(win);
+      event.preventDefault();
+      var rect = win.getBoundingClientRect();
+      drag = {
+        toolId: toolId,
+        startX: event.clientX,
+        startY: event.clientY,
+        startLeft: rect.left,
+        startTop: rect.top,
+        width: rect.width,
+        height: rect.height,
+        rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+      };
+      head.classList.add("is-dragging");
+      document.body.classList.add("tool-window-interacting");
+      head.setPointerCapture(event.pointerId);
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", onPointerUp);
+      window.addEventListener("pointercancel", onPointerUp);
+    });
+  }
+
+  function initToolWindowResize(win, handle) {
+    if (!win || !handle || handle.dataset.resizeBound === "true") {
+      return;
+    }
+    handle.dataset.resizeBound = "true";
+
+    var resize = null;
+
+    function finishResize() {
+      if (!resize) {
+        return;
+      }
+      handle.classList.remove("is-dragging");
+      document.body.classList.remove("tool-window-interacting");
+      writeToolWindowGeometry(resize.toolId, resize.rect);
+      resize = null;
+    }
+
+    function onPointerMove(event) {
+      if (!resize) {
+        return;
+      }
+      var next = clampToolWindowRect({
+        left: resize.startLeft,
+        top: resize.startTop,
+        width: resize.startWidth + (event.clientX - resize.startX),
+        height: resize.startHeight + (event.clientY - resize.startY),
+      });
+      resize.rect = next;
+      applyToolWindowRect(win, next);
+    }
+
+    function onPointerUp() {
+      finishResize();
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
+    }
+
+    handle.addEventListener("pointerdown", function (event) {
+      if (event.button !== 0 || win.classList.contains("hidden")) {
+        return;
+      }
+      var toolId = win.getAttribute("data-tool-window");
+      bringToolWindowToFront(win);
+      event.preventDefault();
+      event.stopPropagation();
+      var rect = win.getBoundingClientRect();
+      resize = {
+        toolId: toolId,
+        startX: event.clientX,
+        startY: event.clientY,
+        startLeft: rect.left,
+        startTop: rect.top,
+        startWidth: rect.width,
+        startHeight: rect.height,
+        rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+      };
+      handle.classList.add("is-dragging");
+      document.body.classList.add("tool-window-interacting");
+      handle.setPointerCapture(event.pointerId);
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", onPointerUp);
+      window.addEventListener("pointercancel", onPointerUp);
+    });
+  }
+
+  function queryToolWindow(toolId) {
+    if (!toolId) {
+      return null;
+    }
+    return document.querySelector('.tool-window[data-tool-window="' + toolId + '"]');
+  }
+
+  function queryToolMenuItem(toolId) {
+    if (!toolId) {
+      return null;
+    }
+    return document.querySelector('.menubar-menu-item[data-tool-window="' + toolId + '"]');
+  }
+
+  function setToolMenuItemEnabled(toolId, enabled) {
+    var item = queryToolMenuItem(toolId);
+    if (!item || item.hidden) {
+      return;
+    }
+    item.disabled = !enabled;
+  }
+
+  function bringToolWindowToFront(win) {
+    if (!win) {
+      return;
+    }
+    toolWindowStack += 1;
+    win.style.zIndex = String(toolWindowStack);
+    var windows = document.querySelectorAll(".tool-window:not(.hidden)");
+    windows.forEach(function (entry) {
+      entry.classList.remove("is-front");
+    });
+    win.classList.add("is-front");
+  }
+
+  function closeToolWindow(toolId) {
+    var win = queryToolWindow(toolId);
+    if (!win) {
+      return;
+    }
+    win.classList.add("hidden");
+    win.setAttribute("aria-hidden", "true");
+  }
+
+  function openToolWindow(toolId) {
+    var win = queryToolWindow(toolId);
+    var menuItem = queryToolMenuItem(toolId);
+    if (!win || (menuItem && menuItem.disabled)) {
+      return;
+    }
+    ensureToolWindowGeometry(win);
+    win.classList.remove("hidden");
+    win.setAttribute("aria-hidden", "false");
+    bringToolWindowToFront(win);
+    var closeBtn = win.querySelector(".tool-window-close");
+    if (closeBtn) {
+      closeBtn.focus();
+    }
+  }
+
+  function initToolWindows() {
+    var host = document.getElementById("tool-windows");
+    if (!host) {
+      return;
+    }
+
+    host.querySelectorAll(".tool-window").forEach(function (win) {
+      ensureToolWindowGeometry(win);
+      initToolWindowDrag(win);
+      var handle = win.querySelector(".tool-window-resize-handle");
+      if (!handle) {
+        handle = document.createElement("div");
+        handle.className = "tool-window-resize-handle";
+        handle.setAttribute("aria-hidden", "true");
+        win.appendChild(handle);
+      }
+      initToolWindowResize(win, handle);
+    });
+
+    host.querySelectorAll(".tool-window-close").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        closeToolWindow(btn.getAttribute("data-tool-window-close"));
+      });
+    });
+
+    document.addEventListener("keydown", function (event) {
+      if (event.key !== "Escape" || event.defaultPrevented) {
+        return;
+      }
+      var front = document.querySelector(".tool-window.is-front:not(.hidden)");
+      if (!front) {
+        return;
+      }
+      var toolId = front.getAttribute("data-tool-window");
+      if (toolId) {
+        event.preventDefault();
+        closeToolWindow(toolId);
+      }
+    });
+
+    global.KmzToolWindows = {
+      open: openToolWindow,
+      close: closeToolWindow,
+    };
   }
 
   var EYE_ICON =
@@ -1612,10 +1983,9 @@
     }
     var sourceId = resolveFilePointIconSourceId();
     var enabled = !!sourceId;
-    if (pointIconsSectionEl) {
-      pointIconsSectionEl.hidden = !enabled;
-    }
+    setToolMenuItemEnabled("point-icons", enabled);
     if (!enabled) {
+      closeToolWindow("point-icons");
       filePointIconsEl.innerHTML = "";
       refreshPointChainPanel();
       return;
@@ -3044,10 +3414,10 @@
     var sourceId = resolvePointChainSourceId();
     var entries = sourceId ? GisMap.listSourcePointLatLngs(sourceId) : [];
     var pointCount = entries.length;
-    if (pointChainSectionEl) {
-      pointChainSectionEl.hidden = pointCount < 2;
-    }
-    if (pointCount < 2) {
+    var chainEnabled = pointCount >= 2;
+    setToolMenuItemEnabled("point-chain", chainEnabled);
+    if (!chainEnabled) {
+      closeToolWindow("point-chain");
       pointChainPanelEl.innerHTML = "";
       resetPointChainRoute();
       return;
@@ -3577,6 +3947,12 @@
     applySelectionStyles();
     applyCutStyle();
     updateLayerVisibilityButtons();
+    if (window.MapScreenshot && typeof window.MapScreenshot.refreshBoundaryList === "function") {
+      window.MapScreenshot.refreshBoundaryList();
+    }
+    if (window.MapScreenshot && typeof window.MapScreenshot.refreshViewportTargets === "function") {
+      window.MapScreenshot.refreshViewportTargets();
+    }
   }
 
   function nodeHasChildren(node) {
@@ -3652,6 +4028,12 @@
     var name = document.createElement("span");
     name.className = "layer-name";
     name.textContent = node.name || node.type;
+    if (
+      window.ScreenshotBoundaryPersist
+      && ScreenshotBoundaryPersist.readFromNode(node)
+    ) {
+      name.classList.add("has-screenshot-boundary");
+    }
 
     row.appendChild(box);
     row.appendChild(name);
@@ -4680,11 +5062,7 @@
     refreshFileLabel();
     updateFileActions();
     renderLoadedSources();
-    if (
-      !filePointIconSourceUserPick &&
-      pointIconsSectionEl &&
-      !pointIconsSectionEl.hidden
-    ) {
+    if (!filePointIconSourceUserPick && resolveFilePointIconSourceId()) {
       refreshFilePointIconsPanel();
     }
     schedulePersistLoadedSession();
@@ -4866,7 +5244,112 @@
     if (window.MapScreenshot && typeof window.MapScreenshot.refreshTakeTwoSources === "function") {
       window.MapScreenshot.refreshTakeTwoSources();
     }
+    if (window.MapScreenshot && typeof window.MapScreenshot.refreshViewportTargets === "function") {
+      window.MapScreenshot.refreshViewportTargets();
+    }
+    if (window.MapScreenshot && typeof window.MapScreenshot.refreshBoundaryList === "function") {
+      window.MapScreenshot.refreshBoundaryList();
+    }
+    if (window.MapScreenshot && typeof window.MapScreenshot.refreshViewportTargets === "function") {
+      window.MapScreenshot.refreshViewportTargets();
+    }
     refreshExternalEditSourceSelect();
+  }
+
+  function markDocDirtyForNode(nodeId) {
+    var sourceId = sourceIdFromNodeId(nodeId);
+    var source = findLoadedSource(sourceId);
+    if (source) {
+      source.docDirty = true;
+      updateFileActions();
+    }
+    return sourceId;
+  }
+
+  function sourceLabelForNodeId(nodeId) {
+    var source = findLoadedSource(sourceIdFromNodeId(nodeId));
+    if (!source) {
+      return "";
+    }
+    return source.label || source.doc.fileName || source.id;
+  }
+
+  function outputBlobForSource(source) {
+    var root = GisMap.getDocumentSourceRoot(source.id);
+    if (!source || !source.doc || !root) {
+      return Promise.reject(new Error("Open a KMZ or KML file first."));
+    }
+    if (!source.docDirty && source.doc.originalBuffer) {
+      var type =
+        source.doc.sourceKind === "kmz"
+          ? "application/vnd.google-earth.kmz"
+          : "application/vnd.google-earth.kml+xml";
+      return Promise.resolve(new Blob([source.doc.originalBuffer], { type: type }));
+    }
+    return KmzSave.buildBlob(source.doc, root);
+  }
+
+  function saveTimestampedCopyForSource(sourceId) {
+    persistActiveSourceState();
+    var source = findLoadedSource(sourceId);
+    if (!source || !source.doc || !source.doc.xmlDoc) {
+      return Promise.reject(new Error("Could not find the file to save."));
+    }
+    if (saveInFlight) {
+      return Promise.reject(new Error("Another save is in progress."));
+    }
+    var downloadName = KmzSave.timestampedName(source.doc.fileName);
+    var sourcePath = source.doc.sourcePath;
+    var saveHandle = source.doc.handle;
+    saveInFlight = true;
+    updateFileActions();
+    setMessage("Saving " + downloadName + "…");
+    return outputBlobForSource(source)
+      .then(function (blob) {
+        if (!sourcePath) {
+          return saveWithBrowser(blob, downloadName, saveHandle);
+        }
+        return ensureDesktop().then(function (desktop) {
+          if (!desktop) {
+            return saveWithBrowser(blob, downloadName, saveHandle);
+          }
+          return fetch("/__desktop/save-copy", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/octet-stream",
+              "X-Desktop-Token": desktop.token,
+              "X-Source-Path": encodeURIComponent(sourcePath),
+              "X-Download-Name": encodeURIComponent(downloadName),
+            },
+            body: blob,
+          }).then(function (response) {
+            return response.text().then(function (text) {
+              var payload = {};
+              if (text) {
+                try {
+                  payload = JSON.parse(text);
+                } catch (err) {
+                  payload = {};
+                }
+              }
+              if (!response.ok) {
+                throw new Error(payload.error || "Could not save the copy.");
+              }
+              setMessage(
+                "Saved " + (payload.name || downloadName) + " in the same folder as the original."
+              );
+            });
+          });
+        });
+      })
+      .catch(function (err) {
+        setMessage((err && err.message) || "Could not save the copy.");
+        throw err;
+      })
+      .then(function () {
+        saveInFlight = false;
+        updateFileActions();
+      });
   }
 
   function schedulePersistLoadedSession() {
@@ -5240,8 +5723,13 @@
   }
 
   function setExternalEditVisible(visible) {
-    if (externalEditSection) {
-      externalEditSection.classList.toggle("hidden", !visible);
+    var kmlMenuItem = document.getElementById("menubar-tool-kml-editor");
+    if (kmlMenuItem) {
+      kmlMenuItem.hidden = !visible;
+      kmlMenuItem.disabled = !visible;
+    }
+    if (!visible) {
+      closeToolWindow("kml-editor");
     }
     if (toolbarEditKmlBtn) {
       toolbarEditKmlBtn.classList.toggle("hidden", !visible);
@@ -6361,16 +6849,23 @@
     }
     recentFilesEl.innerHTML = "";
     if (!items || !items.length) {
-      recentFilesEl.innerHTML = '<p class="muted">No recent files</p>';
+      recentFilesEl.innerHTML =
+        '<button type="button" class="menubar-menu-item menubar-menu-item-static" disabled tabindex="-1">No recent files</button>';
       return;
     }
     items.forEach(function (item) {
-      var row = document.createElement("div");
-      row.className = "recent-file";
+      var row = document.createElement("button");
+      row.type = "button";
+      row.className = "menubar-menu-item recent-file";
+      row.setAttribute("role", "menuitem");
       row.textContent = item.name;
-      row.title = item.name + " — double-click to open";
-      row.addEventListener("dblclick", function () {
+      row.title = item.name;
+      row.addEventListener("click", function (event) {
+        event.stopPropagation();
         openRecent(item);
+        if (closeMenubarMenus) {
+          closeMenubarMenus();
+        }
       });
       recentFilesEl.appendChild(row);
     });
@@ -6687,6 +7182,305 @@
       return { keepMapView: true };
     }
     return { replaceAll: true };
+  }
+
+  function suggestViewportsKmzFileName() {
+    var base = "viewports";
+    var active = activeSourceId ? findLoadedSource(activeSourceId) : null;
+    if (active && active.doc && active.doc.fileName) {
+      base = String(active.doc.fileName).replace(/\.(kmz|kml)$/i, "") + "-viewports";
+    }
+    var candidate = base + ".kmz";
+    var suffix = 2;
+    while (
+      loadedSources.some(function (source) {
+        return (
+          source.doc
+          && String(source.doc.fileName || "").toLowerCase() === candidate.toLowerCase()
+        );
+      })
+    ) {
+      candidate = base + "-" + suffix + ".kmz";
+      suffix += 1;
+    }
+    return candidate;
+  }
+
+  function findChildFolderByName(node, folderName) {
+    if (!node || !node.children || !folderName) {
+      return null;
+    }
+    var wanted = String(folderName).toLowerCase();
+    for (var i = 0; i < node.children.length; i += 1) {
+      var child = node.children[i];
+      if (child.type === "folder" && String(child.name || "").toLowerCase() === wanted) {
+        return child;
+      }
+    }
+    return null;
+  }
+
+  function findFolderByNameRecursive(node, folderName) {
+    if (!node || !folderName) {
+      return null;
+    }
+    var wanted = String(folderName).toLowerCase();
+    if (node.type === "folder" && String(node.name || "").toLowerCase() === wanted) {
+      return node;
+    }
+    var children = node.children || [];
+    for (var i = 0; i < children.length; i += 1) {
+      var found = findFolderByNameRecursive(children[i], folderName);
+      if (found) {
+        return found;
+      }
+    }
+    return null;
+  }
+
+  function viewportTreeAttachRoot(docRoot) {
+    if (
+      !docRoot
+      || !docRoot.sourceEl
+      || !window.KmzSave
+      || !KmzSave.resolveFeatureContainer
+    ) {
+      return docRoot;
+    }
+    var domParent = KmzSave.resolveFeatureContainer(docRoot.sourceEl);
+    if (!domParent || domParent === docRoot.sourceEl) {
+      return docRoot;
+    }
+    var mapRoot = GisMap.getRoot();
+    if (!mapRoot) {
+      return docRoot;
+    }
+    function findBySourceEl(node, sourceEl) {
+      if (!node || !sourceEl) {
+        return null;
+      }
+      if (node.sourceEl === sourceEl) {
+        return node;
+      }
+      var kids = node.children || [];
+      for (var i = 0; i < kids.length; i += 1) {
+        var hit = findBySourceEl(kids[i], sourceEl);
+        if (hit) {
+          return hit;
+        }
+      }
+      return null;
+    }
+    return findBySourceEl(mapRoot, domParent) || docRoot.children[0] || docRoot;
+  }
+
+  function listViewportFolderOptionsForSource(sourceId) {
+    var docRoot = sourceId ? GisMap.getDocumentSourceRoot(sourceId) : null;
+    if (!docRoot || !docRoot.sourceEl) {
+      return [];
+    }
+    var options = [];
+    var viewportsName = ScreenshotBoundaryPersist.VIEWPORTS_FOLDER_NAME;
+    var viewportsFolder = findChildFolderByName(docRoot, viewportsName);
+    if (viewportsFolder) {
+      options.push({ id: viewportsFolder.id, label: viewportsName });
+    } else if (window.MapScreenshot && MapScreenshot.VIEWPORT_ENSURE_FOLDER_ID) {
+      options.push({
+        id: MapScreenshot.VIEWPORT_ENSURE_FOLDER_ID,
+        label: viewportsName + " (create if missing)",
+      });
+    }
+    if (docRoot.type === "folder") {
+      options.push({
+        id: docRoot.id,
+        label: (docRoot.name || "Document") + " (root)",
+      });
+    }
+    function appendFolders(node, pathPrefix) {
+      (node.children || []).forEach(function (child) {
+        if (child.type !== "folder" || !child.sourceEl) {
+          return;
+        }
+        if (viewportsFolder && child.id === viewportsFolder.id) {
+          return;
+        }
+        var segment = child.name || "Folder";
+        var label = pathPrefix ? pathPrefix + " / " + segment : segment;
+        options.push({ id: child.id, label: label });
+        appendFolders(child, label);
+      });
+    }
+    appendFolders(docRoot, "");
+    return options;
+  }
+
+  function resolveViewportParentFolder(sourceId, folderId) {
+    if (!sourceId) {
+      return null;
+    }
+    var ensureId =
+      window.MapScreenshot && MapScreenshot.VIEWPORT_ENSURE_FOLDER_ID
+        ? MapScreenshot.VIEWPORT_ENSURE_FOLDER_ID
+        : "__ensure_viewports__";
+    if (!folderId || folderId === ensureId) {
+      return ensureViewportsFolderForSource(sourceId);
+    }
+    var node = GisMap.findNode(folderId);
+    if (
+      !node
+      || node.type !== "folder"
+      || !node.sourceEl
+      || sourceIdFromNodeId(node.id) !== sourceId
+    ) {
+      return null;
+    }
+    node.expanded = true;
+    return node;
+  }
+
+  function suggestViewportPlacemarkName(viewportsFolder) {
+    var base = "Viewport";
+    var used = {};
+    function walk(node) {
+      if (!node) {
+        return;
+      }
+      if (node.type === "placemark" && node.name) {
+        used[String(node.name).toLowerCase()] = true;
+      }
+      (node.children || []).forEach(walk);
+    }
+    walk(viewportsFolder);
+    var suffix = 1;
+    while (used[(base + " " + suffix).toLowerCase()]) {
+      suffix += 1;
+    }
+    return base + " " + suffix;
+  }
+
+  function ensureViewportsFolderForSource(sourceId) {
+    var docRoot = sourceId ? GisMap.getDocumentSourceRoot(sourceId) : null;
+    if (!docRoot || !docRoot.sourceEl) {
+      return null;
+    }
+    var folder = findFolderByNameRecursive(
+      docRoot,
+      ScreenshotBoundaryPersist.VIEWPORTS_FOLDER_NAME
+    );
+    if (folder) {
+      folder.expanded = true;
+      return folder;
+    }
+    var attachRoot = viewportTreeAttachRoot(docRoot);
+    folder = GisMap.appendFolderChild(
+      attachRoot,
+      ScreenshotBoundaryPersist.VIEWPORTS_FOLDER_NAME
+    );
+    if (folder) {
+      folder.expanded = true;
+      markDocDirtyForNode(folder.id);
+    }
+    return folder;
+  }
+
+  function addViewportFromScreenshot() {
+    if (!window.MapScreenshot || !window.ScreenshotBoundaryPersist) {
+      setMessage("Viewport save is unavailable.");
+      return;
+    }
+    var payload = MapScreenshot.readCurrentBoundaryState();
+    if (!payload) {
+      setMessage("Could not read the capture frame or map view.");
+      return;
+    }
+    var target = MapScreenshot.readViewportTarget ? MapScreenshot.readViewportTarget() : null;
+    var sourceId = target && target.sourceId ? target.sourceId : activeSourceId;
+    var source = sourceId ? findLoadedSource(sourceId) : null;
+    if (!source || !source.doc) {
+      setMessage("Choose a loaded KMZ/KML file in Screenshot → Viewport storage.");
+      return;
+    }
+    var parentFolder = resolveViewportParentFolder(
+      sourceId,
+      target && target.folderId ? target.folderId : null
+    );
+    if (!parentFolder) {
+      setMessage("Choose a valid folder in Screenshot → Viewport storage.");
+      return;
+    }
+    var name = suggestViewportPlacemarkName(parentFolder);
+    var lat = payload.view.lat;
+    var lng = payload.view.lng;
+    var node = GisMap.appendPointPlacemark(parentFolder, name, lat, lng);
+    if (!node) {
+      setMessage(
+        "Could not add the viewport placemark — choose a folder under the KMZ file (or Viewports)."
+      );
+      return;
+    }
+    if (!ScreenshotBoundaryPersist.syncViewportVisualization(GisMap, node, payload)) {
+      GisMap.deleteNodes([node.id]);
+      setMessage(
+        "Could not store viewport data or draw the viewport frame. Show the capture frame and try again."
+      );
+      return;
+    }
+    markDocDirtyForNode(node.id);
+    selectedIds = [node.id];
+    anchorId = node.id;
+    focusId = node.id;
+    revealNode(parentFolder.id);
+    revealNode(node.id);
+    renderTree(GisMap.getRoot());
+    applySelectionStyles();
+    if (window.MapScreenshot && typeof MapScreenshot.refreshViewportTargets === "function") {
+      MapScreenshot.refreshViewportTargets();
+    }
+    var label = source.label || source.doc.fileName || source.id;
+    setMessage(
+      "Saved viewport \"" + name + "\" to " + label + " — see Layers under " + parentFolder.name + "."
+    );
+  }
+
+  function createNewViewportsKmz() {
+    if (!window.ScreenshotBoundaryPersist || !window.KmzLoader) {
+      setMessage("Viewports KMZ creation is unavailable.");
+      return;
+    }
+    var fileName = suggestViewportsKmzFileName();
+    ScreenshotBoundaryPersist.buildEmptyViewportsKmzBlob(fileName)
+      .then(function (blob) {
+        return blob.arrayBuffer().then(function (buffer) {
+          var file = new File([buffer], fileName, {
+            type: "application/vnd.google-earth.kmz",
+          });
+          return KmzLoader.loadKmzOrKml(file).then(function (parsed) {
+            return { file: file, parsed: parsed };
+          });
+        });
+      })
+      .then(function (result) {
+        applyParsedFile(result.file, null, null, result.parsed, addLayersOpenOptions());
+        var docRoot = activeSourceId ? GisMap.getDocumentSourceRoot(activeSourceId) : null;
+        var viewportsFolder = docRoot
+          ? findChildFolderByName(docRoot, ScreenshotBoundaryPersist.VIEWPORTS_FOLDER_NAME)
+          : null;
+        if (viewportsFolder) {
+          selectedIds = [viewportsFolder.id];
+          anchorId = viewportsFolder.id;
+          focusId = viewportsFolder.id;
+          revealNode(viewportsFolder.id);
+          applySelectionStyles();
+        }
+        setMessage(
+          "Created " +
+            fileName +
+            ". Use Screenshot → Save Viewport to add viewports under the Viewports folder."
+        );
+      })
+      .catch(function (err) {
+        setMessage((err && err.message) || "Could not create viewports KMZ.");
+      });
   }
 
   function openFilesFromList(files, openOptions) {
@@ -7260,6 +8054,10 @@
         popup: document.getElementById("menubar-file-popup"),
       },
       {
+        trigger: document.getElementById("menubar-tools-trigger"),
+        popup: document.getElementById("menubar-tools-popup"),
+      },
+      {
         trigger: document.getElementById("menubar-options-trigger"),
         popup: document.getElementById("menubar-options-popup"),
       },
@@ -7270,9 +8068,34 @@
       return;
     }
 
+    function setSubmenuOpen(submenu, open) {
+      if (!submenu) {
+        return;
+      }
+      var trigger = submenu.querySelector(".menubar-submenu-trigger");
+      var popup = submenu.querySelector(".menubar-submenu-popup");
+      if (!trigger || !popup) {
+        return;
+      }
+      popup.classList.toggle("hidden", !open);
+      trigger.setAttribute("aria-expanded", open ? "true" : "false");
+    }
+
+    function closeSubmenus(popup) {
+      if (!popup) {
+        return;
+      }
+      popup.querySelectorAll(".menubar-submenu").forEach(function (submenu) {
+        setSubmenuOpen(submenu, false);
+      });
+    }
+
     function setMenuOpen(entry, open) {
       entry.popup.classList.toggle("hidden", !open);
       entry.trigger.setAttribute("aria-expanded", open ? "true" : "false");
+      if (!open) {
+        closeSubmenus(entry.popup);
+      }
     }
 
     function closeAllMenus() {
@@ -7296,11 +8119,40 @@
         if (!item || item.disabled) {
           return;
         }
+        if (item.classList.contains("menubar-submenu-trigger")) {
+          event.stopPropagation();
+          return;
+        }
+        if (item.classList.contains("menubar-menu-item-static")) {
+          event.stopPropagation();
+          return;
+        }
+        var toolId = item.getAttribute("data-tool-window");
+        if (toolId) {
+          event.stopPropagation();
+          openToolWindow(toolId);
+          closeAllMenus();
+          return;
+        }
+        if (item.classList.contains("recent-file")) {
+          return;
+        }
         closeAllMenus();
+      });
+
+      entry.popup.querySelectorAll(".menubar-submenu").forEach(function (submenu) {
+        submenu.addEventListener("mouseenter", function () {
+          closeSubmenus(entry.popup);
+          setSubmenuOpen(submenu, true);
+        });
+        submenu.addEventListener("mouseleave", function () {
+          setSubmenuOpen(submenu, false);
+        });
       });
     });
 
     document.addEventListener("click", closeAllMenus);
+    closeMenubarMenus = closeAllMenus;
 
     document.addEventListener("keydown", function (event) {
       if (event.key === "Escape") {
@@ -7309,6 +8161,7 @@
     });
   }
 
+  initToolWindows();
   initMenubar();
 
   var saveAsDefaultBtn = document.getElementById("btn-save-as-default");
@@ -7319,6 +8172,9 @@
   document.getElementById("btn-open").addEventListener("click", promptOpenFile);
   if (layersAddBtn) {
     layersAddBtn.addEventListener("click", promptLayerFilePicker);
+  }
+  if (layersNewViewportsBtn) {
+    layersNewViewportsBtn.addEventListener("click", createNewViewportsKmz);
   }
   if (duplicateWindowBtn) {
     duplicateWindowBtn.addEventListener("click", function () {
@@ -7820,6 +8676,30 @@
         if (sourceSelect) {
           syncFileHidePointNameLabelsToggle(sourceSelect);
         }
+      },
+      getSelectedNodeIds: function () {
+        return selectedIds.slice();
+      },
+      resolveNodeById: function (nodeId) {
+        return GisMap.findNode(nodeId);
+      },
+      getTreeRoot: function () {
+        return GisMap.getRoot();
+      },
+      getSourceLabelForNode: sourceLabelForNodeId,
+      markDocDirtyForNode: markDocDirtyForNode,
+      sourceIdFromNodeId: sourceIdFromNodeId,
+      saveTimestampedCopyForSource: saveTimestampedCopyForSource,
+      getGisMap: function () {
+        return GisMap;
+      },
+      onBoundaryListChanged: function () {
+        applySelectionStyles();
+      },
+      onAddViewport: addViewportFromScreenshot,
+      getViewportFolderOptions: listViewportFolderOptionsForSource,
+      getActiveSourceId: function () {
+        return activeSourceId;
       },
     });
   }

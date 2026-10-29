@@ -3,6 +3,7 @@
 
   var STORAGE_KEY = "kmz-screenshot-settings";
   var SEQUENCE_STORAGE_KEY = "kmz-screenshot-sequence";
+  var SECTIONS_COLLAPSED_KEY = "kmz-screenshot-sections-collapsed";
   var MIN_DIM = 64;
   var MAX_DIM = 8192;
   var SCREENSHOT_DPI = 96;
@@ -26,6 +27,8 @@
   var toolbarSaveBtn = null;
   var showToggle = null;
   var dimOutsideToggle = null;
+  var includeNorthToggle = null;
+  var includeScaleToggle = null;
   var frameColorInput = null;
   var frameWeightInput = null;
   var frameWeightValueEl = null;
@@ -43,13 +46,62 @@
   var readJsonResponseFn = null;
   var saveInFlight = false;
 
+  var boundaryLoadBtn = null;
+  var boundarySaveBtn = null;
+  var boundarySaveAllBtn = null;
+  var boundaryListEl = null;
+  var getSelectedNodeIdsFn = null;
+  var resolveNodeByIdFn = null;
+  var getTreeRootFn = null;
+  var getSourceLabelForNodeFn = null;
+  var markDocDirtyForNodeFn = null;
+  var sourceIdFromNodeIdFn = null;
+  var saveTimestampedCopyForSourceFn = null;
+  var onBoundaryListChangedFn = null;
+  var getGisMapFn = null;
+  var onAddViewportFn = null;
+  var saveViewportBtn = null;
+  var frameSaveViewportBtn = null;
+  var viewportSourceSelect = null;
+  var viewportFolderSelect = null;
+  var getViewportFolderOptionsFn = null;
+  var getActiveSourceIdFn = null;
+  var VIEWPORT_ENSURE_FOLDER_ID = "__ensure_viewports__";
+
+  var frameManualPosition = false;
+  var frameDragActive = false;
+  var applyingBoundary = false;
+
   var OUTSIDE_DIM_SHADOW = "0 0 0 9999px rgba(8, 10, 14, 0.45)";
+  var DECORATION_MARGIN_PX = 12;
 
   var defaultFrameLineStyle = {
     color: "#ffffff",
     weight: 2,
     dash: "solid",
   };
+
+  var defaultViewportFrameStyle = {
+    strokeColor: "#26c6da",
+    strokeWeight: 2,
+    strokeOpacity: 0.95,
+    dash: "dashed",
+    fillColor: "#26c6da",
+    fillOpacity: 0.1,
+  };
+
+  var dimStrengthInput = null;
+  var dimStrengthValueEl = null;
+  var exportFrameOutlineToggle = null;
+  var viewportStrokeColorInput = null;
+  var viewportStrokeWeightInput = null;
+  var viewportStrokeWeightValueEl = null;
+  var viewportStrokeOpacityInput = null;
+  var viewportStrokeOpacityValueEl = null;
+  var viewportStrokeDashSelect = null;
+  var viewportFillColorInput = null;
+  var viewportFillOpacityInput = null;
+  var viewportFillOpacityValueEl = null;
 
   function pad(n) {
     return n < 10 ? "0" + n : String(n);
@@ -112,6 +164,31 @@
           takeTwo: takeTwoToggle ? takeTwoToggle.checked : false,
           takeTwoHideNames: takeTwoHideNamesToggle ? takeTwoHideNamesToggle.checked : false,
           takeTwoHideIds: readTakeTwoHideIds(),
+          boundaryCheckIds: readBoundaryCheckIds(),
+          viewportSourceId: viewportSourceSelect ? viewportSourceSelect.value : "",
+          viewportFolderId: viewportFolderSelect ? viewportFolderSelect.value : "",
+          includeNorthArrow: includeNorthToggle ? includeNorthToggle.checked : true,
+          includeScaleLegend: includeScaleToggle ? includeScaleToggle.checked : true,
+          dimOutsideStrength: dimStrengthInput ? dimStrengthInput.value : "45",
+          exportFrameOutline: exportFrameOutlineToggle ? exportFrameOutlineToggle.checked : true,
+          viewportStrokeColor: viewportStrokeColorInput
+            ? viewportStrokeColorInput.value
+            : defaultViewportFrameStyle.strokeColor,
+          viewportStrokeWeight: viewportStrokeWeightInput
+            ? viewportStrokeWeightInput.value
+            : String(defaultViewportFrameStyle.strokeWeight),
+          viewportStrokeOpacity: viewportStrokeOpacityInput
+            ? viewportStrokeOpacityInput.value
+            : String(Math.round(defaultViewportFrameStyle.strokeOpacity * 100)),
+          viewportStrokeDash: viewportStrokeDashSelect
+            ? viewportStrokeDashSelect.value
+            : defaultViewportFrameStyle.dash,
+          viewportFillColor: viewportFillColorInput
+            ? viewportFillColorInput.value
+            : defaultViewportFrameStyle.fillColor,
+          viewportFillOpacity: viewportFillOpacityInput
+            ? viewportFillOpacityInput.value
+            : String(Math.round(defaultViewportFrameStyle.fillOpacity * 100)),
         })
       );
     } catch (err) {
@@ -231,6 +308,158 @@
     return "solid";
   }
 
+  function dashArrayFromDash(dash) {
+    if (dash === "dashed") {
+      return "10 8";
+    }
+    if (dash === "dotted") {
+      return "2 6";
+    }
+    return null;
+  }
+
+  function outsideDimShadowFromStrength(strength) {
+    var n = parseInt(String(strength || "45"), 10);
+    if (!n || n < 0) {
+      n = 0;
+    }
+    if (n > 100) {
+      n = 100;
+    }
+    var alpha = (n / 100) * 0.65;
+    return "0 0 0 9999px rgba(8, 10, 14, " + alpha.toFixed(2) + ")";
+  }
+
+  function readViewportFrameStyleFromSettings(settings) {
+    settings = settings || {};
+    var weight = parseInt(settings.viewportStrokeWeight, 10);
+    if (!weight || weight < 1) {
+      weight = defaultViewportFrameStyle.strokeWeight;
+    }
+    var strokeOpacityPct = parseInt(settings.viewportStrokeOpacity, 10);
+    if (Number.isNaN(strokeOpacityPct)) {
+      strokeOpacityPct = Math.round(defaultViewportFrameStyle.strokeOpacity * 100);
+    }
+    strokeOpacityPct = Math.min(100, Math.max(0, strokeOpacityPct));
+    var fillOpacityPct = parseInt(settings.viewportFillOpacity, 10);
+    if (Number.isNaN(fillOpacityPct)) {
+      fillOpacityPct = Math.round(defaultViewportFrameStyle.fillOpacity * 100);
+    }
+    fillOpacityPct = Math.min(100, Math.max(0, fillOpacityPct));
+    var dash = settings.viewportStrokeDash || defaultViewportFrameStyle.dash;
+    if (dash !== "solid" && dash !== "dashed" && dash !== "dotted") {
+      dash = defaultViewportFrameStyle.dash;
+    }
+    return {
+      strokeColor: settings.viewportStrokeColor || defaultViewportFrameStyle.strokeColor,
+      strokeWeight: weight,
+      strokeOpacity: strokeOpacityPct / 100,
+      dash: dash,
+      fillColor: settings.viewportFillColor || defaultViewportFrameStyle.fillColor,
+      fillOpacity: fillOpacityPct / 100,
+    };
+  }
+
+  function readViewportFrameStyleFromUi() {
+    return readViewportFrameStyleFromSettings({
+      viewportStrokeColor: viewportStrokeColorInput && viewportStrokeColorInput.value,
+      viewportStrokeWeight: viewportStrokeWeightInput && viewportStrokeWeightInput.value,
+      viewportStrokeOpacity: viewportStrokeOpacityInput && viewportStrokeOpacityInput.value,
+      viewportStrokeDash: viewportStrokeDashSelect && viewportStrokeDashSelect.value,
+      viewportFillColor: viewportFillColorInput && viewportFillColorInput.value,
+      viewportFillOpacity: viewportFillOpacityInput && viewportFillOpacityInput.value,
+    });
+  }
+
+  function syncViewportStyleValueLabels(style) {
+    if (viewportStrokeWeightValueEl) {
+      viewportStrokeWeightValueEl.textContent = (style.strokeWeight || defaultViewportFrameStyle.strokeWeight) + " px";
+    }
+    if (viewportStrokeWeightInput) {
+      viewportStrokeWeightInput.setAttribute(
+        "aria-valuenow",
+        String(style.strokeWeight || defaultViewportFrameStyle.strokeWeight)
+      );
+    }
+    if (viewportStrokeOpacityValueEl) {
+      viewportStrokeOpacityValueEl.textContent =
+        Math.round((style.strokeOpacity || 0) * 100) + "%";
+    }
+    if (viewportStrokeOpacityInput) {
+      viewportStrokeOpacityInput.setAttribute(
+        "aria-valuenow",
+        String(Math.round((style.strokeOpacity || 0) * 100))
+      );
+    }
+    if (viewportFillOpacityValueEl) {
+      viewportFillOpacityValueEl.textContent = Math.round((style.fillOpacity || 0) * 100) + "%";
+    }
+    if (viewportFillOpacityInput) {
+      viewportFillOpacityInput.setAttribute(
+        "aria-valuenow",
+        String(Math.round((style.fillOpacity || 0) * 100))
+      );
+    }
+  }
+
+  function viewportPathOptionsFromStyle(style) {
+    var dashArray = dashArrayFromDash(style.dash);
+    var opts = {
+      color: style.strokeColor || defaultViewportFrameStyle.strokeColor,
+      weight: style.strokeWeight || defaultViewportFrameStyle.strokeWeight,
+      opacity: style.strokeOpacity != null ? style.strokeOpacity : defaultViewportFrameStyle.strokeOpacity,
+      fill: (style.fillOpacity || 0) > 0,
+      fillColor: style.fillColor || defaultViewportFrameStyle.fillColor,
+      fillOpacity: style.fillOpacity != null ? style.fillOpacity : defaultViewportFrameStyle.fillOpacity,
+    };
+    if (dashArray) {
+      opts.dashArray = dashArray;
+    }
+    return opts;
+  }
+
+  function refreshViewportStylesOnMap() {
+    if (global.GisMap && typeof GisMap.refreshViewportFrameLayers === "function") {
+      GisMap.refreshViewportFrameLayers();
+    }
+  }
+
+  function syncDimStrengthValueLabel(strength) {
+    var n = parseInt(String(strength || "45"), 10);
+    if (Number.isNaN(n)) {
+      n = 45;
+    }
+    if (dimStrengthValueEl) {
+      dimStrengthValueEl.textContent = n + "%";
+    }
+    if (dimStrengthInput) {
+      dimStrengthInput.setAttribute("aria-valuenow", String(n));
+    }
+  }
+
+  function compositeCaptureFrameOutline(canvas) {
+    if (!canvas || !exportFrameOutlineToggle || !exportFrameOutlineToggle.checked) {
+      return;
+    }
+    var ctx = canvas.getContext("2d");
+    if (!ctx) {
+      return;
+    }
+    var style = readFrameLineStyleFromUi();
+    var lineStyle = borderStyleFromDash(style.dash);
+    ctx.save();
+    ctx.strokeStyle = style.color || defaultFrameLineStyle.color;
+    ctx.lineWidth = Math.max(1, style.weight || defaultFrameLineStyle.weight);
+    if (lineStyle === "dashed") {
+      ctx.setLineDash([8, 6]);
+    } else if (lineStyle === "dotted") {
+      ctx.setLineDash([2, 4]);
+    }
+    var inset = ctx.lineWidth / 2;
+    ctx.strokeRect(inset, inset, canvas.width - ctx.lineWidth, canvas.height - ctx.lineWidth);
+    ctx.restore();
+  }
+
   function readFrameLineStyleFromUi() {
     var weight = frameWeightInput ? parseInt(frameWeightInput.value, 10) : defaultFrameLineStyle.weight;
     if (!weight || weight < 1) {
@@ -264,28 +493,560 @@
     if (dimOutsideToggle && !dimOutsideToggle.checked) {
       frameEl.style.boxShadow = "none";
     } else {
-      frameEl.style.boxShadow = OUTSIDE_DIM_SHADOW;
+      var strength = dimStrengthInput ? dimStrengthInput.value : "45";
+      frameEl.style.boxShadow = outsideDimShadowFromStrength(strength);
     }
+  }
+
+  function mapOffsetInWrap() {
+    var mapEl = document.getElementById("map");
+    if (!mapEl || !mapWrap) {
+      return null;
+    }
+    var mapRect = mapEl.getBoundingClientRect();
+    var wrapRect = mapWrap.getBoundingClientRect();
+    return {
+      x: mapRect.left - wrapRect.left,
+      y: mapRect.top - wrapRect.top,
+      w: mapEl.clientWidth || mapRect.width,
+      h: mapEl.clientHeight || mapRect.height,
+    };
+  }
+
+  function computeDisplaySize(dims) {
+    var wrapW = mapWrap ? mapWrap.clientWidth : 0;
+    var wrapH = mapWrap ? mapWrap.clientHeight : 0;
+    var margin = 12;
+    var scale = Math.min(1, (wrapW - margin * 2) / dims.width, (wrapH - margin * 2) / dims.height);
+    return {
+      displayW: Math.max(1, Math.round(dims.width * scale)),
+      displayH: Math.max(1, Math.round(dims.height * scale)),
+    };
+  }
+
+  function layoutFrameCentered() {
+    if (!mapWrap || !frameEl) {
+      return;
+    }
+    var dims = targetDimensions();
+    var sizes = computeDisplaySize(dims);
+    var wrapW = mapWrap.clientWidth;
+    var wrapH = mapWrap.clientHeight;
+    frameEl.style.width = sizes.displayW + "px";
+    frameEl.style.height = sizes.displayH + "px";
+    frameEl.style.left = Math.round((wrapW - sizes.displayW) / 2) + "px";
+    frameEl.style.top = Math.round((wrapH - sizes.displayH) / 2) + "px";
+    frameEl.dataset.outWidth = String(dims.width);
+    frameEl.dataset.outHeight = String(dims.height);
+    applyFrameStyle();
+  }
+
+  function layoutFrameFromNorms(centerXNorm, centerYNorm) {
+    if (!mapWrap || !frameEl) {
+      return;
+    }
+    var dims = targetDimensions();
+    var sizes = computeDisplaySize(dims);
+    var off = mapOffsetInWrap();
+    if (!off || off.w <= 0 || off.h <= 0) {
+      layoutFrameCentered();
+      return;
+    }
+    var centerX = off.x + centerXNorm * off.w;
+    var centerY = off.y + centerYNorm * off.h;
+    var left = Math.round(centerX - sizes.displayW / 2);
+    var top = Math.round(centerY - sizes.displayH / 2);
+    var wrapW = mapWrap.clientWidth;
+    var wrapH = mapWrap.clientHeight;
+    left = Math.max(0, Math.min(wrapW - sizes.displayW, left));
+    top = Math.max(0, Math.min(wrapH - sizes.displayH, top));
+    frameEl.style.width = sizes.displayW + "px";
+    frameEl.style.height = sizes.displayH + "px";
+    frameEl.style.left = left + "px";
+    frameEl.style.top = top + "px";
+    frameEl.dataset.outWidth = String(dims.width);
+    frameEl.dataset.outHeight = String(dims.height);
+    applyFrameStyle();
   }
 
   function layoutFrame() {
     if (!mapWrap || !frameEl || !overlayEl || overlayEl.classList.contains("hidden")) {
       return;
     }
-    var dims = targetDimensions();
-    var wrapW = mapWrap.clientWidth;
-    var wrapH = mapWrap.clientHeight;
-    var margin = 12;
-    var scale = Math.min(1, (wrapW - margin * 2) / dims.width, (wrapH - margin * 2) / dims.height);
-    var displayW = Math.max(1, Math.round(dims.width * scale));
-    var displayH = Math.max(1, Math.round(dims.height * scale));
-    frameEl.style.width = displayW + "px";
-    frameEl.style.height = displayH + "px";
-    frameEl.style.left = Math.round((wrapW - displayW) / 2) + "px";
-    frameEl.style.top = Math.round((wrapH - displayH) / 2) + "px";
-    frameEl.dataset.outWidth = String(dims.width);
-    frameEl.dataset.outHeight = String(dims.height);
-    applyFrameStyle();
+    if (frameManualPosition && frameEl.dataset.centerXNorm && frameEl.dataset.centerYNorm) {
+      layoutFrameFromNorms(
+        parseFloat(frameEl.dataset.centerXNorm),
+        parseFloat(frameEl.dataset.centerYNorm)
+      );
+      return;
+    }
+    layoutFrameCentered();
+  }
+
+  function setFrameManualNorms(centerXNorm, centerYNorm) {
+    if (!frameEl) {
+      return;
+    }
+    frameManualPosition = true;
+    frameEl.dataset.centerXNorm = String(centerXNorm);
+    frameEl.dataset.centerYNorm = String(centerYNorm);
+    layoutFrameFromNorms(centerXNorm, centerYNorm);
+  }
+
+  function bindFrameDrag() {
+    if (!frameEl || !mapWrap) {
+      return;
+    }
+    frameEl.classList.add("is-draggable");
+    frameEl.addEventListener("pointerdown", function (event) {
+      if (!isCaptureFrameVisible() || applyingBoundary) {
+        return;
+      }
+      if (event.button !== 0) {
+        return;
+      }
+      frameDragActive = true;
+      frameManualPosition = true;
+      frameEl.setPointerCapture(event.pointerId);
+      frameEl.classList.add("is-dragging");
+      event.preventDefault();
+    });
+    frameEl.addEventListener("pointermove", function (event) {
+      if (!frameDragActive || !frameEl) {
+        return;
+      }
+      var wrapRect = mapWrap.getBoundingClientRect();
+      var w = frameEl.offsetWidth;
+      var h = frameEl.offsetHeight;
+      var left = event.clientX - wrapRect.left - w / 2;
+      var top = event.clientY - wrapRect.top - h / 2;
+      left = Math.max(0, Math.min(mapWrap.clientWidth - w, left));
+      top = Math.max(0, Math.min(mapWrap.clientHeight - h, top));
+      frameEl.style.left = Math.round(left) + "px";
+      frameEl.style.top = Math.round(top) + "px";
+      updateFrameNormsFromLayout();
+    });
+    function endDrag(event) {
+      if (!frameDragActive) {
+        return;
+      }
+      frameDragActive = false;
+      frameEl.classList.remove("is-dragging");
+      if (event && frameEl.hasPointerCapture(event.pointerId)) {
+        frameEl.releasePointerCapture(event.pointerId);
+      }
+      updateFrameNormsFromLayout();
+    }
+    frameEl.addEventListener("pointerup", function (event) {
+      endDrag(event);
+    });
+    frameEl.addEventListener("pointercancel", endDrag);
+  }
+
+  function updateFrameNormsFromLayout() {
+    if (!global.ScreenshotBoundaryPersist || !frameEl) {
+      return;
+    }
+    var mapEl = document.getElementById("map");
+    var measured = ScreenshotBoundaryPersist.measureFrameOnMap(mapEl, frameEl);
+    if (!measured) {
+      return;
+    }
+    frameEl.dataset.centerXNorm = String(measured.centerXNorm);
+    frameEl.dataset.centerYNorm = String(measured.centerYNorm);
+  }
+
+  function readCurrentBoundaryState() {
+    if (!global.ScreenshotBoundaryPersist) {
+      return null;
+    }
+    var gisMap = getGisMapFn ? getGisMapFn() : null;
+    var map = gisMap && gisMap.getMap ? gisMap.getMap() : null;
+    var mapEl = document.getElementById("map");
+    return ScreenshotBoundaryPersist.buildPayloadFromUi({
+      map: map,
+      gisMap: gisMap,
+      mapEl: mapEl,
+      frameEl: frameEl,
+      output: {
+        width: targetDimensions().width,
+        height: targetDimensions().height,
+        unit: dimensionUnit(),
+      },
+    });
+  }
+
+  function applyBoundaryState(payload) {
+    if (!payload || !global.ScreenshotBoundaryPersist) {
+      return Promise.resolve(false);
+    }
+    var normalized = ScreenshotBoundaryPersist.normalizePayload(payload);
+    if (!normalized) {
+      return Promise.resolve(false);
+    }
+    applyingBoundary = true;
+    var gisMap = getGisMapFn ? getGisMapFn() : null;
+    var map = gisMap && gisMap.getMap ? gisMap.getMap() : null;
+    if (gisMap && normalized.basemap && gisMap.setBasemap) {
+      gisMap.setBasemap(normalized.basemap);
+      var basemapSelect = document.getElementById("basemap-select");
+      if (basemapSelect) {
+        basemapSelect.value = normalized.basemap;
+      }
+    }
+    if (map && normalized.view) {
+      map.setView([normalized.view.lat, normalized.view.lng], normalized.view.zoom, {
+        animate: false,
+      });
+      if (typeof map.setBearing === "function") {
+        map.setBearing(normalized.view.bearing || 0, { animate: false });
+      }
+    }
+    if (unitSelect) {
+      unitSelect.value = normalized.output.unit === "in" ? "in" : "px";
+      unitSelect.dataset.lastUnit = unitSelect.value;
+    }
+    syncDimensionFieldUi();
+    setDimensionInputsFromPx(
+      { width: normalized.output.width, height: normalized.output.height },
+      normalized.output.unit
+    );
+    frameManualPosition = true;
+    if (showToggle && !showToggle.checked) {
+      showToggle.checked = true;
+      setOverlayVisible(true);
+    }
+    return waitForRepaint()
+      .then(function () {
+        return waitMs(200);
+      })
+      .then(function () {
+        layoutFrameFromNorms(normalized.frame.centerXNorm, normalized.frame.centerYNorm);
+        frameEl.dataset.centerXNorm = String(normalized.frame.centerXNorm);
+        frameEl.dataset.centerYNorm = String(normalized.frame.centerYNorm);
+        applyingBoundary = false;
+        writeSettings();
+        return true;
+      });
+  }
+
+  function boundaryEligibleNode(node) {
+    return !!(node && node.sourceEl && node.id && node.id !== "__composite__");
+  }
+
+  function readBoundaryCheckIds() {
+    if (!boundaryListEl) {
+      return [];
+    }
+    var ids = [];
+    boundaryListEl.querySelectorAll('input[type="checkbox"][data-node-id]').forEach(function (input) {
+      if (input.checked) {
+        ids.push(input.dataset.nodeId);
+      }
+    });
+    return ids;
+  }
+
+  function refreshBoundaryList() {
+    if (!boundaryListEl || !getTreeRootFn || !global.ScreenshotBoundaryPersist) {
+      return;
+    }
+    var root = getTreeRootFn();
+    var entries = ScreenshotBoundaryPersist.listNodesWithBoundaries(root);
+    var previous = {};
+    boundaryListEl.querySelectorAll('input[type="checkbox"][data-node-id]').forEach(function (input) {
+      previous[input.dataset.nodeId] = input.checked;
+    });
+    var storedIds = (readSettings() || {}).boundaryCheckIds;
+    boundaryListEl.innerHTML = "";
+    if (!entries.length) {
+      boundaryListEl.innerHTML =
+        '<p class="muted empty-hint">Save a boundary to a layer-tree selection to list it here.</p>';
+      if (boundarySaveAllBtn) {
+        boundarySaveAllBtn.disabled = true;
+      }
+      return;
+    }
+    entries.forEach(function (entry) {
+      var node = entry.node;
+      var checked = true;
+      if (Object.prototype.hasOwnProperty.call(previous, node.id)) {
+        checked = previous[node.id];
+      } else if (Array.isArray(storedIds)) {
+        checked = storedIds.indexOf(node.id) >= 0;
+      }
+      var label = document.createElement("label");
+      label.className = "screenshot-boundary-item";
+      var box = document.createElement("input");
+      box.type = "checkbox";
+      box.dataset.nodeId = node.id;
+      box.checked = checked;
+      var text = document.createElement("span");
+      var prefix = getSourceLabelForNodeFn ? getSourceLabelForNodeFn(node.id) : "";
+      text.textContent = prefix ? prefix + " — " + (node.name || node.id) : node.name || node.id;
+      label.appendChild(box);
+      label.appendChild(text);
+      box.addEventListener("change", writeSettings);
+      boundaryListEl.appendChild(label);
+    });
+    if (boundarySaveAllBtn) {
+      boundarySaveAllBtn.disabled = saveInFlight;
+    }
+    if (onBoundaryListChangedFn) {
+      onBoundaryListChangedFn();
+    }
+  }
+
+  function loadBoundaryFromSelection() {
+    if (!getSelectedNodeIdsFn || !resolveNodeByIdFn) {
+      return;
+    }
+    var ids = getSelectedNodeIdsFn();
+    if (ids.length !== 1) {
+      if (setMessageFn) {
+        setMessageFn("Select exactly one layer with a saved boundary to load.");
+      }
+      return;
+    }
+    var node = resolveNodeByIdFn(ids[0]);
+    if (!node || !global.ScreenshotBoundaryPersist) {
+      if (setMessageFn) {
+        setMessageFn("Could not find the selected layer.");
+      }
+      return;
+    }
+    var payload = ScreenshotBoundaryPersist.readFromNode(node);
+    if (!payload) {
+      if (setMessageFn) {
+        setMessageFn("That layer has no saved screenshot boundary.");
+      }
+      return;
+    }
+    applyBoundaryState(payload).then(function (ok) {
+      if (setMessageFn) {
+        setMessageFn(ok ? "Loaded screenshot boundary from " + (node.name || "layer") + "." : "Could not load boundary.");
+      }
+    });
+  }
+
+  function saveBoundaryToSelection() {
+    if (!getSelectedNodeIdsFn || !resolveNodeByIdFn || !global.ScreenshotBoundaryPersist) {
+      return;
+    }
+    var payload = readCurrentBoundaryState();
+    if (!payload) {
+      if (setMessageFn) {
+        setMessageFn("Could not read the capture frame or map view.");
+      }
+      return;
+    }
+    var ids = getSelectedNodeIdsFn().filter(function (id) {
+      var node = resolveNodeByIdFn(id);
+      return boundaryEligibleNode(node);
+    });
+    if (!ids.length) {
+      if (setMessageFn) {
+        setMessageFn("Select one or more folders or placemarks in the layer tree (not the combined root).");
+      }
+      return;
+    }
+    var gisMap = getGisMapFn ? getGisMapFn() : null;
+    var sourceIds = {};
+    ids.forEach(function (id) {
+      var node = resolveNodeByIdFn(id);
+      if (!node) {
+        return;
+      }
+      var saved =
+        node.type === "placemark"
+        && typeof ScreenshotBoundaryPersist.syncViewportVisualization === "function"
+          ? ScreenshotBoundaryPersist.syncViewportVisualization(gisMap, node, payload)
+          : ScreenshotBoundaryPersist.writeToNode(node, payload);
+      if (!saved) {
+        return;
+      }
+      if (markDocDirtyForNodeFn) {
+        var markedSourceId = markDocDirtyForNodeFn(id);
+        if (markedSourceId) {
+          sourceIds[markedSourceId] = true;
+        }
+      }
+    });
+    refreshBoundaryList();
+    if (setMessageFn) {
+      setMessageFn("Saved screenshot boundary to " + ids.length + " layer(s).");
+    }
+    var uniqueSources = Object.keys(sourceIds);
+    if (!uniqueSources.length || !saveTimestampedCopyForSourceFn) {
+      return;
+    }
+    var promptText =
+      "Save timestamped KMZ cop" +
+      (uniqueSources.length === 1 ? "y for 1 file?" : "ies for " + uniqueSources.length + " files?");
+    if (!global.confirm(promptText)) {
+      return;
+    }
+    var chain = Promise.resolve();
+    uniqueSources.forEach(function (sourceId) {
+      chain = chain.then(function () {
+        return saveTimestampedCopyForSourceFn(sourceId);
+      });
+    });
+    chain.catch(function (err) {
+      if (setMessageFn) {
+        setMessageFn((err && err.message) || "Could not save KMZ copy.");
+      }
+    });
+  }
+
+  function snapshotMapView(map) {
+    if (!map) {
+      return null;
+    }
+    var center = map.getCenter();
+    return {
+      lat: center.lat,
+      lng: center.lng,
+      zoom: map.getZoom(),
+      bearing: typeof map.getBearing === "function" ? map.getBearing() || 0 : 0,
+    };
+  }
+
+  function restoreMapView(map, snapshot) {
+    if (!map || !snapshot) {
+      return;
+    }
+    map.setView([snapshot.lat, snapshot.lng], snapshot.zoom, { animate: false });
+    if (typeof map.setBearing === "function") {
+      map.setBearing(snapshot.bearing || 0, { animate: false });
+    }
+  }
+
+  function hideAllSourcesExcept(keepSourceId) {
+    var snapshot = [];
+    listLoadedSources().forEach(function (source) {
+      var visible = source.visible !== false;
+      snapshot.push({ id: source.id, visible: visible });
+      if (setLoadedSourceVisibleFn && source.id !== keepSourceId) {
+        setLoadedSourceVisibleFn(source.id, false);
+      }
+    });
+    return snapshot;
+  }
+
+  function saveAllBoundariesScreenshots() {
+    if (saveInFlight) {
+      return;
+    }
+    var checkedIds = readBoundaryCheckIds();
+    if (!checkedIds.length) {
+      if (setMessageFn) {
+        setMessageFn("Check at least one saved boundary to export.");
+      }
+      return;
+    }
+    if (!resolveNodeByIdFn || !global.ScreenshotBoundaryPersist) {
+      return;
+    }
+    var takeTwoOpts = takeTwoCaptureOptions();
+    var takeTwoValidation = takeTwoValidationMessage(takeTwoOpts);
+    if (takeTwoValidation) {
+      if (setMessageFn) {
+        setMessageFn(takeTwoValidation);
+      }
+      return;
+    }
+    var directory = dirInput ? String(dirInput.value || "").trim() : "";
+    return (ensureDesktopFn ? ensureDesktopFn() : Promise.resolve(null)).then(function (desktop) {
+      if (desktop && !directory) {
+        throw new Error("Enter a save directory.");
+      }
+      saveInFlight = true;
+      setSaveButtonsDisabled(true);
+      var gisMap = getGisMapFn ? getGisMapFn() : null;
+      var map = gisMap && gisMap.getMap ? gisMap.getMap() : null;
+      var viewSnapshot = snapshotMapView(map);
+      var visibilitySnapshot = null;
+      var baseStem = baseNameInput && baseNameInput.value;
+      var saved = [];
+      var index = 0;
+
+      function next() {
+        if (index >= checkedIds.length) {
+          return Promise.resolve();
+        }
+        var nodeId = checkedIds[index];
+        index += 1;
+        var node = resolveNodeByIdFn(nodeId);
+        if (!node) {
+          return next();
+        }
+        var payload = ScreenshotBoundaryPersist.readFromNode(node);
+        if (!payload) {
+          return next();
+        }
+        var sourceId = sourceIdFromNodeIdFn ? sourceIdFromNodeIdFn(nodeId) : null;
+        var nodeLabel = node.name || nodeId;
+        var shotLabel = takeTwoOpts.takeTwo ? " (1–2)" : "";
+        if (setMessageFn) {
+          setMessageFn(
+            "Capturing " + index + " of " + checkedIds.length + ": " + nodeLabel + shotLabel + "…"
+          );
+        }
+        return applyBoundaryState(payload)
+          .then(function () {
+            return waitMs(250);
+          })
+          .then(function () {
+            if (sourceId) {
+              visibilitySnapshot = hideAllSourcesExcept(sourceId);
+            }
+            return waitForRepaint().then(function () {
+              return waitMs(150);
+            });
+          })
+          .then(function () {
+            var stem =
+              sanitizeBaseName(baseStem) + "-" + sanitizeBaseName(node.name || nodeId).slice(0, 48);
+            return captureScreenshotSequence(stem).then(function (results) {
+              results.forEach(function (result) {
+                saved.push(result);
+              });
+              if (visibilitySnapshot) {
+                restoreSourceVisibilitySnapshot(visibilitySnapshot);
+                visibilitySnapshot = null;
+              }
+              return next();
+            });
+          });
+      }
+
+      return next()
+        .then(function () {
+          restoreMapView(map, viewSnapshot);
+          if (setMessageFn && saved.length) {
+            setMessageFn("Saved " + saved.length + " screenshot(s) to the output folder.");
+          }
+        })
+        .catch(function (err) {
+          if (visibilitySnapshot) {
+            restoreSourceVisibilitySnapshot(visibilitySnapshot);
+          }
+          restoreMapView(map, viewSnapshot);
+          if (setMessageFn) {
+            setMessageFn((err && err.message) || "Could not save all screenshots.");
+          }
+        })
+        .then(function () {
+          saveInFlight = false;
+          setSaveButtonsDisabled(false);
+          refreshBoundaryList();
+        });
+    }).catch(function (err) {
+      if (setMessageFn) {
+        setMessageFn((err && err.message) || "Could not save all screenshots.");
+      }
+    });
   }
 
   function setOverlayVisible(show) {
@@ -294,10 +1055,31 @@
     }
     if (show) {
       overlayEl.classList.remove("hidden");
+      overlayEl.setAttribute("aria-hidden", "false");
       layoutFrame();
     } else {
       overlayEl.classList.add("hidden");
+      overlayEl.setAttribute("aria-hidden", "true");
     }
+    syncFrameSaveViewportButton();
+  }
+
+  function invokeSaveViewport() {
+    if (onAddViewportFn) {
+      onAddViewportFn();
+    }
+  }
+
+  function syncFrameSaveViewportButton() {
+    if (!frameSaveViewportBtn) {
+      return;
+    }
+    if (!isCaptureFrameVisible()) {
+      frameSaveViewportBtn.classList.add("hidden");
+      return;
+    }
+    frameSaveViewportBtn.classList.remove("hidden");
+    frameSaveViewportBtn.disabled = !!(saveViewportBtn && saveViewportBtn.disabled);
   }
 
   function isCaptureFrameVisible() {
@@ -314,6 +1096,9 @@
     }
     if (toolbarSaveBtn) {
       toolbarSaveBtn.disabled = disabled;
+    }
+    if (boundarySaveAllBtn) {
+      boundarySaveAllBtn.disabled = disabled || !readBoundaryCheckIds().length;
     }
   }
 
@@ -389,6 +1174,82 @@
     });
   }
 
+  function readMapDecorationOptions() {
+    return {
+      northArrow: includeNorthToggle ? includeNorthToggle.checked : true,
+      scaleLegend: includeScaleToggle ? includeScaleToggle.checked : true,
+    };
+  }
+
+  function mapDecorationElements() {
+    var mapEl = document.getElementById("map");
+    if (!mapEl) {
+      return { north: null, scale: null };
+    }
+    return {
+      north: mapEl.querySelector(".map-north-control"),
+      scale: mapEl.querySelector(".leaflet-control-scale"),
+    };
+  }
+
+  function captureDecorationLayer(el, pixelScale) {
+    if (!el || !global.html2canvas) {
+      return Promise.resolve(null);
+    }
+    return global
+      .html2canvas(el, {
+        useCORS: true,
+        allowTaint: false,
+        backgroundColor: null,
+        logging: false,
+        scale: pixelScale,
+      })
+      .catch(function () {
+        return null;
+      });
+  }
+
+  function captureMapDecorations(pixelScale, opts) {
+    opts = opts || readMapDecorationOptions();
+    if (!opts.northArrow && !opts.scaleLegend) {
+      return Promise.resolve({ north: null, scale: null });
+    }
+    var els = mapDecorationElements();
+    return Promise.all([
+      opts.northArrow ? captureDecorationLayer(els.north, pixelScale) : Promise.resolve(null),
+      opts.scaleLegend ? captureDecorationLayer(els.scale, pixelScale) : Promise.resolve(null),
+    ]).then(function (parts) {
+      return { north: parts[0], scale: parts[1] };
+    });
+  }
+
+  function compositeMapDecorations(canvas, decorCanvases, pixelScale) {
+    if (!canvas || !decorCanvases) {
+      return canvas;
+    }
+    var north = decorCanvases.north;
+    var scale = decorCanvases.scale;
+    if (!north && !scale) {
+      return canvas;
+    }
+    var ctx = canvas.getContext("2d");
+    if (!ctx) {
+      return canvas;
+    }
+    var margin = Math.round(DECORATION_MARGIN_PX * pixelScale);
+    if (north && north.width > 0 && north.height > 0) {
+      ctx.drawImage(north, margin, margin);
+    }
+    if (scale && scale.width > 0 && scale.height > 0) {
+      ctx.drawImage(
+        scale,
+        canvas.width - scale.width - margin,
+        canvas.height - scale.height - margin
+      );
+    }
+    return canvas;
+  }
+
   function captureMapPng() {
     if (!global.html2canvas) {
       return Promise.reject(new Error("Screenshot library did not load."));
@@ -430,12 +1291,23 @@
       outH = Math.round(cropH);
       scale = 1;
     }
+    var decorOpts = readMapDecorationOptions();
+    var decorEls = mapDecorationElements();
+    var hideDecorOnMap = !!(decorEls.north || decorEls.scale);
     var hadOverlay = useFrame && overlayEl && !overlayEl.classList.contains("hidden");
     if (hadOverlay) {
       overlayEl.classList.add("hidden");
     }
-    return waitForRepaint()
-      .then(function () {
+    return captureMapDecorations(scale, decorOpts)
+      .then(function (decorCanvases) {
+        if (hideDecorOnMap) {
+          mapEl.classList.add("screenshot-capturing");
+        }
+        return waitForRepaint().then(function () {
+          return { decorCanvases: decorCanvases };
+        });
+      })
+      .then(function (state) {
         return global.html2canvas(mapEl, {
           useCORS: true,
           allowTaint: false,
@@ -446,12 +1318,18 @@
           width: cropW,
           height: cropH,
           scale: scale,
+        }).then(function (canvas) {
+          return { canvas: canvas, decorCanvases: state.decorCanvases };
         });
       })
-      .then(function (canvas) {
+      .then(function (packed) {
+        if (hideDecorOnMap) {
+          mapEl.classList.remove("screenshot-capturing");
+        }
         if (hadOverlay && showToggle && showToggle.checked) {
           setOverlayVisible(true);
         }
+        var canvas = packed.canvas;
         if (canvas.width !== outW || canvas.height !== outH) {
           var scaled = document.createElement("canvas");
           scaled.width = outW;
@@ -462,6 +1340,10 @@
           }
           ctx.drawImage(canvas, 0, 0, outW, outH);
           canvas = scaled;
+        }
+        compositeMapDecorations(canvas, packed.decorCanvases, scale);
+        if (useFrame) {
+          compositeCaptureFrameOutline(canvas);
         }
         return new Promise(function (resolve, reject) {
           canvas.toBlob(
@@ -482,6 +1364,7 @@
         });
       })
       .catch(function (err) {
+        mapEl.classList.remove("screenshot-capturing");
         if (hadOverlay && showToggle && showToggle.checked) {
           setOverlayVisible(true);
         }
@@ -515,6 +1398,127 @@
       }
     });
     return ids;
+  }
+
+  function readViewportTarget() {
+    var sourceId = viewportSourceSelect && viewportSourceSelect.value ? viewportSourceSelect.value : "";
+    var folderId = viewportFolderSelect && viewportFolderSelect.value ? viewportFolderSelect.value : "";
+    if (!sourceId) {
+      var sources = listLoadedSources();
+      if (getActiveSourceIdFn) {
+        sourceId = getActiveSourceIdFn() || "";
+      }
+      if (!sourceId && sources.length) {
+        sourceId = sources[0].id;
+      }
+    }
+    return {
+      sourceId: sourceId || null,
+      folderId: folderId || null,
+    };
+  }
+
+  function pickViewportSourceId(sources, preferredId) {
+    if (!sources.length) {
+      return "";
+    }
+    if (preferredId && sources.some(function (source) { return source.id === preferredId; })) {
+      return preferredId;
+    }
+    var activeId = getActiveSourceIdFn ? getActiveSourceIdFn() : null;
+    if (activeId && sources.some(function (source) { return source.id === activeId; })) {
+      return activeId;
+    }
+    return sources[0].id;
+  }
+
+  function optionIdExists(options, id) {
+    if (!id) {
+      return false;
+    }
+    for (var i = 0; i < options.length; i += 1) {
+      if (options[i].id === id) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function refreshViewportFolderSelect(sourceId, preferredFolderId, useStoredFolder) {
+    if (!viewportFolderSelect) {
+      return;
+    }
+    var options = getViewportFolderOptionsFn && sourceId ? getViewportFolderOptionsFn(sourceId) : [];
+    viewportFolderSelect.innerHTML = "";
+    if (!options.length) {
+      viewportFolderSelect.disabled = true;
+      var emptyOpt = document.createElement("option");
+      emptyOpt.value = "";
+      emptyOpt.textContent = sourceId ? "No folders available" : "—";
+      viewportFolderSelect.appendChild(emptyOpt);
+      return;
+    }
+    viewportFolderSelect.disabled = false;
+    options.forEach(function (entry) {
+      var opt = document.createElement("option");
+      opt.value = entry.id;
+      opt.textContent = entry.label;
+      viewportFolderSelect.appendChild(opt);
+    });
+    var chosen = "";
+    if (optionIdExists(options, preferredFolderId)) {
+      chosen = preferredFolderId;
+    } else if (useStoredFolder !== false) {
+      var storedFolderId = (readSettings() || {}).viewportFolderId;
+      if (optionIdExists(options, storedFolderId)) {
+        chosen = storedFolderId;
+      }
+    }
+    if (!chosen && options.length) {
+      chosen = options[0].id;
+    }
+    viewportFolderSelect.value = chosen;
+  }
+
+  function refreshViewportTargets() {
+    if (!viewportSourceSelect) {
+      return;
+    }
+    var sources = listLoadedSources();
+    var previousSourceId = viewportSourceSelect.value;
+    var storedSourceId = (readSettings() || {}).viewportSourceId;
+    viewportSourceSelect.innerHTML = "";
+    if (!sources.length) {
+      viewportSourceSelect.disabled = true;
+      var placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = "Load a KMZ or KML file";
+      viewportSourceSelect.appendChild(placeholder);
+      refreshViewportFolderSelect("", "");
+      if (saveViewportBtn) {
+        saveViewportBtn.disabled = true;
+      }
+      syncFrameSaveViewportButton();
+      return;
+    }
+    viewportSourceSelect.disabled = false;
+    sources.forEach(function (source) {
+      var opt = document.createElement("option");
+      opt.value = source.id;
+      opt.textContent = source.label || source.id;
+      viewportSourceSelect.appendChild(opt);
+    });
+    var sourceId = pickViewportSourceId(sources, previousSourceId || storedSourceId);
+    viewportSourceSelect.value = sourceId;
+    var preferredFolderId = null;
+    if (sourceId === previousSourceId && viewportFolderSelect) {
+      preferredFolderId = viewportFolderSelect.value;
+    }
+    refreshViewportFolderSelect(sourceId, preferredFolderId, true);
+    if (saveViewportBtn) {
+      saveViewportBtn.disabled = !sources.length;
+    }
+    syncFrameSaveViewportButton();
   }
 
   function refreshTakeTwoSources() {
@@ -666,6 +1670,101 @@
     });
   }
 
+  function takeTwoCaptureOptions() {
+    var takeTwo = takeTwoToggle && takeTwoToggle.checked;
+    var hideNames = takeTwo && takeTwoHideNamesToggle && takeTwoHideNamesToggle.checked;
+    var loadedSources = listLoadedSources();
+    var hideIds = takeTwo ? readTakeTwoHideIds() : [];
+    return {
+      takeTwo: takeTwo,
+      hideNames: hideNames,
+      hideIds: hideIds,
+      loadedSources: loadedSources,
+    };
+  }
+
+  function takeTwoValidationMessage(options) {
+    options = options || takeTwoCaptureOptions();
+    if (
+      options.takeTwo
+      && options.loadedSources.length
+      && !options.hideIds.length
+      && !options.hideNames
+    ) {
+      return "Select at least one loaded file to hide for the second screenshot, or enable Hide name.";
+    }
+    return null;
+  }
+
+  function captureScreenshotSequence(baseStem) {
+    var opts = takeTwoCaptureOptions();
+    var takeTwo = opts.takeTwo;
+    var hideNames = opts.hideNames;
+    var hideIds = opts.hideIds;
+    var loadedSources = opts.loadedSources;
+    var visibilitySnapshot = null;
+    var pointNameLabelsSnapshot = null;
+    var layerHidingApplied = false;
+    var savedResults = [];
+
+    function restoreSecondShotState() {
+      if (!takeTwo) {
+        return;
+      }
+      if (layerHidingApplied) {
+        restoreSecondShotLayerHiding(visibilitySnapshot);
+      }
+      restorePointNameLabelsSnapshot(pointNameLabelsSnapshot);
+    }
+
+    return captureMapPng()
+      .then(function (blob) {
+        return persistBlob(blob, baseStem).then(function (result) {
+          savedResults.push(result);
+          if (!takeTwo) {
+            return;
+          }
+          if (hideNames) {
+            pointNameLabelsSnapshot = hidePointNameLabelsForSecondShot();
+          }
+          if (hideIds.length || !hideNames) {
+            visibilitySnapshot = applySecondShotLayerHiding(hideIds);
+            layerHidingApplied = true;
+          }
+          return waitForRepaint().then(function () {
+            return waitMs(150);
+          });
+        });
+      })
+      .then(function () {
+        if (!takeTwo) {
+          return savedResults;
+        }
+        var suffix = secondShotFilenameSuffix(hideIds, loadedSources);
+        if (hideNames) {
+          suffix = hideIds.length ? suffix + "-no-names" : "-no-names";
+        }
+        return captureMapPng().then(function (blob) {
+          return persistBlob(blob, baseStem, { suffix: suffix }).then(function (result) {
+            savedResults.push(result);
+          });
+        });
+      })
+      .then(function () {
+        restoreSecondShotState();
+        if (!takeTwo) {
+          return savedResults;
+        }
+        return waitForRepaint().then(function () {
+          return savedResults;
+        });
+      })
+      .catch(function (err) {
+        restoreSecondShotState();
+        throw err;
+      });
+  }
+
   function persistBlob(blob, baseNameStem, nameOpts) {
     nameOpts = nameOpts || {};
     var directory = dirInput ? String(dirInput.value || "").trim() : "";
@@ -731,82 +1830,22 @@
       return;
     }
     var baseStem = baseNameInput && baseNameInput.value;
-    var takeTwo = takeTwoToggle && takeTwoToggle.checked;
-    var hideNames = takeTwo && takeTwoHideNamesToggle && takeTwoHideNamesToggle.checked;
-    var loadedSources = listLoadedSources();
-    var hideIds = takeTwo ? readTakeTwoHideIds() : [];
-    var visibilitySnapshot = null;
-    var pointNameLabelsSnapshot = null;
-    var layerHidingApplied = false;
-    if (takeTwo && loadedSources.length && !hideIds.length && !hideNames) {
+    var takeTwoOpts = takeTwoCaptureOptions();
+    var takeTwoValidation = takeTwoValidationMessage(takeTwoOpts);
+    if (takeTwoValidation) {
       if (setMessageFn) {
-        setMessageFn(
-          "Select at least one loaded file to hide for the second screenshot, or enable Hide name."
-        );
+        setMessageFn(takeTwoValidation);
       }
       return;
     }
     saveInFlight = true;
     setSaveButtonsDisabled(true);
     if (setMessageFn) {
-      setMessageFn(takeTwo ? "Capturing screenshot 1 of 2…" : "Capturing screenshot…");
+      setMessageFn(takeTwoOpts.takeTwo ? "Capturing screenshot 1 of 2…" : "Capturing screenshot…");
     }
     writeSettings();
-    var savedResults = [];
-    captureMapPng()
-      .then(function (blob) {
-        return persistBlob(blob, baseStem).then(function (result) {
-          savedResults.push(result);
-          if (!takeTwo) {
-            return;
-          }
-          if (setMessageFn) {
-            if (hideNames) {
-              setMessageFn("Hiding point name tags for screenshot 2 of 2…");
-            } else {
-              setMessageFn("Hiding layers for screenshot 2 of 2…");
-            }
-          }
-          if (hideNames) {
-            pointNameLabelsSnapshot = hidePointNameLabelsForSecondShot();
-          }
-          if (hideIds.length || !hideNames) {
-            visibilitySnapshot = applySecondShotLayerHiding(hideIds);
-            layerHidingApplied = true;
-          }
-          return waitForRepaint().then(function () {
-            return waitMs(150);
-          });
-        });
-      })
-      .then(function () {
-        if (!takeTwo) {
-          return;
-        }
-        if (setMessageFn) {
-          setMessageFn("Capturing screenshot 2 of 2…");
-        }
-        var suffix = secondShotFilenameSuffix(hideIds, loadedSources);
-        if (hideNames) {
-          suffix = hideIds.length ? suffix + "-no-names" : "-no-names";
-        }
-        return captureMapPng().then(function (blob) {
-          return persistBlob(blob, baseStem, { suffix: suffix }).then(function (result) {
-            savedResults.push(result);
-          });
-        });
-      })
-      .then(function () {
-        if (!takeTwo) {
-          return;
-        }
-        if (layerHidingApplied) {
-          restoreSecondShotLayerHiding(visibilitySnapshot);
-        }
-        restorePointNameLabelsSnapshot(pointNameLabelsSnapshot);
-        return waitForRepaint();
-      })
-      .then(function () {
+    captureScreenshotSequence(baseStem)
+      .then(function (savedResults) {
         if (!setMessageFn || !savedResults.length) {
           return;
         }
@@ -820,12 +1859,6 @@
         setMessageFn(describeResult(savedResults[0]) + " and " + describeResult(savedResults[1]) + ".");
       })
       .catch(function (err) {
-        if (takeTwo) {
-          if (layerHidingApplied) {
-            restoreSecondShotLayerHiding(visibilitySnapshot);
-          }
-          restorePointNameLabelsSnapshot(pointNameLabelsSnapshot);
-        }
         if (setMessageFn) {
           setMessageFn((err && err.message) || "Could not save the screenshot.");
         }
@@ -906,6 +1939,12 @@
         applyFrameStyle();
       });
     }
+    [includeNorthToggle, includeScaleToggle].forEach(function (el) {
+      if (!el) {
+        return;
+      }
+      el.addEventListener("change", writeSettings);
+    });
     if (frameColorInput) {
       frameColorInput.addEventListener("input", function () {
         writeSettings();
@@ -939,6 +1978,82 @@
       }
       btn.addEventListener("click", saveScreenshot);
     });
+    if (boundaryLoadBtn) {
+      boundaryLoadBtn.addEventListener("click", loadBoundaryFromSelection);
+    }
+    if (boundarySaveBtn) {
+      boundarySaveBtn.addEventListener("click", saveBoundaryToSelection);
+    }
+    if (boundarySaveAllBtn) {
+      boundarySaveAllBtn.addEventListener("click", saveAllBoundariesScreenshots);
+    }
+    if (saveViewportBtn) {
+      saveViewportBtn.addEventListener("click", invokeSaveViewport);
+    }
+    if (frameSaveViewportBtn) {
+      frameSaveViewportBtn.addEventListener("click", invokeSaveViewport);
+      frameSaveViewportBtn.addEventListener("pointerdown", function (event) {
+        event.stopPropagation();
+      });
+    }
+    if (viewportSourceSelect) {
+      viewportSourceSelect.addEventListener("change", function () {
+        refreshViewportFolderSelect(viewportSourceSelect.value, null, false);
+        writeSettings();
+      });
+    }
+    if (viewportFolderSelect) {
+      viewportFolderSelect.addEventListener("change", writeSettings);
+    }
+    if (dimStrengthInput) {
+      dimStrengthInput.addEventListener("input", function () {
+        syncDimStrengthValueLabel(dimStrengthInput.value);
+        writeSettings();
+        applyFrameStyle();
+      });
+    }
+    if (exportFrameOutlineToggle) {
+      exportFrameOutlineToggle.addEventListener("change", writeSettings);
+    }
+    if (viewportStrokeColorInput) {
+      viewportStrokeColorInput.addEventListener("input", function () {
+        writeSettings();
+        refreshViewportStylesOnMap();
+      });
+    }
+    if (viewportStrokeWeightInput) {
+      viewportStrokeWeightInput.addEventListener("input", function () {
+        syncViewportStyleValueLabels(readViewportFrameStyleFromUi());
+        writeSettings();
+        refreshViewportStylesOnMap();
+      });
+    }
+    if (viewportStrokeOpacityInput) {
+      viewportStrokeOpacityInput.addEventListener("input", function () {
+        syncViewportStyleValueLabels(readViewportFrameStyleFromUi());
+        writeSettings();
+        refreshViewportStylesOnMap();
+      });
+    }
+    if (viewportStrokeDashSelect) {
+      viewportStrokeDashSelect.addEventListener("change", function () {
+        writeSettings();
+        refreshViewportStylesOnMap();
+      });
+    }
+    if (viewportFillColorInput) {
+      viewportFillColorInput.addEventListener("input", function () {
+        writeSettings();
+        refreshViewportStylesOnMap();
+      });
+    }
+    if (viewportFillOpacityInput) {
+      viewportFillOpacityInput.addEventListener("input", function () {
+        syncViewportStyleValueLabels(readViewportFrameStyleFromUi());
+        writeSettings();
+        refreshViewportStylesOnMap();
+      });
+    }
     window.addEventListener("resize", layoutFrame);
   }
 
@@ -981,6 +2096,12 @@
     if (dimOutsideToggle) {
       dimOutsideToggle.checked = settings.dimOutside !== false;
     }
+    if (includeNorthToggle) {
+      includeNorthToggle.checked = settings.includeNorthArrow !== false;
+    }
+    if (includeScaleToggle) {
+      includeScaleToggle.checked = settings.includeScaleLegend !== false;
+    }
     if (frameColorInput && settings.frameColor) {
       frameColorInput.value = settings.frameColor;
     }
@@ -996,7 +2117,6 @@
         frameDashSelect.value = dash;
       }
     }
-    applyFrameStyle();
     if (takeTwoToggle) {
       takeTwoToggle.checked = !!settings.takeTwo;
     }
@@ -1004,6 +2124,151 @@
       takeTwoHideNamesToggle.checked = !!settings.takeTwoHideNames;
     }
     syncTakeTwoPanelVisibility();
+    if (dimStrengthInput) {
+      var dimStrength = settings.dimOutsideStrength != null ? String(settings.dimOutsideStrength) : "45";
+      dimStrengthInput.value = dimStrength;
+      syncDimStrengthValueLabel(dimStrength);
+    }
+    if (exportFrameOutlineToggle) {
+      exportFrameOutlineToggle.checked = settings.exportFrameOutline !== false;
+    }
+    var viewportStyle = readViewportFrameStyleFromSettings(settings);
+    if (viewportStrokeColorInput) {
+      viewportStrokeColorInput.value = viewportStyle.strokeColor;
+    }
+    if (viewportStrokeWeightInput) {
+      viewportStrokeWeightInput.value = String(viewportStyle.strokeWeight);
+    }
+    if (viewportStrokeOpacityInput) {
+      viewportStrokeOpacityInput.value = String(Math.round(viewportStyle.strokeOpacity * 100));
+    }
+    if (viewportStrokeDashSelect) {
+      viewportStrokeDashSelect.value = viewportStyle.dash;
+    }
+    if (viewportFillColorInput) {
+      viewportFillColorInput.value = viewportStyle.fillColor;
+    }
+    if (viewportFillOpacityInput) {
+      viewportFillOpacityInput.value = String(Math.round(viewportStyle.fillOpacity * 100));
+    }
+    syncViewportStyleValueLabels(viewportStyle);
+    applyFrameStyle();
+  }
+
+  function readScreenshotSectionsCollapsedState() {
+    try {
+      var raw = global.localStorage.getItem(SECTIONS_COLLAPSED_KEY);
+      if (!raw) {
+        return {};
+      }
+      var parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (err) {
+      return {};
+    }
+  }
+
+  function writeScreenshotSectionsCollapsedState(state) {
+    try {
+      global.localStorage.setItem(SECTIONS_COLLAPSED_KEY, JSON.stringify(state));
+    } catch (err) {
+      /* ignore quota / private mode */
+    }
+  }
+
+  function setScreenshotSectionCollapsed(section, head, collapsed, slug, state) {
+    section.classList.toggle("collapsed", collapsed);
+    head.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    var label = head.querySelector(".sidebar-section-title");
+    var title = (label && label.textContent) || "section";
+    head.setAttribute(
+      "aria-label",
+      (collapsed ? "Expand " : "Collapse ") + title + " section"
+    );
+    if (slug && state) {
+      if (collapsed) {
+        state[slug] = true;
+      } else {
+        delete state[slug];
+      }
+      writeScreenshotSectionsCollapsedState(state);
+    }
+  }
+
+  function initScreenshotSectionFolding() {
+    var host = document.getElementById("tool-window-screenshot");
+    if (!host) {
+      return;
+    }
+    var sections = host.querySelectorAll(".screenshot-section");
+    if (!sections.length) {
+      return;
+    }
+    var collapsedState = readScreenshotSectionsCollapsedState();
+    for (var i = 0; i < sections.length; i += 1) {
+      var section = sections[i];
+      var head = section.querySelector(".screenshot-section-fold");
+      if (!head) {
+        continue;
+      }
+      var slug = section.getAttribute("data-screenshot-section") || "section-" + i;
+      var startCollapsed = collapsedState[slug] === true;
+      setScreenshotSectionCollapsed(section, head, startCollapsed, null, null);
+      (function (sec, hd, sl, state) {
+        hd.addEventListener("click", function () {
+          var collapsed = !sec.classList.contains("collapsed");
+          setScreenshotSectionCollapsed(sec, hd, collapsed, sl, state);
+        });
+      })(section, head, slug, collapsedState);
+    }
+  }
+
+  function positionScreenshotSettingsWindow(toolId, sectionEl) {
+    var win = document.querySelector('.tool-window[data-tool-window="' + toolId + '"]');
+    if (!win || !sectionEl) {
+      return;
+    }
+    var sectionRect = sectionEl.getBoundingClientRect();
+    var winRect = win.getBoundingClientRect();
+    var width = winRect.width || 340;
+    var height = winRect.height || 360;
+    var left = sectionRect.right + 8;
+    var top = sectionRect.top;
+    if (left + width > window.innerWidth - 8) {
+      left = Math.max(8, sectionRect.left - width - 8);
+    }
+    win.style.left = Math.round(left) + "px";
+    win.style.top = Math.round(top) + "px";
+    win.style.width = Math.round(width) + "px";
+    win.style.height = Math.round(height) + "px";
+    win.style.right = "auto";
+    win.dataset.geometryReady = "true";
+  }
+
+  function initScreenshotSectionSettings() {
+    var host = document.getElementById("tool-window-screenshot");
+    if (!host) {
+      return;
+    }
+    host.querySelectorAll(".screenshot-section-settings-btn").forEach(function (btn) {
+      if (btn.dataset.settingsBound === "true") {
+        return;
+      }
+      btn.dataset.settingsBound = "true";
+      btn.addEventListener("click", function (event) {
+        event.stopPropagation();
+        var toolId = btn.getAttribute("data-screenshot-settings-window");
+        if (!toolId || !global.KmzToolWindows || typeof KmzToolWindows.open !== "function") {
+          return;
+        }
+        var section = btn.closest(".screenshot-section");
+        KmzToolWindows.open(toolId);
+        positionScreenshotSettingsWindow(toolId, section);
+        if (toolId === "screenshot-settings-filename" && typeof refreshBoundaryList === "function") {
+          refreshBoundaryList();
+        }
+      });
+    });
   }
 
   function init(options) {
@@ -1024,6 +2289,8 @@
     toolbarSaveBtn = document.getElementById("screenshot-save-toolbar");
     showToggle = document.getElementById("screenshot-show-frame");
     dimOutsideToggle = document.getElementById("screenshot-dim-outside");
+    includeNorthToggle = document.getElementById("screenshot-include-north");
+    includeScaleToggle = document.getElementById("screenshot-include-scale");
     frameColorInput = document.getElementById("screenshot-frame-color");
     frameWeightInput = document.getElementById("screenshot-frame-weight");
     frameWeightValueEl = document.getElementById("screenshot-frame-weight-value");
@@ -1032,6 +2299,26 @@
     takeTwoHideNamesToggle = document.getElementById("screenshot-take-two-hide-names");
     takeTwoPanelEl = document.getElementById("screenshot-take-two-panel");
     takeTwoSourcesEl = document.getElementById("screenshot-take-two-sources");
+    boundaryLoadBtn = document.getElementById("screenshot-boundary-load");
+    boundarySaveBtn = document.getElementById("screenshot-boundary-save");
+    boundarySaveAllBtn = document.getElementById("screenshot-boundary-save-all");
+    boundaryListEl = document.getElementById("screenshot-boundary-list");
+    saveViewportBtn = document.getElementById("screenshot-save-viewport");
+    frameSaveViewportBtn = document.getElementById("screenshot-save-viewport-frame");
+    viewportSourceSelect = document.getElementById("screenshot-viewport-source");
+    viewportFolderSelect = document.getElementById("screenshot-viewport-folder");
+    dimStrengthInput = document.getElementById("screenshot-dim-strength");
+    dimStrengthValueEl = document.getElementById("screenshot-dim-strength-value");
+    exportFrameOutlineToggle = document.getElementById("screenshot-export-frame-outline");
+    viewportStrokeColorInput = document.getElementById("screenshot-viewport-stroke-color");
+    viewportStrokeWeightInput = document.getElementById("screenshot-viewport-stroke-weight");
+    viewportStrokeWeightValueEl = document.getElementById("screenshot-viewport-stroke-weight-value");
+    viewportStrokeOpacityInput = document.getElementById("screenshot-viewport-stroke-opacity");
+    viewportStrokeOpacityValueEl = document.getElementById("screenshot-viewport-stroke-opacity-value");
+    viewportStrokeDashSelect = document.getElementById("screenshot-viewport-stroke-dash");
+    viewportFillColorInput = document.getElementById("screenshot-viewport-fill-color");
+    viewportFillOpacityInput = document.getElementById("screenshot-viewport-fill-opacity");
+    viewportFillOpacityValueEl = document.getElementById("screenshot-viewport-fill-opacity-value");
     getLoadedSourcesFn = options.getLoadedSources || null;
     setLoadedSourceVisibleFn = options.setLoadedSourceVisible || null;
     getSourcePointNameLabelsHiddenFn = options.getSourcePointNameLabelsHidden || null;
@@ -1039,16 +2326,34 @@
     ensureDesktopFn = options.ensureDesktop || null;
     setMessageFn = options.setMessage || null;
     readJsonResponseFn = options.readJsonResponse || null;
+    getSelectedNodeIdsFn = options.getSelectedNodeIds || null;
+    resolveNodeByIdFn = options.resolveNodeById || null;
+    getTreeRootFn = options.getTreeRoot || null;
+    getSourceLabelForNodeFn = options.getSourceLabelForNode || null;
+    markDocDirtyForNodeFn = options.markDocDirtyForNode || null;
+    sourceIdFromNodeIdFn = options.sourceIdFromNodeId || null;
+    saveTimestampedCopyForSourceFn = options.saveTimestampedCopyForSource || null;
+    onBoundaryListChangedFn = options.onBoundaryListChanged || null;
+    getGisMapFn = options.getGisMap || null;
+    onAddViewportFn = options.onAddViewport || null;
+    getViewportFolderOptionsFn = options.getViewportFolderOptions || null;
+    getActiveSourceIdFn = options.getActiveSourceId || null;
 
     if (!mapWrap || !overlayEl || !frameEl) {
       return;
     }
 
+    initScreenshotSectionFolding();
+    initScreenshotSectionSettings();
     applyStoredSettings(readSettings());
     bindInputs();
     bindBrowse();
+    bindFrameDrag();
     refreshTakeTwoSources();
+    refreshViewportTargets();
+    refreshBoundaryList();
     setOverlayVisible(showToggle ? showToggle.checked : true);
+    syncFrameSaveViewportButton();
 
     (ensureDesktopFn ? ensureDesktopFn() : Promise.resolve(null)).then(function (desktop) {
       if (browseBtn) {
@@ -1061,6 +2366,24 @@
     init: init,
     layoutFrame: layoutFrame,
     refreshTakeTwoSources: refreshTakeTwoSources,
+    refreshViewportTargets: refreshViewportTargets,
+    refreshBoundaryList: refreshBoundaryList,
+    readViewportTarget: readViewportTarget,
+    VIEWPORT_ENSURE_FOLDER_ID: VIEWPORT_ENSURE_FOLDER_ID,
     persistSettings: writeSettings,
+    nodeHasBoundary: function (node) {
+      return !!(
+        global.ScreenshotBoundaryPersist
+        && node
+        && ScreenshotBoundaryPersist.readFromNode(node)
+      );
+    },
+    applyBoundaryState: applyBoundaryState,
+    readCurrentBoundaryState: readCurrentBoundaryState,
+    getViewportFrameStyle: readViewportFrameStyleFromUi,
+    getViewportFramePathOptions: function () {
+      return viewportPathOptionsFromStyle(readViewportFrameStyleFromUi());
+    },
+    refreshViewportStylesOnMap: refreshViewportStylesOnMap,
   };
 })(window);

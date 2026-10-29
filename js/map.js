@@ -349,6 +349,50 @@
     };
   }
 
+  function viewportFramePathOptions() {
+    if (
+      global.MapScreenshot
+      && typeof MapScreenshot.getViewportFramePathOptions === "function"
+    ) {
+      return MapScreenshot.getViewportFramePathOptions();
+    }
+    return {
+      color: "#26c6da",
+      weight: 2,
+      opacity: 0.95,
+      dashArray: "10 8",
+      fill: true,
+      fillColor: "#26c6da",
+      fillOpacity: 0.1,
+    };
+  }
+
+  function nodeHasViewportFrameGeometry(node) {
+    if (!node || !node.feature) {
+      return false;
+    }
+    var geometries = node.feature.geometries || [];
+    for (var i = 0; i < geometries.length; i += 1) {
+      if (geometries[i].type === "Polygon" && geometries[i].viewportFrame) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function refreshViewportFrameLayers() {
+    if (!currentRoot) {
+      return;
+    }
+    function walk(node) {
+      if (nodeHasViewportFrameGeometry(node)) {
+        refreshNodeLayer(node);
+      }
+      (node.children || []).forEach(walk);
+    }
+    walk(currentRoot);
+  }
+
   function bindFeature(layer, node) {
     layer._gisNodeId = node.id;
     if (node.feature) {
@@ -406,6 +450,13 @@
     if (!feature) {
       return null;
     }
+    if (
+      global.ScreenshotBoundaryPersist
+      && typeof ScreenshotBoundaryPersist.ensureViewportGeometriesOnNode === "function"
+      && ScreenshotBoundaryPersist.readFromNode(node)
+    ) {
+      ScreenshotBoundaryPersist.ensureViewportGeometriesOnNode(node, map);
+    }
     var group = L.featureGroup();
     var style = feature.style || {};
 
@@ -438,7 +489,10 @@
       }
       if (geom.type === "Polygon") {
         var rings = [geom.latlngs].concat(geom.holes || []);
-        group.addLayer(L.polygon(rings, pathOptions(style, true)));
+        var polyOpts = geom.viewportFrame
+          ? viewportFramePathOptions()
+          : pathOptions(style, true);
+        group.addLayer(L.polygon(rings, polyOpts));
       }
     });
 
@@ -1416,6 +1470,124 @@
     return changed;
   }
 
+  function defaultPointFeatureStyle() {
+    return {
+      stroke: "#3388ff",
+      strokeOpacity: 1,
+      strokeWidth: 2,
+      fill: "#3388ff",
+      fillOpacity: 0.25,
+      iconUrl: "",
+      iconScale: 1,
+    };
+  }
+
+  function findNodeBySourceEl(root, sourceEl) {
+    if (!root || !sourceEl) {
+      return null;
+    }
+    if (root.sourceEl === sourceEl) {
+      return root;
+    }
+    var children = root.children || [];
+    for (var i = 0; i < children.length; i += 1) {
+      var found = findNodeBySourceEl(children[i], sourceEl);
+      if (found) {
+        return found;
+      }
+    }
+    return null;
+  }
+
+  function treeParentForDomWrite(parentNode) {
+    if (
+      !parentNode
+      || !parentNode.sourceEl
+      || !global.KmzSave
+      || !KmzSave.resolveFeatureContainer
+    ) {
+      return parentNode;
+    }
+    var domParent = KmzSave.resolveFeatureContainer(parentNode.sourceEl);
+    if (!domParent || domParent === parentNode.sourceEl) {
+      return parentNode;
+    }
+    if (!currentRoot) {
+      return parentNode;
+    }
+    return findNodeBySourceEl(currentRoot, domParent) || parentNode;
+  }
+
+  function appendFolderChild(parentNode, folderName) {
+    if (!parentNode || !parentNode.sourceEl || !global.KmzSave) {
+      return null;
+    }
+    var folderEl = KmzSave.createFolder(parentNode.sourceEl, folderName);
+    if (!folderEl) {
+      return null;
+    }
+    var treeParent = treeParentForDomWrite(parentNode);
+    var folderNode = {
+      id: nextNodeId(),
+      name: folderName,
+      type: "folder",
+      visible: treeParent.visible !== false,
+      expanded: true,
+      sourceEl: folderEl,
+      children: [],
+      feature: null,
+    };
+    if (!treeParent.children) {
+      treeParent.children = [];
+    }
+    treeParent.children.push(folderNode);
+    return folderNode;
+  }
+
+  function appendPointPlacemark(parentNode, name, lat, lng) {
+    if (
+      !parentNode
+      || !parentNode.sourceEl
+      || !global.KmzSave
+      || !global.KmlParse
+    ) {
+      return null;
+    }
+    var placemarkEl = KmzSave.createPointPlacemark(parentNode.sourceEl, name, lat, lng);
+    if (!placemarkEl) {
+      return null;
+    }
+    var fields = KmlParse.placemarkFeatureFields(placemarkEl);
+    if (!fields || !fields.geometries || !fields.geometries.length) {
+      return null;
+    }
+    var displayName = fields.name || name || "Placemark";
+    var treeParent = treeParentForDomWrite(parentNode);
+    var node = {
+      id: nextNodeId(),
+      name: displayName,
+      type: "placemark",
+      visible: treeParent.visible !== false,
+      sourceEl: placemarkEl,
+      children: [],
+      feature: {
+        name: displayName,
+        description: fields.description || "",
+        geometryType: fields.geometryType || "Point",
+        geometries: fields.geometries,
+        style: defaultPointFeatureStyle(),
+        extendedData: fields.extendedData || [],
+        coordinatesText: fields.coordinatesText || "",
+      },
+    };
+    if (!treeParent.children) {
+      treeParent.children = [];
+    }
+    treeParent.children.push(node);
+    addLayers(node);
+    return node;
+  }
+
   function insertNodes(parentId, beforeId, nodes) {
     var parent = currentRoot ? findNode(currentRoot, parentId) : null;
     if (!parent || !nodes || !nodes.length) {
@@ -2023,6 +2195,8 @@
     moveNodes: moveNodes,
     cloneNode: cloneNode,
     insertNodes: insertNodes,
+    appendFolderChild: appendFolderChild,
+    appendPointPlacemark: appendPointPlacemark,
     clearSelected: clearSelected,
     closePopup: closePopup,
     firstPoint: firstPoint,
@@ -2033,5 +2207,6 @@
     nearestMapScalePreset: nearestMapScalePreset,
     feetPerInchForDenominator: feetPerInchForDenominator,
     rotateMapByDegrees: rotateMapByDegrees,
+    refreshViewportFrameLayers: refreshViewportFrameLayers,
   };
 })(window);

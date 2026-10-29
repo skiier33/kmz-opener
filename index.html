@@ -35,6 +35,39 @@
               >
                 Open…
               </button>
+              <div class="menubar-sep" role="separator"></div>
+              <div class="menubar-submenu" id="menubar-recent-submenu">
+                <button
+                  type="button"
+                  class="menubar-menu-item menubar-submenu-trigger"
+                  id="menubar-recent-trigger"
+                  aria-haspopup="menu"
+                  aria-expanded="false"
+                  aria-controls="menubar-recent-popup"
+                  title="Recently opened KMZ files"
+                >
+                  Recent files
+                  <span class="menubar-submenu-chevron" aria-hidden="true">›</span>
+                </button>
+                <div
+                  class="menubar-submenu-popup hidden"
+                  id="menubar-recent-popup"
+                  role="menu"
+                  aria-labelledby="menubar-recent-trigger"
+                >
+                  <div id="recent-files" class="menubar-recent-list" aria-label="Recent KMZ files">
+                    <button
+                      type="button"
+                      class="menubar-menu-item menubar-menu-item-static"
+                      disabled
+                      tabindex="-1"
+                    >
+                      No recent files
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div class="menubar-sep" role="separator"></div>
               <button
                 id="btn-save-as"
                 class="menubar-menu-item"
@@ -84,6 +117,79 @@
                 title="Remove all loaded files from the map"
               >
                 Clear all files
+              </button>
+            </div>
+          </div>
+          <div class="menubar-menu" id="menubar-tools">
+            <button
+              type="button"
+              class="menubar-top-item"
+              id="menubar-tools-trigger"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="menubar-tools-popup"
+            >
+              Tools
+            </button>
+            <div
+              class="menubar-popup hidden"
+              id="menubar-tools-popup"
+              role="menu"
+              aria-labelledby="menubar-tools-trigger"
+            >
+              <button
+                type="button"
+                class="menubar-menu-item"
+                id="menubar-tool-point-icons"
+                role="menuitem"
+                data-tool-window="point-icons"
+                disabled
+                title="Point icon settings for the selected file"
+              >
+                Point icons
+              </button>
+              <button
+                type="button"
+                class="menubar-menu-item"
+                id="menubar-tool-point-chain"
+                role="menuitem"
+                data-tool-window="point-chain"
+                disabled
+                title="Nearest-neighbor point chain tools"
+              >
+                Point chain
+              </button>
+              <button
+                type="button"
+                class="menubar-menu-item"
+                id="menubar-tool-csv-coords"
+                role="menuitem"
+                data-tool-window="csv-coords"
+                title="Update point coordinates from a CSV file"
+              >
+                Coords from CSV
+              </button>
+              <button
+                type="button"
+                class="menubar-menu-item"
+                id="menubar-tool-kml-editor"
+                role="menuitem"
+                data-tool-window="kml-editor"
+                disabled
+                hidden
+                title="Edit KML in an external editor"
+              >
+                KML editor
+              </button>
+              <button
+                type="button"
+                class="menubar-menu-item"
+                id="menubar-tool-screenshot"
+                role="menuitem"
+                data-tool-window="screenshot"
+                title="Screenshot size, capture frame, and batch export"
+              >
+                Screenshot
               </button>
             </div>
           </div>
@@ -302,221 +408,10 @@
       <div class="workspace">
         <div class="sidebar-shell" id="sidebar-shell">
         <aside class="sidebar sidebar-left">
-          <section class="sidebar-section sidebar-recent">
-            <h2>Recent</h2>
-            <div id="recent-files" class="recent-files" aria-label="Recent KMZ files">
-              <p class="muted">No recent files</p>
-            </div>
-          </section>
-
           <section class="sidebar-section sidebar-sources">
             <h2>Data files</h2>
             <div id="loaded-sources" class="loaded-sources" aria-label="Loaded KMZ and KML files">
               <p class="muted empty-hint">No files loaded — use Open or drag files onto the map.</p>
-            </div>
-          </section>
-
-          <section class="sidebar-section sidebar-point-icons" id="point-icons-section" hidden>
-            <h2>Point icons</h2>
-            <div id="file-point-icons" class="file-point-icons" aria-label="Point icon settings"></div>
-          </section>
-
-          <section class="sidebar-section sidebar-point-chain" id="point-chain-section" hidden>
-            <h2>Point chain</h2>
-            <div id="point-chain-panel" class="point-chain-panel" aria-label="Nearest-neighbor point chain"></div>
-          </section>
-
-          <section class="sidebar-section sidebar-csv-coords">
-            <h2>Coords from CSV</h2>
-            <div class="csv-coords" aria-label="Update coordinates from CSV">
-              <p class="muted csv-coords-hint">
-                Choose a CSV with columns <strong>BH_ID</strong>, <strong>LAT</strong>, and
-                <strong>LONG</strong>, then a KMZ or KML. Each point placemark must have
-                <strong>&lt;Point&gt;&lt;coordinates&gt;</strong>. Match CSV rows by ExtendedData
-                <strong>BH_ID</strong> or by <strong>&lt;name&gt;</strong> (e.g. B6A). The file is
-                checked before any edits. <strong>BH_ID</strong> matching tolerates common
-                spelling differences (e.g. B6A vs B-6A, B06A, or BH-6A).
-              </p>
-              <button type="button" class="btn" id="btn-csv-coords-update" title="Pick CSV, then KMZ, and update matching point placemarks">
-                Update from CSV…
-              </button>
-              <input
-                id="csv-coords-input"
-                type="file"
-                accept=".csv,text/csv"
-                hidden
-                tabindex="-1"
-                aria-hidden="true"
-              />
-              <input
-                id="csv-coords-kmz-input"
-                type="file"
-                accept=".kmz,.kml,application/vnd.google-earth.kmz,application/vnd.google-earth.kml+xml"
-                hidden
-                tabindex="-1"
-                aria-hidden="true"
-              />
-            </div>
-          </section>
-
-          <section class="sidebar-section sidebar-kml-editor hidden" id="external-edit-section">
-            <h2>KML editor</h2>
-            <div class="external-edit">
-              <p class="muted external-edit-hint">
-                Edit the KML in Sublime Text or another editor. The map reloads when you save.
-              </p>
-              <label class="external-edit-field hidden" id="external-edit-source-wrap">
-                <span class="external-edit-label">File to edit</span>
-                <select
-                  id="external-edit-source"
-                  aria-label="Loaded KMZ or KML to edit externally"
-                  disabled
-                ></select>
-              </label>
-              <label class="external-edit-field">
-                <span class="external-edit-label">Editor command</span>
-                <div class="external-edit-row">
-                  <input
-                    id="external-editor-command"
-                    type="text"
-                    placeholder="Sublime Text (auto) if installed"
-                    spellcheck="false"
-                    autocomplete="off"
-                    title="Executable or full command. Optional placeholders: {path}, {line}, {column}, {lineEnd}, {columnEnd}"
-                  />
-                  <button id="external-editor-browse" class="btn" type="button" title="Choose editor">
-                    Browse…
-                  </button>
-                </div>
-              </label>
-              <button
-                type="button"
-                class="btn external-edit-open"
-                id="file-edit-kml-external"
-                disabled
-                title="Open this file's KML in your external editor"
-              >
-                Edit KML externally…
-              </button>
-            </div>
-          </section>
-
-          <section class="sidebar-section sidebar-screenshot">
-            <h2>Screenshot</h2>
-            <p class="muted screenshot-hint">
-              Set size, pan the map so the area you want sits inside the frame, then save.
-            </p>
-            <div class="screenshot-fields">
-              <label class="screenshot-field screenshot-field-wide">
-                <span class="screenshot-label">Box size units</span>
-                <select id="screenshot-dimension-unit" aria-label="Screenshot box size units">
-                  <option value="px" selected>Pixels (px)</option>
-                  <option value="in">Inches (in) at 96 DPI</option>
-                </select>
-              </label>
-              <label class="screenshot-field">
-                <span id="screenshot-width-label" class="screenshot-label">Width (px)</span>
-                <input id="screenshot-width" type="number" min="64" max="8192" step="1" value="1920" />
-              </label>
-              <label class="screenshot-field">
-                <span id="screenshot-height-label" class="screenshot-label">Height (px)</span>
-                <input id="screenshot-height" type="number" min="64" max="8192" step="1" value="1080" />
-              </label>
-              <label class="screenshot-field screenshot-field-wide">
-                <span class="screenshot-label">Base filename</span>
-                <input
-                  id="screenshot-base-name"
-                  type="text"
-                  value="map-screenshot"
-                  spellcheck="false"
-                  autocomplete="off"
-                />
-              </label>
-              <label class="screenshot-field screenshot-field-wide">
-                <span class="screenshot-label">Name suffix</span>
-                <select id="screenshot-name-suffix" aria-label="Screenshot filename suffix">
-                  <option value="timestamp" selected>Timestamp</option>
-                  <option value="counter">Sequence number</option>
-                  <option value="both">Timestamp and sequence number</option>
-                </select>
-              </label>
-              <label class="screenshot-field screenshot-field-wide">
-                <span class="screenshot-label">Save directory</span>
-                <div class="screenshot-dir-row">
-                  <input
-                    id="screenshot-directory"
-                    type="text"
-                    placeholder="C:\Exports\maps"
-                    spellcheck="false"
-                    autocomplete="off"
-                  />
-                  <button id="screenshot-browse-dir" class="btn" type="button" title="Choose folder">
-                    Browse…
-                  </button>
-                </div>
-              </label>
-              <label class="screenshot-toggle">
-                <input id="screenshot-show-frame" type="checkbox" checked />
-                Show capture frame on map
-              </label>
-              <label class="screenshot-toggle">
-                <input id="screenshot-dim-outside" type="checkbox" checked />
-                Dim map outside capture frame
-              </label>
-              <fieldset class="screenshot-frame-style">
-                <legend class="screenshot-frame-style-legend">Frame line style</legend>
-                <label class="screenshot-frame-style-row screenshot-frame-style-color">
-                  <span>Color</span>
-                  <input id="screenshot-frame-color" type="color" value="#ffffff" aria-label="Capture frame line color" />
-                </label>
-                <label class="screenshot-frame-style-row">
-                  <span
-                    >Width <strong id="screenshot-frame-weight-value">2 px</strong></span
-                  >
-                  <input
-                    id="screenshot-frame-weight"
-                    type="range"
-                    min="1"
-                    max="8"
-                    step="1"
-                    value="2"
-                    aria-valuemin="1"
-                    aria-valuemax="8"
-                    aria-valuenow="2"
-                    aria-label="Capture frame line width"
-                  />
-                </label>
-                <label class="screenshot-frame-style-row screenshot-frame-style-dash">
-                  <span>Pattern</span>
-                  <select id="screenshot-frame-dash" aria-label="Capture frame line pattern">
-                    <option value="solid" selected>Solid</option>
-                    <option value="dashed">Dashed</option>
-                    <option value="dotted">Dotted</option>
-                  </select>
-                </label>
-              </fieldset>
-              <div class="screenshot-save-row">
-                <label class="screenshot-toggle screenshot-save-option">
-                  <input id="screenshot-take-two" type="checkbox" />
-                  Take 2
-                </label>
-                <div id="screenshot-take-two-panel" class="screenshot-take-two-panel hidden">
-                  <label class="screenshot-toggle screenshot-take-two-hide-names">
-                    <input id="screenshot-take-two-hide-names" type="checkbox" />
-                    Hide name
-                  </label>
-                  <span class="screenshot-label">Hide for 2nd screenshot</span>
-                  <div
-                    id="screenshot-take-two-sources"
-                    class="screenshot-take-two-sources"
-                    role="group"
-                    aria-label="Files to hide for second screenshot"
-                  ></div>
-                </div>
-                <button id="screenshot-save" class="btn screenshot-save-btn" type="button">
-                  Save screenshot
-                </button>
-              </div>
             </div>
           </section>
 
@@ -561,7 +456,16 @@
 
         <main class="map-wrap">
           <div id="screenshot-overlay" class="screenshot-overlay hidden" aria-hidden="true">
-            <div id="screenshot-frame" class="screenshot-frame"></div>
+            <div id="screenshot-frame" class="screenshot-frame">
+              <button
+                id="screenshot-save-viewport-frame"
+                class="btn screenshot-add-viewport hidden"
+                type="button"
+                aria-label="Save viewport from capture frame"
+              >
+                Save Viewport
+              </button>
+            </div>
           </div>
           <div id="map"></div>
           <div id="route-card" class="route-card hidden">
@@ -643,17 +547,40 @@
             <section class="sidebar-section sidebar-layers">
               <div class="sidebar-layers-head">
                 <h2>Layers</h2>
-                <button
-                  type="button"
-                  class="layers-add-btn"
-                  id="layers-add"
-                  title="Add KMZ or KML files to the map"
-                  aria-label="Add KMZ or KML files"
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
-                  </svg>
-                </button>
+                <div class="layers-head-actions">
+                  <button
+                    type="button"
+                    class="layers-add-btn"
+                    id="layers-new-viewports"
+                    title="Create a new viewports KMZ for storing saved viewports"
+                    aria-label="Create new viewports KMZ"
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path
+                        fill="currentColor"
+                        d="M4 4h7v7H4V4zm9 0h7v7h-7V4zM4 13h7v7H4v-7zm9 3h7v4h-7v-4z"
+                        opacity="0.45"
+                      />
+                      <path
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        d="M6 6h3v3H6V6zm9 0h3v3h-3V6zM6 15h3v3H6v-3z"
+                      />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    class="layers-add-btn"
+                    id="layers-add"
+                    title="Add KMZ or KML files to the map"
+                    aria-label="Add KMZ or KML files"
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
+                    </svg>
+                  </button>
+                </div>
               </div>
               <div class="layer-toolbar" role="toolbar" aria-label="Layer actions">
                 <div class="layer-toolbar-group" role="group" aria-label="All layers">
@@ -758,6 +685,665 @@
         </div>
       </div>
 
+      <div id="tool-windows" class="tool-windows" aria-live="polite">
+        <div
+          class="tool-window hidden"
+          id="tool-window-point-icons"
+          data-tool-window="point-icons"
+          role="dialog"
+          aria-modal="false"
+          aria-labelledby="tool-window-title-point-icons"
+        >
+          <header class="tool-window-head">
+            <h2 class="tool-window-title" id="tool-window-title-point-icons">Point icons</h2>
+            <button
+              type="button"
+              class="tool-window-close"
+              data-tool-window-close="point-icons"
+              aria-label="Close Point icons"
+            >
+              <svg class="tool-window-close-icon" viewBox="0 0 10 10" aria-hidden="true" focusable="false">
+                <path fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" d="M1.75 1.75 8.25 8.25M8.25 1.75 1.75 8.25" />
+              </svg>
+            </button>
+          </header>
+          <div class="tool-window-body">
+            <section class="tool-panel sidebar-section sidebar-point-icons" id="point-icons-section">
+              <div id="file-point-icons" class="file-point-icons" aria-label="Point icon settings"></div>
+            </section>
+          </div>
+        </div>
+
+        <div
+          class="tool-window hidden"
+          id="tool-window-point-chain"
+          data-tool-window="point-chain"
+          role="dialog"
+          aria-modal="false"
+          aria-labelledby="tool-window-title-point-chain"
+        >
+          <header class="tool-window-head">
+            <h2 class="tool-window-title" id="tool-window-title-point-chain">Point chain</h2>
+            <button
+              type="button"
+              class="tool-window-close"
+              data-tool-window-close="point-chain"
+              aria-label="Close Point chain"
+            >
+              <svg class="tool-window-close-icon" viewBox="0 0 10 10" aria-hidden="true" focusable="false">
+                <path fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" d="M1.75 1.75 8.25 8.25M8.25 1.75 1.75 8.25" />
+              </svg>
+            </button>
+          </header>
+          <div class="tool-window-body">
+            <section class="tool-panel sidebar-section sidebar-point-chain" id="point-chain-section">
+              <div id="point-chain-panel" class="point-chain-panel" aria-label="Nearest-neighbor point chain"></div>
+            </section>
+          </div>
+        </div>
+
+        <div
+          class="tool-window hidden"
+          id="tool-window-csv-coords"
+          data-tool-window="csv-coords"
+          role="dialog"
+          aria-modal="false"
+          aria-labelledby="tool-window-title-csv-coords"
+        >
+          <header class="tool-window-head">
+            <h2 class="tool-window-title" id="tool-window-title-csv-coords">Coords from CSV</h2>
+            <button
+              type="button"
+              class="tool-window-close"
+              data-tool-window-close="csv-coords"
+              aria-label="Close Coords from CSV"
+            >
+              <svg class="tool-window-close-icon" viewBox="0 0 10 10" aria-hidden="true" focusable="false">
+                <path fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" d="M1.75 1.75 8.25 8.25M8.25 1.75 1.75 8.25" />
+              </svg>
+            </button>
+          </header>
+          <div class="tool-window-body">
+            <section class="tool-panel sidebar-section sidebar-csv-coords">
+              <div class="csv-coords" aria-label="Update coordinates from CSV">
+                <p class="muted csv-coords-hint">
+                  Choose a CSV with columns <strong>BH_ID</strong>, <strong>LAT</strong>, and
+                  <strong>LONG</strong>, then a KMZ or KML. Each point placemark must have
+                  <strong>&lt;Point&gt;&lt;coordinates&gt;</strong>. Match CSV rows by ExtendedData
+                  <strong>BH_ID</strong> or by <strong>&lt;name&gt;</strong> (e.g. B6A). The file is
+                  checked before any edits. <strong>BH_ID</strong> matching tolerates common
+                  spelling differences (e.g. B6A vs B-6A, B06A, or BH-6A).
+                </p>
+                <button type="button" class="btn" id="btn-csv-coords-update" title="Pick CSV, then KMZ, and update matching point placemarks">
+                  Update from CSV…
+                </button>
+                <input
+                  id="csv-coords-input"
+                  type="file"
+                  accept=".csv,text/csv"
+                  hidden
+                  tabindex="-1"
+                  aria-hidden="true"
+                />
+                <input
+                  id="csv-coords-kmz-input"
+                  type="file"
+                  accept=".kmz,.kml,application/vnd.google-earth.kmz,application/vnd.google-earth.kml+xml"
+                  hidden
+                  tabindex="-1"
+                  aria-hidden="true"
+                />
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <div
+          class="tool-window hidden"
+          id="tool-window-kml-editor"
+          data-tool-window="kml-editor"
+          role="dialog"
+          aria-modal="false"
+          aria-labelledby="tool-window-title-kml-editor"
+        >
+          <header class="tool-window-head">
+            <h2 class="tool-window-title" id="tool-window-title-kml-editor">KML editor</h2>
+            <button
+              type="button"
+              class="tool-window-close"
+              data-tool-window-close="kml-editor"
+              aria-label="Close KML editor"
+            >
+              <svg class="tool-window-close-icon" viewBox="0 0 10 10" aria-hidden="true" focusable="false">
+                <path fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" d="M1.75 1.75 8.25 8.25M8.25 1.75 1.75 8.25" />
+              </svg>
+            </button>
+          </header>
+          <div class="tool-window-body">
+            <section class="tool-panel sidebar-section sidebar-kml-editor" id="external-edit-section">
+              <div class="external-edit">
+                <p class="muted external-edit-hint">
+                  Edit the KML in Sublime Text or another editor. The map reloads when you save.
+                </p>
+                <label class="external-edit-field hidden" id="external-edit-source-wrap">
+                  <span class="external-edit-label">File to edit</span>
+                  <select
+                    id="external-edit-source"
+                    aria-label="Loaded KMZ or KML to edit externally"
+                    disabled
+                  ></select>
+                </label>
+                <label class="external-edit-field">
+                  <span class="external-edit-label">Editor command</span>
+                  <div class="external-edit-row">
+                    <input
+                      id="external-editor-command"
+                      type="text"
+                      placeholder="Sublime Text (auto) if installed"
+                      spellcheck="false"
+                      autocomplete="off"
+                      title="Executable or full command. Optional placeholders: {path}, {line}, {column}, {lineEnd}, {columnEnd}"
+                    />
+                    <button id="external-editor-browse" class="btn" type="button" title="Choose editor">
+                      Browse…
+                    </button>
+                  </div>
+                </label>
+                <button
+                  type="button"
+                  class="btn external-edit-open"
+                  id="file-edit-kml-external"
+                  disabled
+                  title="Open this file's KML in your external editor"
+                >
+                  Edit KML externally…
+                </button>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <div
+          class="tool-window hidden"
+          id="tool-window-screenshot"
+          data-tool-window="screenshot"
+          role="dialog"
+          aria-modal="false"
+          aria-labelledby="tool-window-title-screenshot"
+        >
+          <header class="tool-window-head">
+            <h2 class="tool-window-title" id="tool-window-title-screenshot">Screenshot</h2>
+            <button
+              type="button"
+              class="tool-window-close"
+              data-tool-window-close="screenshot"
+              aria-label="Close Screenshot"
+            >
+              <svg class="tool-window-close-icon" viewBox="0 0 10 10" aria-hidden="true" focusable="false">
+                <path fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" d="M1.75 1.75 8.25 8.25M8.25 1.75 1.75 8.25" />
+              </svg>
+            </button>
+          </header>
+          <div class="tool-window-body">
+            <section class="tool-panel sidebar-section sidebar-screenshot">
+              <p class="muted screenshot-hint">
+                Set size, pan the map, and drag the capture frame so the area you want is inside it, then save.
+              </p>
+              <div class="screenshot-fields">
+                <div
+                  class="screenshot-section sidebar-section"
+                  data-screenshot-section="filename"
+                >
+                  <div class="screenshot-section-head-row">
+                    <button
+                      type="button"
+                      class="sidebar-section-head screenshot-section-fold"
+                      aria-expanded="true"
+                      aria-controls="screenshot-section-body-filename"
+                      aria-label="Collapse Filename section"
+                    >
+                      <span class="sidebar-section-chevron" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <path fill="currentColor" d="M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6z" />
+                        </svg>
+                      </span>
+                      <span class="sidebar-section-title">Filename</span>
+                    </button>
+                    <button
+                      type="button"
+                      class="screenshot-section-settings-btn"
+                      data-screenshot-settings-window="screenshot-settings-filename"
+                      title="Filename settings"
+                      aria-label="Open Filename settings"
+                    >
+                      <svg class="screenshot-section-settings-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          fill="currentColor"
+                          d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96a7.03 7.03 0 0 0-1.63-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.22-1.13.53-1.63.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87a.48.48 0 0 0 .12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.41 1.04.73 1.63.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.22 1.13-.52 1.63-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 0 0-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"
+                        />
+                      </svg>
+                    </button>
+                  </div>
+                  <div id="screenshot-section-body-filename" class="sidebar-section-body screenshot-section-body">
+                    <label class="screenshot-field screenshot-field-wide">
+                      <span class="screenshot-label">Box size units</span>
+                      <select id="screenshot-dimension-unit" aria-label="Screenshot box size units">
+                        <option value="px" selected>Pixels (px)</option>
+                        <option value="in">Inches (in) at 96 DPI</option>
+                      </select>
+                    </label>
+                    <label class="screenshot-field">
+                      <span id="screenshot-width-label" class="screenshot-label">Width (px)</span>
+                      <input id="screenshot-width" type="number" min="64" max="8192" step="1" value="1920" />
+                    </label>
+                    <label class="screenshot-field">
+                      <span id="screenshot-height-label" class="screenshot-label">Height (px)</span>
+                      <input id="screenshot-height" type="number" min="64" max="8192" step="1" value="1080" />
+                    </label>
+                    <label class="screenshot-field screenshot-field-wide">
+                      <span class="screenshot-label">Base filename</span>
+                      <input
+                        id="screenshot-base-name"
+                        type="text"
+                        value="map-screenshot"
+                        spellcheck="false"
+                        autocomplete="off"
+                      />
+                    </label>
+                    <label class="screenshot-field screenshot-field-wide">
+                      <span class="screenshot-label">Name suffix</span>
+                      <select id="screenshot-name-suffix" aria-label="Screenshot filename suffix">
+                        <option value="timestamp" selected>Timestamp</option>
+                        <option value="counter">Sequence number</option>
+                        <option value="both">Timestamp and sequence number</option>
+                      </select>
+                    </label>
+                    <label class="screenshot-field screenshot-field-wide">
+                      <span class="screenshot-label">Save directory</span>
+                      <div class="screenshot-dir-row">
+                        <input
+                          id="screenshot-directory"
+                          type="text"
+                          placeholder="C:\Exports\maps"
+                          spellcheck="false"
+                          autocomplete="off"
+                        />
+                        <button id="screenshot-browse-dir" class="btn" type="button" title="Choose folder">
+                          Browse…
+                        </button>
+                      </div>
+                    </label>
+                    <label class="screenshot-toggle">
+                      <input id="screenshot-show-frame" type="checkbox" checked />
+                      Show capture frame on map
+                    </label>
+                    <label class="screenshot-toggle">
+                      <input id="screenshot-dim-outside" type="checkbox" checked />
+                      Dim map outside capture frame
+                    </label>
+                    <label class="screenshot-toggle">
+                      <input id="screenshot-include-north" type="checkbox" checked />
+                      Include north arrow (top left)
+                    </label>
+                    <label class="screenshot-toggle">
+                      <input id="screenshot-include-scale" type="checkbox" checked />
+                      Include scale legend (bottom right)
+                    </label>
+                  </div>
+                </div>
+                <div
+                  class="screenshot-section sidebar-section"
+                  data-screenshot-section="style"
+                >
+                  <div class="screenshot-section-head-row">
+                    <button
+                      type="button"
+                      class="sidebar-section-head screenshot-section-fold"
+                      aria-expanded="true"
+                      aria-controls="screenshot-section-body-style"
+                      aria-label="Collapse Style section"
+                    >
+                      <span class="sidebar-section-chevron" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <path fill="currentColor" d="M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6z" />
+                        </svg>
+                      </span>
+                      <span class="sidebar-section-title">Style</span>
+                    </button>
+                    <button
+                      type="button"
+                      class="screenshot-section-settings-btn"
+                      data-screenshot-settings-window="screenshot-settings-style"
+                      title="Style settings"
+                      aria-label="Open Style settings"
+                    >
+                      <svg class="screenshot-section-settings-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          fill="currentColor"
+                          d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96a7.03 7.03 0 0 0-1.63-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.22-1.13.53-1.63.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87a.48.48 0 0 0 .12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.41 1.04.73 1.63.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.22 1.13-.52 1.63-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 0 0-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"
+                        />
+                      </svg>
+                    </button>
+                  </div>
+                  <div id="screenshot-section-body-style" class="sidebar-section-body screenshot-section-body">
+                    <div class="screenshot-frame-style">
+                      <label class="screenshot-frame-style-row screenshot-frame-style-color">
+                        <span>Color</span>
+                        <input id="screenshot-frame-color" type="color" value="#ffffff" aria-label="Capture frame line color" />
+                      </label>
+                      <label class="screenshot-frame-style-row">
+                        <span
+                          >Width <strong id="screenshot-frame-weight-value">2 px</strong></span
+                        >
+                        <input
+                          id="screenshot-frame-weight"
+                          type="range"
+                          min="1"
+                          max="8"
+                          step="1"
+                          value="2"
+                          aria-valuemin="1"
+                          aria-valuemax="8"
+                          aria-valuenow="2"
+                          aria-label="Capture frame line width"
+                        />
+                      </label>
+                      <label class="screenshot-frame-style-row screenshot-frame-style-dash">
+                        <span>Pattern</span>
+                        <select id="screenshot-frame-dash" aria-label="Capture frame line pattern">
+                          <option value="solid" selected>Solid</option>
+                          <option value="dashed">Dashed</option>
+                          <option value="dotted">Dotted</option>
+                        </select>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+                <div
+                  class="screenshot-section sidebar-section"
+                  data-screenshot-section="viewport"
+                >
+                  <div class="screenshot-section-head-row">
+                    <button
+                      type="button"
+                      class="sidebar-section-head screenshot-section-fold"
+                      aria-expanded="true"
+                      aria-controls="screenshot-section-body-viewport"
+                      aria-label="Collapse Viewport section"
+                    >
+                      <span class="sidebar-section-chevron" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <path fill="currentColor" d="M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6z" />
+                        </svg>
+                      </span>
+                      <span class="sidebar-section-title">Viewport</span>
+                    </button>
+                    <button
+                      type="button"
+                      class="screenshot-section-settings-btn"
+                      data-screenshot-settings-window="screenshot-settings-viewport"
+                      title="Viewport settings"
+                      aria-label="Open Viewport settings"
+                    >
+                      <svg class="screenshot-section-settings-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          fill="currentColor"
+                          d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96a7.03 7.03 0 0 0-1.63-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.22-1.13.53-1.63.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87a.48.48 0 0 0 .12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.41 1.04.73 1.63.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.22 1.13-.52 1.63-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 0 0-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"
+                        />
+                      </svg>
+                    </button>
+                  </div>
+                  <div id="screenshot-section-body-viewport" class="sidebar-section-body screenshot-section-body">
+                    <div class="screenshot-viewport-panel">
+                      <p class="muted screenshot-viewport-hint">
+                        Saves the capture frame and map view as a placemark in the selected file (shown in Layers).
+                      </p>
+                      <label class="screenshot-field screenshot-field-wide">
+                        <span class="screenshot-label">KMZ file</span>
+                        <select
+                          id="screenshot-viewport-source"
+                          aria-label="Loaded KMZ file to store viewports in"
+                          disabled
+                        >
+                          <option value="">Load a KMZ or KML file</option>
+                        </select>
+                      </label>
+                      <label class="screenshot-field screenshot-field-wide">
+                        <span class="screenshot-label">Folder inside file</span>
+                        <select
+                          id="screenshot-viewport-folder"
+                          aria-label="Folder to add viewport placemarks under"
+                          disabled
+                        >
+                          <option value="">—</option>
+                        </select>
+                      </label>
+                      <button id="screenshot-save-viewport" class="btn screenshot-save-viewport-btn" type="button">
+                        Save Viewport
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div class="screenshot-save-row">
+                  <button id="screenshot-save" class="btn screenshot-save-btn" type="button">
+                    Save screenshot
+                  </button>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <div
+          class="tool-window hidden"
+          id="tool-window-screenshot-settings-filename"
+          data-tool-window="screenshot-settings-filename"
+          role="dialog"
+          aria-modal="false"
+          aria-labelledby="tool-window-title-screenshot-settings-filename"
+        >
+          <header class="tool-window-head">
+            <h2 class="tool-window-title" id="tool-window-title-screenshot-settings-filename">
+              Screenshot — Filename
+            </h2>
+            <button
+              type="button"
+              class="tool-window-close"
+              data-tool-window-close="screenshot-settings-filename"
+              aria-label="Close Filename settings"
+            >
+              <svg class="tool-window-close-icon" viewBox="0 0 10 10" aria-hidden="true" focusable="false">
+                <path fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" d="M1.75 1.75 8.25 8.25M8.25 1.75 1.75 8.25" />
+              </svg>
+            </button>
+          </header>
+          <div class="tool-window-body">
+            <section class="tool-panel screenshot-settings-panel">
+              <p class="muted screenshot-settings-hint">
+                Output naming, dual captures, and saved capture boundaries on layer selections.
+              </p>
+              <label class="screenshot-toggle screenshot-save-option">
+                <input id="screenshot-take-two" type="checkbox" />
+                Take 2 (second capture with selected layers hidden)
+              </label>
+              <div id="screenshot-take-two-panel" class="screenshot-take-two-panel hidden">
+                <label class="screenshot-toggle screenshot-take-two-hide-names">
+                  <input id="screenshot-take-two-hide-names" type="checkbox" />
+                  Hide name
+                </label>
+                <span class="screenshot-label">Hide for 2nd screenshot</span>
+                <div
+                  id="screenshot-take-two-sources"
+                  class="screenshot-take-two-sources"
+                  role="group"
+                  aria-label="Files to hide for second screenshot"
+                ></div>
+              </div>
+              <fieldset class="screenshot-boundary-panel">
+                <legend class="screenshot-boundary-legend">Layer boundaries</legend>
+                <p class="muted screenshot-boundary-hint">
+                  Store or restore the capture frame and map view on selected layers in the tree.
+                </p>
+                <div class="screenshot-boundary-actions">
+                  <button id="screenshot-boundary-load" class="btn" type="button">Load from selection</button>
+                  <button id="screenshot-boundary-save" class="btn" type="button">Save to selection</button>
+                </div>
+                <div id="screenshot-boundary-list" class="screenshot-boundary-list" role="group" aria-label="Layers with saved boundaries"></div>
+                <button id="screenshot-boundary-save-all" class="btn screenshot-boundary-save-all" type="button" disabled>
+                  Save all checked to folder
+                </button>
+              </fieldset>
+            </section>
+          </div>
+        </div>
+
+        <div
+          class="tool-window hidden"
+          id="tool-window-screenshot-settings-style"
+          data-tool-window="screenshot-settings-style"
+          role="dialog"
+          aria-modal="false"
+          aria-labelledby="tool-window-title-screenshot-settings-style"
+        >
+          <header class="tool-window-head">
+            <h2 class="tool-window-title" id="tool-window-title-screenshot-settings-style">
+              Screenshot — Style
+            </h2>
+            <button
+              type="button"
+              class="tool-window-close"
+              data-tool-window-close="screenshot-settings-style"
+              aria-label="Close Style settings"
+            >
+              <svg class="tool-window-close-icon" viewBox="0 0 10 10" aria-hidden="true" focusable="false">
+                <path fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" d="M1.75 1.75 8.25 8.25M8.25 1.75 1.75 8.25" />
+              </svg>
+            </button>
+          </header>
+          <div class="tool-window-body">
+            <section class="tool-panel screenshot-settings-panel">
+              <p class="muted screenshot-settings-hint">
+                Fine-tune the capture frame appearance on the map and in exported PNGs.
+              </p>
+              <label class="screenshot-frame-style-row">
+                <span>Outside dim strength <strong id="screenshot-dim-strength-value">45%</strong></span>
+                <input
+                  id="screenshot-dim-strength"
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="5"
+                  value="45"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  aria-valuenow="45"
+                  aria-label="Dim strength outside capture frame"
+                />
+              </label>
+              <label class="screenshot-toggle">
+                <input id="screenshot-export-frame-outline" type="checkbox" checked />
+                Draw capture frame outline on exported PNG
+              </label>
+            </section>
+          </div>
+        </div>
+
+        <div
+          class="tool-window hidden"
+          id="tool-window-screenshot-settings-viewport"
+          data-tool-window="screenshot-settings-viewport"
+          role="dialog"
+          aria-modal="false"
+          aria-labelledby="tool-window-title-screenshot-settings-viewport"
+        >
+          <header class="tool-window-head">
+            <h2 class="tool-window-title" id="tool-window-title-screenshot-settings-viewport">
+              Screenshot — Viewport
+            </h2>
+            <button
+              type="button"
+              class="tool-window-close"
+              data-tool-window-close="screenshot-settings-viewport"
+              aria-label="Close Viewport settings"
+            >
+              <svg class="tool-window-close-icon" viewBox="0 0 10 10" aria-hidden="true" focusable="false">
+                <path fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" d="M1.75 1.75 8.25 8.25M8.25 1.75 1.75 8.25" />
+              </svg>
+            </button>
+          </header>
+          <div class="tool-window-body">
+            <section class="tool-panel screenshot-settings-panel">
+              <p class="muted screenshot-settings-hint">
+                Style for viewport frame polygons drawn on the map for saved viewports.
+              </p>
+              <div class="screenshot-frame-style screenshot-viewport-style-settings">
+                <label class="screenshot-frame-style-row screenshot-frame-style-color">
+                  <span>Stroke color</span>
+                  <input id="screenshot-viewport-stroke-color" type="color" value="#26c6da" aria-label="Viewport stroke color" />
+                </label>
+                <label class="screenshot-frame-style-row">
+                  <span>Stroke width <strong id="screenshot-viewport-stroke-weight-value">2 px</strong></span>
+                  <input
+                    id="screenshot-viewport-stroke-weight"
+                    type="range"
+                    min="1"
+                    max="8"
+                    step="1"
+                    value="2"
+                    aria-valuemin="1"
+                    aria-valuemax="8"
+                    aria-valuenow="2"
+                    aria-label="Viewport stroke width"
+                  />
+                </label>
+                <label class="screenshot-frame-style-row">
+                  <span>Stroke opacity <strong id="screenshot-viewport-stroke-opacity-value">95%</strong></span>
+                  <input
+                    id="screenshot-viewport-stroke-opacity"
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="5"
+                    value="95"
+                    aria-valuemin="0"
+                    aria-valuemax="100"
+                    aria-valuenow="95"
+                    aria-label="Viewport stroke opacity"
+                  />
+                </label>
+                <label class="screenshot-frame-style-row screenshot-frame-style-dash">
+                  <span>Stroke pattern</span>
+                  <select id="screenshot-viewport-stroke-dash" aria-label="Viewport stroke pattern">
+                    <option value="solid">Solid</option>
+                    <option value="dashed" selected>Dashed</option>
+                    <option value="dotted">Dotted</option>
+                  </select>
+                </label>
+                <label class="screenshot-frame-style-row screenshot-frame-style-color">
+                  <span>Fill color</span>
+                  <input id="screenshot-viewport-fill-color" type="color" value="#26c6da" aria-label="Viewport fill color" />
+                </label>
+                <label class="screenshot-frame-style-row">
+                  <span>Fill opacity <strong id="screenshot-viewport-fill-opacity-value">10%</strong></span>
+                  <input
+                    id="screenshot-viewport-fill-opacity"
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="5"
+                    value="10"
+                    aria-valuemin="0"
+                    aria-valuemax="100"
+                    aria-valuenow="10"
+                    aria-label="Viewport fill opacity"
+                  />
+                </label>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+
       <footer class="statusbar">
         <span id="status-tool">Tool: Pan</span>
         <span class="status-sep"></span>
@@ -786,6 +1372,7 @@
     <script src="js/directions.js"></script>
     <script src="js/point-chain.js"></script>
     <script src="js/point-chain-persist.js"></script>
+    <script src="js/screenshot-boundary-persist.js"></script>
     <script src="js/screenshot.js"></script>
     <script src="js/gui-prefs.js"></script>
     <script src="js/viewer-defaults.js"></script>
