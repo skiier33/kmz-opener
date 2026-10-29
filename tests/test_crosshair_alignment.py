@@ -195,6 +195,15 @@ def test_crosshair_center_matches_gps(app_url: str) -> None:
         page = browser.new_page(viewport={"width": 1280, "height": 800})
         page.goto(app_url, wait_until="networkidle")
         page.set_input_files("#file-input", str(SAMPLE))
+        page.evaluate(
+            """() => {
+              GisMap.applySourcePointIcon("file-1", {
+                iconPreset: "crosshair",
+                iconColor: "#ff0000",
+                iconScale: 1,
+              }, { saveToKmz: false });
+            }"""
+        )
         page.wait_for_selector(".geo-crosshair")
 
         fitted = _measure(page)

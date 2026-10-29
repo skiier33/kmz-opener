@@ -269,7 +269,7 @@
       }
       var style = node.feature.style || {};
       var preset = global.PointIcons.effectivePreset(style);
-      var color = style.iconColor || global.PointIcons.DEFAULT_COLOR;
+      var color = global.PointIcons.resolveIconColor(style);
       var key = preset + "|" + global.PointIcons.colorHash(color);
       if (!groups[key]) {
         groups[key] = { preset: preset, color: color, zipPath: global.PointIcons.zipPathForPreset(preset, color) };

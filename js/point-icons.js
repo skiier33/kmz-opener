@@ -4,7 +4,16 @@
   var BASE_SIZE = 32;
   var CROSSHAIR_RADIUS = 10;
   var DEFAULT_COLOR = "#ff0000";
-  var BUILTIN_IDS = ["crosshair", "dot", "square"];
+  var DEFAULT_ICON_COLOR = "#ffffff";
+  var DEFAULT_PRESET = "default";
+  var FIXED_DOT_DIAMETERS = [4, 8, 12, 16, 20];
+  var BUILTIN_IDS = ["default"]
+    .concat(
+      FIXED_DOT_DIAMETERS.map(function (px) {
+        return "dot-" + px;
+      })
+    )
+    .concat(["crosshair", "dot", "square"]);
 
   function clampScale(scale) {
     var parsed = parseFloat(scale);
@@ -26,9 +35,21 @@
     return DEFAULT_COLOR;
   }
 
+  function fixedDotDiameter(preset) {
+    var match = /^dot-(\d+)$/.exec(String(preset || ""));
+    if (!match) {
+      return 0;
+    }
+    var px = parseInt(match[1], 10);
+    if (FIXED_DOT_DIAMETERS.indexOf(px) === -1) {
+      return 0;
+    }
+    return px;
+  }
+
   function effectivePreset(style) {
     if (!style) {
-      return "crosshair";
+      return DEFAULT_PRESET;
     }
     if (style.iconPreset && BUILTIN_IDS.indexOf(style.iconPreset) !== -1) {
       return style.iconPreset;
@@ -39,7 +60,14 @@
     if (style.iconUrl) {
       return "png";
     }
-    return "crosshair";
+    return DEFAULT_PRESET;
+  }
+
+  function resolveIconColor(style) {
+    if (effectivePreset(style) === DEFAULT_PRESET) {
+      return DEFAULT_ICON_COLOR;
+    }
+    return resolveColor(style);
   }
 
   function crosshairSvg(size, color) {
@@ -107,6 +135,59 @@
     );
   }
 
+  function defaultDotSvg(size) {
+    var mid = size / 2;
+    return (
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' +
+      size +
+      " " +
+      size +
+      '" width="' +
+      size +
+      '" height="' +
+      size +
+      '" aria-hidden="true">' +
+      '<circle class="geo-default-dot" cx="' +
+      mid +
+      '" cy="' +
+      mid +
+      '" r="0.5" fill="' +
+      DEFAULT_ICON_COLOR +
+      '"/>' +
+      "</svg>"
+    );
+  }
+
+  function fixedDotRadius(size, dotDiameter) {
+    return Math.max(0.5, (dotDiameter * size) / (2 * BASE_SIZE));
+  }
+
+  function fixedDotSvg(size, dotDiameter, color) {
+    var mid = size / 2;
+    var radius = fixedDotRadius(size, dotDiameter);
+    return (
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' +
+      size +
+      " " +
+      size +
+      '" width="' +
+      size +
+      '" height="' +
+      size +
+      '" aria-hidden="true">' +
+      '<circle class="geo-fixed-dot" cx="' +
+      mid +
+      '" cy="' +
+      mid +
+      '" r="' +
+      radius +
+      '" fill="' +
+      color +
+      '"/>' +
+      "</svg>"
+    );
+  }
+
   function dotSvg(size, color) {
     var mid = size / 2;
     var radius = Math.max(4, Math.round((CROSSHAIR_RADIUS * size) / BASE_SIZE));
@@ -165,6 +246,13 @@
   }
 
   function svgForPreset(preset, size, color) {
+    var dotDiameter = fixedDotDiameter(preset);
+    if (dotDiameter) {
+      return fixedDotSvg(size, dotDiameter, color);
+    }
+    if (preset === DEFAULT_PRESET) {
+      return defaultDotSvg(size);
+    }
     if (preset === "dot") {
       return dotSvg(size, color);
     }
@@ -175,6 +263,12 @@
   }
 
   function divIconClass(preset) {
+    if (fixedDotDiameter(preset)) {
+      return "geo-fixed-dot-icon";
+    }
+    if (preset === DEFAULT_PRESET) {
+      return "geo-default-dot-icon";
+    }
     if (preset === "dot") {
       return "geo-dot-icon";
     }
@@ -191,7 +285,7 @@
     }
     var size = iconSize(style);
     var mid = size / 2;
-    var color = resolveColor(style);
+    var color = resolveIconColor(style);
     var html = svgForPreset(preset, size, color);
     return L.divIcon({
       className: divIconClass(preset),
@@ -203,6 +297,15 @@
   }
 
   function labelOffsetRadius(style) {
+    var preset = effectivePreset(style);
+    if (preset === DEFAULT_PRESET) {
+      return 4;
+    }
+    var dotDiameter = fixedDotDiameter(preset);
+    if (dotDiameter) {
+      var dotScale = style && style.iconScale > 0 ? style.iconScale : 1;
+      return Math.max(4, Math.round((dotDiameter * dotScale) / 2)) + 6;
+    }
     var scale = style && style.iconScale > 0 ? style.iconScale : 1;
     return Math.max(4, Math.round(CROSSHAIR_RADIUS * scale)) + 6;
   }
@@ -272,7 +375,7 @@
   function rasterizePreset(preset, color, scale) {
     var style = { iconPreset: preset, iconColor: color, iconScale: clampScale(scale) };
     var size = iconSize(style);
-    var svg = svgForPreset(preset, size, resolveColor(style));
+    var svg = svgForPreset(preset, size, resolveIconColor(style));
     return rasterizeSvgToBlob(svg, size);
   }
 
@@ -388,17 +491,43 @@
 
   function builtinCatalog() {
     return BUILTIN_IDS.map(function (id) {
-      return { id: id, label: id.charAt(0).toUpperCase() + id.slice(1), builtin: true };
+      var dotDiameter = fixedDotDiameter(id);
+      var label;
+      if (id === DEFAULT_PRESET) {
+        label = "Default";
+      } else if (dotDiameter) {
+        label = dotDiameter + "px dot";
+      } else {
+        label = id.charAt(0).toUpperCase() + id.slice(1);
+      }
+      return { id: id, label: label, builtin: true };
     });
+  }
+
+  function iconPickerThumbGradientStop(preset) {
+    var dotDiameter = fixedDotDiameter(preset);
+    if (dotDiameter) {
+      return Math.max(4, Math.min(46, Math.round((dotDiameter / 24) * 100)));
+    }
+    if (preset === DEFAULT_PRESET) {
+      return 8;
+    }
+    if (preset === "dot") {
+      return 42;
+    }
+    return 0;
   }
 
   global.PointIcons = {
     BASE_SIZE: BASE_SIZE,
     DEFAULT_COLOR: DEFAULT_COLOR,
+    DEFAULT_ICON_COLOR: DEFAULT_ICON_COLOR,
+    DEFAULT_PRESET: DEFAULT_PRESET,
     BUILTIN_IDS: BUILTIN_IDS,
     clampScale: clampScale,
     iconSize: iconSize,
     effectivePreset: effectivePreset,
+    resolveIconColor: resolveIconColor,
     divIconForStyle: divIconForStyle,
     labelOffsetRadius: labelOffsetRadius,
     rasterizePreset: rasterizePreset,
@@ -408,6 +537,8 @@
     loadCustomIconCatalog: loadCustomIconCatalog,
     invalidateCatalogCache: invalidateCatalogCache,
     builtinCatalog: builtinCatalog,
+    fixedDotDiameter: fixedDotDiameter,
+    iconPickerThumbGradientStop: iconPickerThumbGradientStop,
     crosshairSvg: crosshairSvg,
   };
 })(window);

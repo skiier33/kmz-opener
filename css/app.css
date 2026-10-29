@@ -186,6 +186,10 @@ select:focus-visible {
   min-width: 9.5rem;
 }
 
+#imagery-label-granularity {
+  min-width: 7.5rem;
+}
+
 select {
   height: 30px;
   border: 1px solid var(--border);
@@ -1314,6 +1318,8 @@ body.sidebar-panel-resizing * {
 }
 
 .leaflet-marker-icon.geo-dot-icon,
+.leaflet-marker-icon.geo-fixed-dot-icon,
+.leaflet-marker-icon.geo-default-dot-icon,
 .leaflet-marker-icon.geo-square-icon {
   background: transparent;
   border: 0;

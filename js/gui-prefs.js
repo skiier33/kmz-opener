@@ -81,6 +81,7 @@
         partial.basemap = options.gisMap.getActiveBasemapKey();
       }
       partial.imageryLabels = options.gisMap.getImageryLabelsEnabled();
+      partial.imageryLabelGranularity = options.gisMap.getImageryLabelGranularity();
     }
     if (options.measure && validTool(options.measure.getTool())) {
       partial.tool = options.measure.getTool();
@@ -127,6 +128,9 @@
     }
     if (typeof stored.imageryLabels === "boolean" && options.gisMap) {
       options.gisMap.setImageryLabelsEnabled(stored.imageryLabels);
+    }
+    if (typeof stored.imageryLabelGranularity === "string" && options.gisMap) {
+      options.gisMap.setImageryLabelGranularity(stored.imageryLabelGranularity);
     }
     applyMapView(options.map, stored.mapView);
     if (validTool(stored.tool) && typeof options.chooseTool === "function") {

@@ -1014,7 +1014,10 @@
     var iconApplyOptions = { saveToKmz: saveToKmz };
     var preset = spec.iconPreset || "crosshair";
     var scale = PointIcons.clampScale(spec.iconScale);
-    var color = spec.iconColor || PointIcons.DEFAULT_COLOR;
+    var color =
+      preset === PointIcons.DEFAULT_PRESET
+        ? PointIcons.DEFAULT_ICON_COLOR
+        : spec.iconColor || PointIcons.DEFAULT_COLOR;
     var normalized = {
       iconPreset: preset,
       iconColor: color,
@@ -1148,13 +1151,20 @@
   }
 
   function iconPickerThumbStyle(preset, color) {
-    if (preset === "dot") {
+    var dotStop = PointIcons.iconPickerThumbGradientStop(preset);
+    if (dotStop > 0) {
+      var thumbColor = preset === "default" ? PointIcons.DEFAULT_ICON_COLOR : color;
+      var edge = dotStop + 1;
       return (
         "background:radial-gradient(circle at center," +
-        color +
+        thumbColor +
         " 0," +
-        color +
-        " 42%,transparent 43%)"
+        thumbColor +
+        " " +
+        dotStop +
+        "%,transparent " +
+        edge +
+        "%)"
       );
     }
     if (preset === "square") {
@@ -4560,6 +4570,29 @@
 
   var imageryLabelsInput = document.getElementById("imagery-labels");
   var imageryLabelsWrap = document.getElementById("imagery-labels-wrap");
+  var imageryLabelGranularityWrap = document.getElementById("imagery-label-granularity-wrap");
+  var imageryLabelGranularitySelect = document.getElementById("imagery-label-granularity");
+
+  function populateImageryLabelGranularitySelect(key) {
+    if (!imageryLabelGranularitySelect) {
+      return;
+    }
+    var options = GisMap.getImageryLabelGranularityOptions(key);
+    var current = GisMap.normalizeImageryLabelGranularity(key, GisMap.getImageryLabelGranularity());
+    imageryLabelGranularitySelect.innerHTML = "";
+    options.forEach(function (entry) {
+      var opt = document.createElement("option");
+      opt.value = entry.id;
+      opt.textContent = entry.label;
+      imageryLabelGranularitySelect.appendChild(opt);
+    });
+    if (current) {
+      imageryLabelGranularitySelect.value = current;
+    }
+    if (current && imageryLabelGranularitySelect.value !== GisMap.getImageryLabelGranularity()) {
+      GisMap.setImageryLabelGranularity(imageryLabelGranularitySelect.value);
+    }
+  }
 
   function syncImageryLabelsControl() {
     if (!imageryLabelsInput || !imageryLabelsWrap) {
@@ -4567,10 +4600,20 @@
     }
     var key = GisMap.getActiveBasemapKey();
     var supported = GisMap.basemapSupportsImageryLabels(key);
+    var granularityOptions = GisMap.getImageryLabelGranularityOptions(key);
+    var labelsOn = supported && GisMap.getImageryLabelsEnabled();
     imageryLabelsInput.disabled = !supported;
     imageryLabelsWrap.classList.toggle("is-disabled", !supported);
     if (supported) {
       imageryLabelsInput.checked = GisMap.getImageryLabelsEnabled();
+    }
+    if (imageryLabelGranularityWrap && imageryLabelGranularitySelect) {
+      var showGranularity = supported && granularityOptions.length > 1 && labelsOn;
+      imageryLabelGranularityWrap.hidden = !showGranularity;
+      if (showGranularity) {
+        populateImageryLabelGranularitySelect(key);
+      }
+      imageryLabelGranularitySelect.disabled = !showGranularity;
     }
   }
 
@@ -4583,6 +4626,14 @@
   if (imageryLabelsInput) {
     imageryLabelsInput.addEventListener("change", function (event) {
       GisMap.setImageryLabelsEnabled(event.target.checked);
+      syncImageryLabelsControl();
+      persistViewerGuiPrefs();
+    });
+  }
+
+  if (imageryLabelGranularitySelect) {
+    imageryLabelGranularitySelect.addEventListener("change", function (event) {
+      GisMap.setImageryLabelGranularity(event.target.value);
       persistViewerGuiPrefs();
     });
   }

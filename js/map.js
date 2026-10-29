@@ -5,8 +5,35 @@
   var basemaps = {};
   var activeBasemap = null;
   var activeBasemapKey = "satellite";
-  var imageryLabelOverlays = null;
+  var imageryLabelLayersByBasemap = null;
   var imageryLabelsEnabled = true;
+  var imageryLabelGranularityId = "all";
+
+  var IMAGERY_LABEL_SOURCES = {
+    satellite: {
+      layers: [
+        {
+          id: "transport",
+          url:
+            "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}",
+          attribution:
+            "Transportation &copy; Esri, HERE, Garmin, (c) OpenStreetMap contributors, and the GIS user community",
+        },
+        {
+          id: "places",
+          url:
+            "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
+          attribution: "Boundaries &amp; Places &copy; Esri",
+        },
+      ],
+      granularity: [
+        { id: "all", label: "All labels", layerIds: ["transport", "places"] },
+        { id: "places", label: "Places only", layerIds: ["places"] },
+        { id: "roads", label: "Roads only", layerIds: ["transport"] },
+      ],
+      defaultGranularity: "all",
+    },
+  };
   var dataGroup = null;
   var layersById = {};
   var inspectCallback = null;
@@ -37,46 +64,125 @@
     };
   }
 
-  function createImageryLabelOverlays() {
-    var transportAttribution =
-      "Transportation &copy; Esri, HERE, Garmin, (c) OpenStreetMap contributors, and the GIS user community";
-    var placesAttribution = "Boundaries &amp; Places &copy; Esri";
-    return [
-      L.tileLayer(
-        "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}",
-        {
-          maxZoom: 19,
-          attribution: transportAttribution,
+  function getImageryLabelSource(key) {
+    return IMAGERY_LABEL_SOURCES[key] || null;
+  }
+
+  function createImageryLabelLayersForBasemap(key) {
+    var source = getImageryLabelSource(key);
+    var byId = {};
+    if (!source) {
+      return byId;
+    }
+    source.layers.forEach(function (def) {
+      byId[def.id] = L.tileLayer(def.url, {
+        maxZoom: 19,
+        attribution: def.attribution,
+      });
+    });
+    return byId;
+  }
+
+  function createImageryLabelLayersByBasemap() {
+    var byBasemap = {};
+    Object.keys(IMAGERY_LABEL_SOURCES).forEach(function (key) {
+      byBasemap[key] = createImageryLabelLayersForBasemap(key);
+    });
+    return byBasemap;
+  }
+
+  function removeAllImageryLabelLayersFromMap() {
+    if (!map || !imageryLabelLayersByBasemap) {
+      return;
+    }
+    Object.keys(imageryLabelLayersByBasemap).forEach(function (key) {
+      var layers = imageryLabelLayersByBasemap[key];
+      Object.keys(layers).forEach(function (layerId) {
+        if (map.hasLayer(layers[layerId])) {
+          map.removeLayer(layers[layerId]);
         }
-      ),
-      L.tileLayer(
-        "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
-        {
-          maxZoom: 19,
-          attribution: placesAttribution,
+      });
+    });
+  }
+
+  function resolveImageryLabelGranularityPreset(key, granularityId) {
+    var source = getImageryLabelSource(key);
+    if (!source) {
+      return null;
+    }
+    var presets = source.granularity;
+    if (presets && presets.length) {
+      for (var i = 0; i < presets.length; i += 1) {
+        if (presets[i].id === granularityId) {
+          return presets[i];
         }
-      ),
-    ];
+      }
+      var fallbackId = source.defaultGranularity || presets[0].id;
+      for (var j = 0; j < presets.length; j += 1) {
+        if (presets[j].id === fallbackId) {
+          return presets[j];
+        }
+      }
+      return presets[0];
+    }
+    return {
+      layerIds: source.layers.map(function (layer) {
+        return layer.id;
+      }),
+    };
+  }
+
+  function normalizeImageryLabelGranularity(key, granularityId) {
+    var preset = resolveImageryLabelGranularityPreset(key, granularityId);
+    if (!preset) {
+      return granularityId || "";
+    }
+    var source = getImageryLabelSource(key);
+    if (!source || !source.granularity || !source.granularity.length) {
+      return source && source.defaultGranularity ? source.defaultGranularity : "";
+    }
+    for (var i = 0; i < source.granularity.length; i += 1) {
+      if (source.granularity[i].id === preset.id) {
+        return preset.id;
+      }
+    }
+    return source.defaultGranularity || source.granularity[0].id;
   }
 
   function basemapSupportsImageryLabels(key) {
-    return key === "satellite";
+    return !!getImageryLabelSource(key);
+  }
+
+  function getImageryLabelGranularityOptions(key) {
+    var source = getImageryLabelSource(key);
+    if (!source || !source.granularity || !source.granularity.length) {
+      return [];
+    }
+    return source.granularity.map(function (entry) {
+      return { id: entry.id, label: entry.label };
+    });
   }
 
   function syncImageryLabelOverlays() {
-    if (!map || !imageryLabelOverlays) {
+    if (!map || !imageryLabelLayersByBasemap) {
       return;
     }
-    imageryLabelOverlays.forEach(function (layer) {
-      if (map.hasLayer(layer)) {
-        map.removeLayer(layer);
-      }
-    });
+    removeAllImageryLabelLayersFromMap();
     if (!basemapSupportsImageryLabels(activeBasemapKey) || !imageryLabelsEnabled) {
       return;
     }
-    imageryLabelOverlays.forEach(function (layer) {
-      layer.addTo(map);
+    var preset = resolveImageryLabelGranularityPreset(
+      activeBasemapKey,
+      imageryLabelGranularityId
+    );
+    if (!preset) {
+      return;
+    }
+    var layers = imageryLabelLayersByBasemap[activeBasemapKey] || {};
+    (preset.layerIds || []).forEach(function (layerId) {
+      if (layers[layerId]) {
+        layers[layerId].addTo(map);
+      }
     });
   }
 
@@ -87,6 +193,16 @@
 
   function getImageryLabelsEnabled() {
     return imageryLabelsEnabled;
+  }
+
+  function setImageryLabelGranularity(granularityId) {
+    var normalized = normalizeImageryLabelGranularity(activeBasemapKey, granularityId);
+    imageryLabelGranularityId = normalized || granularityId || "all";
+    syncImageryLabelOverlays();
+  }
+
+  function getImageryLabelGranularity() {
+    return imageryLabelGranularityId;
   }
 
   function getActiveBasemapKey() {
@@ -163,7 +279,11 @@
 
   function pointToLayer(latlng, style) {
     style = style || {};
-    var preset = global.PointIcons ? global.PointIcons.effectivePreset(style) : style.iconUrl ? "png" : "crosshair";
+    var preset = global.PointIcons
+      ? global.PointIcons.effectivePreset(style)
+      : style.iconUrl
+        ? "png"
+        : "default";
     if (preset === "png" && style.iconUrl) {
       var size = pointIconSize(style);
       return L.marker(latlng, {
@@ -184,7 +304,11 @@
 
   function pointLabelOffset(style) {
     style = style || {};
-    var preset = global.PointIcons ? global.PointIcons.effectivePreset(style) : style.iconUrl ? "png" : "crosshair";
+    var preset = global.PointIcons
+      ? global.PointIcons.effectivePreset(style)
+      : style.iconUrl
+        ? "png"
+        : "default";
     if (preset === "png" && style.iconUrl) {
       return [Math.round(pointIconSize(style) / 2) + 4, 0];
     }
@@ -1028,8 +1152,10 @@
         ? global.PointIcons.effectivePreset(style)
         : style.iconUrl
           ? "png"
-          : "crosshair",
-      iconColor: style.iconColor || (global.PointIcons ? global.PointIcons.DEFAULT_COLOR : "#ff0000"),
+          : "default",
+      iconColor: global.PointIcons
+        ? global.PointIcons.resolveIconColor(style)
+        : style.iconColor || "#ffffff",
       iconStyleKey: node.iconStyleKey || "",
       canResizeIcon: featureHasPointGeometry(feature),
       canChooseIcon: featureHasPointGeometry(feature),
@@ -1180,7 +1306,11 @@
 
   function init(divId) {
     basemaps = createBasemaps();
-    imageryLabelOverlays = createImageryLabelOverlays();
+    imageryLabelLayersByBasemap = createImageryLabelLayersByBasemap();
+    imageryLabelGranularityId = normalizeImageryLabelGranularity(
+      activeBasemapKey,
+      imageryLabelGranularityId
+    );
     map = L.map(divId, {
       zoomControl: true,
       doubleClickZoom: true,
@@ -1217,6 +1347,10 @@
     }
     activeBasemapKey = key;
     activeBasemap = next.addTo(map);
+    imageryLabelGranularityId = normalizeImageryLabelGranularity(
+      activeBasemapKey,
+      imageryLabelGranularityId
+    );
     syncImageryLabelOverlays();
   }
 
@@ -1475,6 +1609,10 @@
     setBasemap: setBasemap,
     setImageryLabelsEnabled: setImageryLabelsEnabled,
     getImageryLabelsEnabled: getImageryLabelsEnabled,
+    setImageryLabelGranularity: setImageryLabelGranularity,
+    getImageryLabelGranularity: getImageryLabelGranularity,
+    getImageryLabelGranularityOptions: getImageryLabelGranularityOptions,
+    normalizeImageryLabelGranularity: normalizeImageryLabelGranularity,
     getActiveBasemapKey: getActiveBasemapKey,
     basemapSupportsImageryLabels: basemapSupportsImageryLabels,
     loadDocument: loadDocument,
