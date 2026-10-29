@@ -14,18 +14,142 @@ import tempfile
 import threading
 from datetime import datetime
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from typing import Dict, Optional, Set, Tuple
-from urllib.parse import parse_qs, unquote, urlparse
+from typing import Dict, List, Optional, Set, Tuple
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 # Fixed loopback port so the WebView origin stays stable and recent files persist.
 PREFERRED_PORT = 47821
 MAX_UPLOAD_BYTES = 1024 * 1024 * 1024
 MAX_SCREENSHOT_BYTES = 50 * 1024 * 1024
+MAX_CUSTOM_ICON_BYTES = 5 * 1024 * 1024
 DESKTOP_TOKEN = secrets.token_urlsafe(24)
 OPENED_PATHS: Set[str] = set()
 EXPORT_PATHS: Set[str] = set()
 FILE_TOKENS: Dict[str, str] = {}
 STATE_LOCK = threading.Lock()
+
+
+def user_custom_icons_dir() -> str:
+    """Return the per-user folder for optional point icon PNG files."""
+    base = os.environ.get("LOCALAPPDATA") or os.environ.get("TEMP") or "."
+    return os.path.abspath(os.path.join(base, "KMZ-GIS-Viewer", "custom-icons"))
+
+
+def ensure_user_custom_icons_dir() -> str:
+    """Create the user custom-icons folder if needed and return its path."""
+    path = user_custom_icons_dir()
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _safe_png_basename(name: str) -> Optional[str]:
+    """Return a basename when it is a safe PNG file name."""
+    base = os.path.basename(str(name or "").strip())
+    if not base or base in {".", ".."}:
+        return None
+    if not base.lower().endswith(".png"):
+        return None
+    if re.search(r'[/\\:*?"<>|]', base):
+        return None
+    return base
+
+
+def list_custom_icons(viewer_root: str) -> List[Dict[str, str]]:
+    """List PNG icons from the shipped and user custom-icons folders."""
+    seen: Set[str] = set()
+    icons: List[Dict[str, str]] = []
+    directories = [
+        os.path.join(viewer_root, "custom-icons"),
+        user_custom_icons_dir(),
+    ]
+    for directory in directories:
+        if not os.path.isdir(directory):
+            continue
+        try:
+            names = sorted(os.listdir(directory))
+        except OSError:
+            continue
+        for name in names:
+            safe = _safe_png_basename(name)
+            if not safe or safe in seen:
+                continue
+            seen.add(safe)
+            if directory == os.path.join(viewer_root, "custom-icons"):
+                url = f"custom-icons/{quote(safe)}"
+            else:
+                url = f"/__desktop/custom-icon?name={quote(safe)}"
+            icons.append({"name": safe, "url": url})
+    return icons
+
+
+def resolve_custom_icon_path(viewer_root: str, name: str) -> Optional[str]:
+    """Return an absolute path to a custom icon PNG, preferring the user folder."""
+    safe = _safe_png_basename(name)
+    if not safe:
+        return None
+    candidates = [
+        os.path.join(user_custom_icons_dir(), safe),
+        os.path.join(viewer_root, "custom-icons", safe),
+    ]
+    for path in candidates:
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def custom_icon_catalog_entry(name: str) -> Dict[str, str]:
+    """Build list/catalog metadata for one user custom icon PNG."""
+    safe = _safe_png_basename(name)
+    if not safe:
+        safe = os.path.basename(name)
+    return {
+        "name": safe,
+        "url": f"/__desktop/custom-icon?name={quote(safe)}",
+    }
+
+
+def import_custom_icon_png(data: bytes, preferred_file_name: str = "") -> Optional[Dict[str, str]]:
+    """Write PNG bytes into the user custom-icons folder for later use.
+
+    Args:
+        data: Raw PNG file contents.
+        preferred_file_name: Desired file name when saving.
+
+    Returns:
+        Catalog metadata for the saved icon, or None when invalid or too large.
+    """
+    if not data or not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return None
+    if len(data) > MAX_CUSTOM_ICON_BYTES:
+        return None
+    directory = ensure_user_custom_icons_dir()
+    preferred = sanitize_png_file_name(preferred_file_name or "icon.png")
+    try:
+        dest = write_unique(directory, preferred, data)
+    except OSError:
+        return None
+    return custom_icon_catalog_entry(os.path.basename(dest))
+
+
+def import_custom_icon_from_path(source_path: str) -> Optional[Dict[str, str]]:
+    """Copy a PNG from disk into the user custom-icons folder.
+
+    Args:
+        source_path: Absolute or relative path chosen in a file dialog.
+
+    Returns:
+        Catalog metadata for the saved icon, or None when the file is invalid.
+    """
+    full = normalize_path(source_path)
+    safe = _safe_png_basename(full)
+    if not safe or not os.path.isfile(full):
+        return None
+    try:
+        with open(full, "rb") as handle:
+            data = handle.read()
+    except OSError:
+        return None
+    return import_custom_icon_png(data, safe)
 
 
 def normalize_path(path: str) -> str:
@@ -284,7 +408,49 @@ def _handler_class(viewer_root: str) -> type:
             if parsed.path == "/__desktop/file":
                 self._serve_source(parsed.query)
                 return
+            if parsed.path == "/__desktop/custom-icons":
+                self._list_custom_icons()
+                return
+            if parsed.path == "/__desktop/custom-icon":
+                self._serve_custom_icon(parsed.query)
+                return
             super().do_GET()
+
+        def _list_custom_icons(self) -> None:
+            """Return PNG icons available from custom-icons folders."""
+            if not token_ok(self.headers.get("X-Desktop-Token")):
+                self._send_json(403, {"error": "Desktop access was denied."})
+                return
+            viewer_root = self.directory or ""
+            self._send_json(
+                200,
+                {
+                    "icons": list_custom_icons(viewer_root),
+                    "userFolder": user_custom_icons_dir(),
+                },
+            )
+
+        def _serve_custom_icon(self, query: str) -> None:
+            """Serve one PNG from the user or shipped custom-icons folder."""
+            name = parse_qs(query).get("name", [""])[0]
+            path = resolve_custom_icon_path(self.directory or "", unquote(name))
+            if not path:
+                self._send_json(404, {"error": "Icon not found."})
+                return
+            try:
+                with open(path, "rb") as handle:
+                    data = handle.read()
+            except OSError as err:
+                self._send_json(
+                    500, {"error": err.strerror or "Could not read that icon."}
+                )
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
 
         def do_POST(self) -> None:
             """Write a timestamped copy or an exported KMZ chosen in a save dialog."""
@@ -297,6 +463,9 @@ def _handler_class(viewer_root: str) -> type:
                 return
             if parsed.path == "/__desktop/save-screenshot":
                 self._save_screenshot()
+                return
+            if parsed.path == "/__desktop/import-custom-icon":
+                self._import_custom_icon()
                 return
             self._send_json(404, {"error": "Not found."})
 
@@ -469,6 +638,31 @@ def _handler_class(viewer_root: str) -> type:
             self._send_json(
                 200, {"ok": True, "path": dest, "name": os.path.basename(dest)}
             )
+
+        def _import_custom_icon(self) -> None:
+            """Save an uploaded PNG into the user custom-icons folder."""
+            if not token_ok(self.headers.get("X-Desktop-Token")):
+                self._send_json(403, {"error": "Desktop access was denied."})
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0") or "0")
+            except ValueError:
+                self._send_json(400, {"error": "Invalid upload size."})
+                return
+            if length <= 0 or length > MAX_CUSTOM_ICON_BYTES:
+                self._send_json(400, {"error": "The icon is empty or too large."})
+                return
+            raw_preferred = unquote(self.headers.get("X-Preferred-Filename") or "")
+            preferred = sanitize_png_file_name(raw_preferred or "icon.png")
+            data = self.rfile.read(length)
+            if len(data) != length:
+                self._send_json(400, {"error": "The upload was incomplete."})
+                return
+            saved = import_custom_icon_png(data, preferred)
+            if not saved:
+                self._send_json(400, {"error": "Expected a PNG image."})
+                return
+            self._send_json(200, {"ok": True, **saved})
 
     return QuietHandler
 

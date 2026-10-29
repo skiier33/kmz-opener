@@ -23,6 +23,7 @@
   var dirInput = null;
   var browseBtn = null;
   var saveBtn = null;
+  var toolbarSaveBtn = null;
   var showToggle = null;
   var takeTwoToggle = null;
   var takeTwoPanelEl = null;
@@ -233,6 +234,23 @@
     }
   }
 
+  function isCaptureFrameVisible() {
+    return (
+      overlayEl != null
+      && !overlayEl.classList.contains("hidden")
+      && (!showToggle || showToggle.checked)
+    );
+  }
+
+  function setSaveButtonsDisabled(disabled) {
+    if (saveBtn) {
+      saveBtn.disabled = disabled;
+    }
+    if (toolbarSaveBtn) {
+      toolbarSaveBtn.disabled = disabled;
+    }
+  }
+
   function nameSuffixMode() {
     if (!nameSuffixSelect) {
       return "timestamp";
@@ -313,19 +331,40 @@
     if (!mapEl || !frameEl) {
       return Promise.reject(new Error("Map is not ready."));
     }
-    var outW = parseInt(frameEl.dataset.outWidth, 10) || targetDimensions().width;
-    var outH = parseInt(frameEl.dataset.outHeight, 10) || targetDimensions().height;
-    var frameRect = frameEl.getBoundingClientRect();
     var mapRect = mapEl.getBoundingClientRect();
-    var cropX = frameRect.left - mapRect.left;
-    var cropY = frameRect.top - mapRect.top;
-    var cropW = frameRect.width;
-    var cropH = frameRect.height;
-    if (cropW <= 0 || cropH <= 0) {
-      return Promise.reject(new Error("Capture frame is not visible."));
+    var useFrame = isCaptureFrameVisible();
+    var outW;
+    var outH;
+    var cropX;
+    var cropY;
+    var cropW;
+    var cropH;
+    var scale;
+    if (useFrame) {
+      outW = parseInt(frameEl.dataset.outWidth, 10) || targetDimensions().width;
+      outH = parseInt(frameEl.dataset.outHeight, 10) || targetDimensions().height;
+      var frameRect = frameEl.getBoundingClientRect();
+      cropX = frameRect.left - mapRect.left;
+      cropY = frameRect.top - mapRect.top;
+      cropW = frameRect.width;
+      cropH = frameRect.height;
+      if (cropW <= 0 || cropH <= 0) {
+        return Promise.reject(new Error("Capture frame is not visible."));
+      }
+      scale = outW / cropW;
+    } else {
+      cropX = 0;
+      cropY = 0;
+      cropW = mapEl.clientWidth || mapRect.width;
+      cropH = mapEl.clientHeight || mapRect.height;
+      if (cropW <= 0 || cropH <= 0) {
+        return Promise.reject(new Error("Map is not visible."));
+      }
+      outW = Math.round(cropW);
+      outH = Math.round(cropH);
+      scale = 1;
     }
-    var scale = outW / cropW;
-    var hadOverlay = overlayEl && !overlayEl.classList.contains("hidden");
+    var hadOverlay = useFrame && overlayEl && !overlayEl.classList.contains("hidden");
     if (hadOverlay) {
       overlayEl.classList.add("hidden");
     }
@@ -607,9 +646,7 @@
       return;
     }
     saveInFlight = true;
-    if (saveBtn) {
-      saveBtn.disabled = true;
-    }
+    setSaveButtonsDisabled(true);
     if (setMessageFn) {
       setMessageFn(takeTwo ? "Capturing screenshot 1 of 2…" : "Capturing screenshot…");
     }
@@ -675,9 +712,7 @@
       })
       .then(function () {
         saveInFlight = false;
-        if (saveBtn) {
-          saveBtn.disabled = false;
-        }
+        setSaveButtonsDisabled(false);
       });
   }
 
@@ -751,9 +786,12 @@
         writeSettings();
       });
     }
-    if (saveBtn) {
-      saveBtn.addEventListener("click", saveScreenshot);
-    }
+    [saveBtn, toolbarSaveBtn].forEach(function (btn) {
+      if (!btn) {
+        return;
+      }
+      btn.addEventListener("click", saveScreenshot);
+    });
     window.addEventListener("resize", layoutFrame);
   }
 
@@ -814,6 +852,7 @@
     dirInput = document.getElementById("screenshot-directory");
     browseBtn = document.getElementById("screenshot-browse-dir");
     saveBtn = document.getElementById("screenshot-save");
+    toolbarSaveBtn = document.getElementById("screenshot-save-toolbar");
     showToggle = document.getElementById("screenshot-show-frame");
     takeTwoToggle = document.getElementById("screenshot-take-two");
     takeTwoPanelEl = document.getElementById("screenshot-take-two-panel");

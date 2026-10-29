@@ -62,6 +62,7 @@
   var layersHideBtn = document.getElementById("layers-hide");
   var layersSortBtn = document.getElementById("layers-sort");
   var layersExportBtn = document.getElementById("layers-export");
+  var layersAddBtn = document.getElementById("layers-add");
   var fileSaveBtn = document.getElementById("file-save-copy");
   var fileEditKmlBtn = document.getElementById("file-edit-kml-external");
   var toolbarEditKmlBtn = document.getElementById("btn-edit-kml-external");
@@ -83,8 +84,15 @@
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6z"/></svg>';
   var SIDEBAR_SECTION_STORAGE_KEY = "kmz-sidebar-sections-collapsed";
   var SIDEBAR_INSPECT_HEIGHT_KEY = "kmz-sidebar-inspect-height";
+  var SIDEBAR_WIDTH_KEY = "kmz-sidebar-width";
+  var SIDEBAR_COLLAPSED_KEY = "kmz-sidebar-collapsed";
+  var RIGHT_PANE_WIDTH_KEY = "kmz-right-pane-width";
+  var RIGHT_PANE_COLLAPSED_KEY = "kmz-right-pane-collapsed";
   var SIDEBAR_INSPECT_MIN_H = 72;
-  var SIDEBAR_LAYERS_MIN_H = 96;
+  var SIDEBAR_UPPER_MIN_H = 96;
+  var SIDEBAR_WIDTH_MIN = 220;
+  var SIDEBAR_WIDTH_MAX = 560;
+  var sidebarWidthInvalidateTimer = null;
 
   function sidebarSectionSlug(section, index) {
     var parts = section.className.split(/\s+/);
@@ -229,13 +237,12 @@
     return section.offsetHeight;
   }
 
-  function clampSidebarInspectHeight(sidebar, layersSection, inspectSection, desiredPx) {
+  function clampSidebarInspectHeight(sidebar, inspectSection, desiredPx) {
     var sidebarH = sidebar.clientHeight;
     var fixedH = 0;
     Array.prototype.forEach.call(sidebar.children, function (child) {
       if (
-        child === layersSection
-        || child === inspectSection
+        child === inspectSection
         || (child.classList && child.classList.contains("sidebar-split-handle"))
       ) {
         return;
@@ -245,13 +252,13 @@
     var handleH = 7;
     var maxInspect = Math.max(
       SIDEBAR_INSPECT_MIN_H,
-      sidebarH - fixedH - handleH - SIDEBAR_LAYERS_MIN_H
+      sidebarH - fixedH - handleH - SIDEBAR_UPPER_MIN_H
     );
     return Math.min(Math.max(desiredPx, SIDEBAR_INSPECT_MIN_H), maxInspect);
   }
 
-  function applySidebarInspectHeight(sidebar, layersSection, inspectSection, px, persist) {
-    var clamped = clampSidebarInspectHeight(sidebar, layersSection, inspectSection, px);
+  function applySidebarInspectHeight(sidebar, inspectSection, px, persist) {
+    var clamped = clampSidebarInspectHeight(sidebar, inspectSection, px);
     sidebar.style.setProperty("--sidebar-inspect-h", clamped + "px");
     if (persist) {
       writeSidebarInspectHeight(clamped);
@@ -260,24 +267,20 @@
   }
 
   function initSidebarPanelResize() {
-    var sidebar = document.querySelector(".sidebar");
-    var layersSection = document.querySelector(".sidebar-layers");
-    var inspectSection = document.querySelector(".sidebar-inspect");
-    var handle = document.querySelector(".sidebar-split-handle");
-    if (!sidebar || !layersSection || !inspectSection || !handle) {
+    var sidebar = document.querySelector(".sidebar-left");
+    var inspectSection = document.querySelector(".sidebar-left .sidebar-inspect");
+    var handle = document.querySelector(".sidebar-left .sidebar-split-handle");
+    if (!sidebar || !inspectSection || !handle) {
       return;
     }
 
     var stored = readSidebarInspectHeight();
     if (stored !== null) {
-      applySidebarInspectHeight(sidebar, layersSection, inspectSection, stored, false);
+      applySidebarInspectHeight(sidebar, inspectSection, stored, false);
     }
 
     function splitResizeEnabled() {
-      return (
-        !layersSection.classList.contains("collapsed")
-        && !inspectSection.classList.contains("collapsed")
-      );
+      return !inspectSection.classList.contains("collapsed");
     }
 
     function syncSplitHandle() {
@@ -288,7 +291,6 @@
 
     syncSplitHandle();
     var collapseObserver = new MutationObserver(syncSplitHandle);
-    collapseObserver.observe(layersSection, { attributes: true, attributeFilter: ["class"] });
     collapseObserver.observe(inspectSection, { attributes: true, attributeFilter: ["class"] });
 
     window.addEventListener("resize", function () {
@@ -301,7 +303,7 @@
       if (!Number.isFinite(current)) {
         current = inspectSection.offsetHeight;
       }
-      applySidebarInspectHeight(sidebar, layersSection, inspectSection, current, true);
+      applySidebarInspectHeight(sidebar, inspectSection, current, true);
     });
 
     var drag = null;
@@ -322,7 +324,6 @@
       var delta = event.clientY - drag.startY;
       applySidebarInspectHeight(
         sidebar,
-        layersSection,
         inspectSection,
         drag.startHeight - delta,
         false
@@ -377,11 +378,300 @@
       var current = inspectSection.offsetHeight;
       applySidebarInspectHeight(
         sidebar,
-        layersSection,
         inspectSection,
         current + dir * step,
         true
       );
+    });
+  }
+
+  function readStoredPaneWidth(storageKey) {
+    try {
+      var raw = localStorage.getItem(storageKey);
+      if (!raw) {
+        return null;
+      }
+      var value = parseFloat(raw);
+      return Number.isFinite(value) && value > 0 ? value : null;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function writeStoredPaneWidth(storageKey, px) {
+    try {
+      localStorage.setItem(storageKey, String(Math.round(px)));
+    } catch (err) {
+      /* ignore */
+    }
+  }
+
+  function readStoredPaneCollapsed(storageKey) {
+    try {
+      return localStorage.getItem(storageKey) === "1";
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function writeStoredPaneCollapsed(storageKey, collapsed) {
+    try {
+      if (collapsed) {
+        localStorage.setItem(storageKey, "1");
+      } else {
+        localStorage.removeItem(storageKey);
+      }
+    } catch (err) {
+      /* ignore */
+    }
+  }
+
+  function readCssPx(varName) {
+    var value = parseFloat(
+      getComputedStyle(document.documentElement).getPropertyValue(varName)
+    );
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  function otherPaneReservedWidth(workspace, collapsedClass, cssVar) {
+    if (!workspace || workspace.classList.contains(collapsedClass)) {
+      return 0;
+    }
+    return readCssPx(cssVar);
+  }
+
+  function clampPaneWidth(px, workspace, collapsedClass, cssVar, otherCollapsedClass, otherCssVar) {
+    var otherW = otherPaneReservedWidth(workspace, otherCollapsedClass, otherCssVar);
+    var maxW = Math.min(
+      SIDEBAR_WIDTH_MAX,
+      Math.max(SIDEBAR_WIDTH_MIN, window.innerWidth - 280 - otherW)
+    );
+    return Math.min(Math.max(px, SIDEBAR_WIDTH_MIN), maxW);
+  }
+
+  function scheduleSidebarMapInvalidate() {
+    if (sidebarWidthInvalidateTimer) {
+      clearTimeout(sidebarWidthInvalidateTimer);
+    }
+    sidebarWidthInvalidateTimer = setTimeout(function () {
+      sidebarWidthInvalidateTimer = null;
+      if (!window.GisMap || typeof GisMap.getMap !== "function") {
+        return;
+      }
+      var mapInstance = GisMap.getMap();
+      if (mapInstance && typeof mapInstance.invalidateSize === "function") {
+        mapInstance.invalidateSize();
+      }
+    }, 0);
+  }
+
+  function applyPaneWidth(workspace, cssVar, storageKey, px, persist, clampOptions) {
+    var clamped = clampPaneWidth(
+      px,
+      workspace,
+      clampOptions.collapsedClass,
+      clampOptions.cssVar,
+      clampOptions.otherCollapsedClass,
+      clampOptions.otherCssVar
+    );
+    document.documentElement.style.setProperty(cssVar, clamped + "px");
+    if (persist) {
+      writeStoredPaneWidth(storageKey, clamped);
+    }
+    scheduleSidebarMapInvalidate();
+    return clamped;
+  }
+
+  function setWorkspacePaneCollapsed(workspace, toggleBtn, collapsed, persist, options) {
+    workspace.classList.toggle(options.collapsedClass, collapsed);
+    if (toggleBtn) {
+      toggleBtn.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      toggleBtn.title = collapsed ? options.expandLabel : options.collapseLabel;
+      toggleBtn.setAttribute(
+        "aria-label",
+        collapsed ? options.expandLabel : options.collapseLabel
+      );
+    }
+    if (persist) {
+      writeStoredPaneCollapsed(options.collapsedStorageKey, collapsed);
+    }
+    scheduleSidebarMapInvalidate();
+  }
+
+  function initWorkspacePaneWidthResize(options) {
+    var workspace = document.querySelector(".workspace");
+    var edge = document.querySelector(options.edgeSelector);
+    var toggleBtn = document.getElementById(options.toggleId);
+    if (!workspace || !edge) {
+      return;
+    }
+
+    var clampOptions = {
+      collapsedClass: options.collapsedClass,
+      cssVar: options.cssVar,
+      otherCollapsedClass: options.otherCollapsedClass,
+      otherCssVar: options.otherCssVar,
+    };
+
+    var storedWidth = readStoredPaneWidth(options.widthStorageKey);
+    if (storedWidth !== null) {
+      applyPaneWidth(workspace, options.cssVar, options.widthStorageKey, storedWidth, false, clampOptions);
+    }
+
+    var startCollapsed = readStoredPaneCollapsed(options.collapsedStorageKey);
+    setWorkspacePaneCollapsed(workspace, toggleBtn, startCollapsed, false, options);
+
+    window.addEventListener("resize", function () {
+      if (workspace.classList.contains(options.collapsedClass)) {
+        return;
+      }
+      var current = readCssPx(options.cssVar);
+      if (!current) {
+        current = SIDEBAR_WIDTH_MIN;
+      }
+      applyPaneWidth(workspace, options.cssVar, options.widthStorageKey, current, true, clampOptions);
+    });
+
+    if (toggleBtn) {
+      toggleBtn.addEventListener("click", function (event) {
+        event.stopPropagation();
+        var collapsed = !workspace.classList.contains(options.collapsedClass);
+        setWorkspacePaneCollapsed(workspace, toggleBtn, collapsed, true, options);
+      });
+      toggleBtn.addEventListener("pointerdown", function (event) {
+        event.stopPropagation();
+      });
+    }
+
+    var drag = null;
+
+    function finishWidthDrag() {
+      if (!drag) {
+        return;
+      }
+      edge.classList.remove("is-dragging");
+      document.body.classList.remove("sidebar-width-resizing");
+      drag = null;
+    }
+
+    function onWidthPointerMove(event) {
+      if (!drag) {
+        return;
+      }
+      if (workspace.classList.contains(options.collapsedClass)) {
+        setWorkspacePaneCollapsed(workspace, toggleBtn, false, true, options);
+      }
+      var delta = event.clientX - drag.startX;
+      applyPaneWidth(
+        workspace,
+        options.cssVar,
+        options.widthStorageKey,
+        drag.startWidth + delta * options.dragSign,
+        false,
+        clampOptions
+      );
+    }
+
+    function onWidthPointerUp() {
+      if (!drag) {
+        return;
+      }
+      var current = readCssPx(options.cssVar);
+      if (Number.isFinite(current)) {
+        writeStoredPaneWidth(options.widthStorageKey, current);
+      }
+      finishWidthDrag();
+      window.removeEventListener("pointermove", onWidthPointerMove);
+      window.removeEventListener("pointerup", onWidthPointerUp);
+      window.removeEventListener("pointercancel", onWidthPointerUp);
+    }
+
+    edge.addEventListener("pointerdown", function (event) {
+      if (event.button !== 0 || (toggleBtn && toggleBtn.contains(event.target))) {
+        return;
+      }
+      event.preventDefault();
+      if (workspace.classList.contains(options.collapsedClass)) {
+        setWorkspacePaneCollapsed(workspace, toggleBtn, false, true, options);
+      }
+      var current = readCssPx(options.cssVar);
+      if (!current) {
+        current = SIDEBAR_WIDTH_MIN;
+      }
+      drag = { startX: event.clientX, startWidth: current };
+      edge.classList.add("is-dragging");
+      document.body.classList.add("sidebar-width-resizing");
+      edge.setPointerCapture(event.pointerId);
+      window.addEventListener("pointermove", onWidthPointerMove);
+      window.addEventListener("pointerup", onWidthPointerUp);
+      window.addEventListener("pointercancel", onWidthPointerUp);
+    });
+
+    edge.addEventListener("keydown", function (event) {
+      if (workspace.classList.contains(options.collapsedClass)) {
+        if (event.key === options.expandKey) {
+          event.preventDefault();
+          setWorkspacePaneCollapsed(workspace, toggleBtn, false, true, options);
+        }
+        return;
+      }
+      var step = event.shiftKey ? 24 : 8;
+      var dir = 0;
+      if (event.key === options.widenKey) {
+        dir = 1;
+      } else if (event.key === options.narrowKey) {
+        dir = -1;
+      } else {
+        return;
+      }
+      event.preventDefault();
+      var current = readCssPx(options.cssVar);
+      if (!current) {
+        current = SIDEBAR_WIDTH_MIN;
+      }
+      applyPaneWidth(
+        workspace,
+        options.cssVar,
+        options.widthStorageKey,
+        current + dir * step,
+        true,
+        clampOptions
+      );
+    });
+  }
+
+  function initSidebarWidthResize() {
+    initWorkspacePaneWidthResize({
+      edgeSelector: ".sidebar-edge-left",
+      toggleId: "sidebar-collapse-toggle",
+      cssVar: "--sidebar-w",
+      widthStorageKey: SIDEBAR_WIDTH_KEY,
+      collapsedStorageKey: SIDEBAR_COLLAPSED_KEY,
+      collapsedClass: "is-sidebar-collapsed",
+      otherCollapsedClass: "is-right-pane-collapsed",
+      otherCssVar: "--right-pane-w",
+      dragSign: 1,
+      expandKey: "ArrowRight",
+      widenKey: "ArrowLeft",
+      narrowKey: "ArrowRight",
+      collapseLabel: "Collapse sidebar",
+      expandLabel: "Expand sidebar",
+    });
+    initWorkspacePaneWidthResize({
+      edgeSelector: ".sidebar-edge-right",
+      toggleId: "right-pane-collapse-toggle",
+      cssVar: "--right-pane-w",
+      widthStorageKey: RIGHT_PANE_WIDTH_KEY,
+      collapsedStorageKey: RIGHT_PANE_COLLAPSED_KEY,
+      collapsedClass: "is-right-pane-collapsed",
+      otherCollapsedClass: "is-sidebar-collapsed",
+      otherCssVar: "--sidebar-w",
+      dragSign: -1,
+      expandKey: "ArrowLeft",
+      widenKey: "ArrowLeft",
+      narrowKey: "ArrowRight",
+      collapseLabel: "Collapse layers panel",
+      expandLabel: "Expand layers panel",
     });
   }
 
@@ -419,6 +709,17 @@
   var nextSourceSeq = 0;
   var loadedSourcesEl = document.getElementById("loaded-sources");
   var clearSourcesBtn = document.getElementById("btn-clear-sources");
+  var filePointIconsEl = document.getElementById("file-point-icons");
+  var customIconsCatalog = [];
+  var customIconsUserFolder = "";
+  var filePointIconState = {
+    selection: "crosshair",
+    color: "#ff0000",
+    scale: 1,
+  };
+  var filePointIconSourceId = null;
+  var filePointIconSourceUserPick = false;
+  var filePointIconSaveToKmz = true;
   var saveInFlight = false;
   var desktopSession = null;
   var desktopExternalEditAvailable = false;
@@ -507,6 +808,663 @@
     }
     var idx = nodeId.indexOf(":");
     return idx >= 0 ? nodeId.slice(0, idx) : activeSourceId;
+  }
+
+  function selectCustomIconInCatalog(name) {
+    if (!name) {
+      return;
+    }
+    filePointIconState.selection = "custom:" + name;
+    var item = customIconsCatalog.find(function (row) {
+      return row.label === name || row.id === "custom:" + name;
+    });
+    if (item && item.url) {
+      filePointIconState.customUrl = item.url;
+    }
+  }
+
+  function finishCustomIconImport(data) {
+    if (!data || !data.name) {
+      return Promise.resolve();
+    }
+    return refreshCustomIconCatalog().then(function () {
+      selectCustomIconInCatalog(data.name);
+      refreshFilePointIconsPanel();
+      setMessage("Saved icon as " + data.name + " for future use.");
+    });
+  }
+
+  function uploadCustomIconPng(file, desktop) {
+    if (!file || !desktop || !desktop.token) {
+      return Promise.resolve(null);
+    }
+    var lower = (file.name || "").toLowerCase();
+    if (!/\.png$/i.test(lower) && file.type && file.type !== "image/png") {
+      setMessage("Please choose a PNG file.");
+      return Promise.resolve(null);
+    }
+    return file.arrayBuffer().then(function (buf) {
+      return fetch("/__desktop/import-custom-icon", {
+        method: "POST",
+        headers: {
+          "X-Desktop-Token": desktop.token,
+          "Content-Type": "application/octet-stream",
+          "X-Preferred-Filename": encodeURIComponent(file.name || "icon.png"),
+        },
+        body: buf,
+      }).then(function (response) {
+        return response.json().catch(function () {
+          return {};
+        }).then(function (payload) {
+          if (!response.ok) {
+            setMessage((payload && payload.error) || "Could not save that icon.");
+            return null;
+          }
+          return payload;
+        });
+      });
+    });
+  }
+
+  function promptLoadCustomIcon() {
+    return ensureDesktop().then(function (desktop) {
+      if (desktop && desktop.api && typeof desktop.api.import_custom_icon === "function") {
+        return Promise.resolve(desktop.api.import_custom_icon()).then(function (data) {
+          return finishCustomIconImport(data);
+        });
+      }
+      var input = document.getElementById("file-load-custom-icon-file");
+      if (input) {
+        input.value = "";
+        input.click();
+      } else if (!desktop || !desktop.token) {
+        setMessage("Load icon is available in the desktop app.");
+      }
+      return null;
+    });
+  }
+
+  function bindLoadCustomIconControl() {
+    var loadBtn = document.getElementById("file-load-custom-icon");
+    var fileInput = document.getElementById("file-load-custom-icon-file");
+    if (loadBtn) {
+      loadBtn.addEventListener("click", function () {
+        promptLoadCustomIcon();
+      });
+    }
+    if (fileInput) {
+      fileInput.addEventListener("change", function () {
+        var file = fileInput.files && fileInput.files[0];
+        if (!file) {
+          return;
+        }
+        ensureDesktop().then(function (desktop) {
+          if (!desktop || !desktop.token) {
+            setMessage("Load icon is available in the desktop app.");
+            return;
+          }
+          uploadCustomIconPng(file, desktop).then(finishCustomIconImport);
+        });
+      });
+    }
+  }
+
+  function refreshCustomIconCatalog() {
+    PointIcons.invalidateCatalogCache();
+    return ensureDesktop().then(function (desktop) {
+      var token = desktop ? desktop.token : "";
+      if (desktop && desktop.api && typeof desktop.api.custom_icons_folder === "function") {
+        Promise.resolve(desktop.api.custom_icons_folder()).then(function (path) {
+          if (path) {
+            customIconsUserFolder = path;
+          }
+        });
+      }
+      if (token) {
+        fetch("/__desktop/custom-icons", {
+          headers: { "X-Desktop-Token": token },
+          cache: "no-store",
+        })
+          .then(function (response) {
+            if (!response.ok) {
+              return null;
+            }
+            return response.json();
+          })
+          .then(function (data) {
+            if (data && data.userFolder) {
+              customIconsUserFolder = data.userFolder;
+            }
+          });
+      }
+      return PointIcons.loadCustomIconCatalog(token).then(function (icons) {
+        customIconsCatalog = icons || [];
+        return customIconsCatalog;
+      });
+    });
+  }
+
+  function registerReplacementIcon(source, kmlHref, blob) {
+    if (
+      !source
+      || !source.doc
+      || source.doc.sourceKind !== "kmz"
+      || !source.doc.zip
+      || !kmlHref
+      || !blob
+    ) {
+      return;
+    }
+    if (!source.doc.replacementIcons) {
+      source.doc.replacementIcons = {};
+    }
+    source.doc.replacementIcons[kmzZipPathForHref(source.doc.kmlPath, kmlHref)] = {
+      blob: blob,
+    };
+  }
+
+  function fetchIconBlob(url, desktopToken) {
+    var headers = {};
+    if (url.indexOf("/__desktop/") === 0 && desktopToken) {
+      headers["X-Desktop-Token"] = desktopToken;
+    }
+    return fetch(url, { headers: headers, cache: "no-store" }).then(function (response) {
+      if (!response.ok) {
+        throw new Error("Could not load icon.");
+      }
+      return response.blob();
+    });
+  }
+
+  function syncSharedStyleKml(source, iconStyleKey, spec, kmlHref, blob) {
+    if (!source || !source.doc || !source.doc.styleElements || !iconStyleKey) {
+      return;
+    }
+    var styleEl =
+      source.doc.styleElements[iconStyleKey] ||
+      source.doc.styleElements[String(iconStyleKey).replace(/^#/, "")];
+    if (!styleEl) {
+      return;
+    }
+    if (spec.iconPreset === "png" && kmlHref && KmzSave.setStyleIconHref) {
+      KmzSave.setStyleIconHref(styleEl, kmlHref);
+    } else if (KmzSave.clearStyleIconHref) {
+      KmzSave.clearStyleIconHref(styleEl);
+    }
+    if (spec.iconColor && KmzSave.setStyleIconColor && PointIcons) {
+      KmzSave.setStyleIconColor(styleEl, PointIcons.cssColorToKmlAbgr(spec.iconColor));
+    }
+    if (spec.iconScale !== undefined && KmzSave.setStyleIconScale) {
+      KmzSave.setStyleIconScale(styleEl, PointIcons.clampScale(spec.iconScale));
+    }
+    if (spec.iconPreset === "png" && kmlHref && blob) {
+      registerReplacementIcon(source, kmlHref, blob);
+    }
+  }
+
+  function commitPointIconSpec(spec, context) {
+    context = context || {};
+    var sourceId = context.sourceId || activeSourceId;
+    var source = findLoadedSource(sourceId);
+    if (!source || !source.doc) {
+      setMessage("Open a KMZ or KML file first.");
+      return Promise.resolve(false);
+    }
+    var saveToKmz = context.saveToKmz !== false;
+    var iconApplyOptions = { saveToKmz: saveToKmz };
+    var preset = spec.iconPreset || "crosshair";
+    var scale = PointIcons.clampScale(spec.iconScale);
+    var color = spec.iconColor || PointIcons.DEFAULT_COLOR;
+    var normalized = {
+      iconPreset: preset,
+      iconColor: color,
+      iconScale: scale,
+    };
+
+    function applyBuiltinOrShared(objectUrl, kmlHref, blob) {
+      var useShared = !!(context.applyShared && context.iconStyleKey);
+      if (useShared) {
+        syncSharedStyleKml(source, context.iconStyleKey, normalized, kmlHref, blob);
+        var sharedCount = GisMap.setSharedStylePointIcon(sourceId, context.iconStyleKey, normalized);
+        setMessage(
+          "Updated " +
+            context.iconStyleKey +
+            " on " +
+            sharedCount +
+            " point" +
+            (sharedCount === 1 ? "" : "s") +
+            "."
+        );
+        if (saveToKmz) {
+          noteEdit();
+        }
+        if (context.featureId) {
+          GisMap.selectFeature(context.featureId, false);
+        }
+        return true;
+      }
+      if (context.mode === "file") {
+        var total = GisMap.applySourcePointIcon(sourceId, normalized, iconApplyOptions);
+        var fileLabel = source.doc.fileName || "file";
+        setMessage(
+          (saveToKmz ? "Saved icon into " : "Updated map icon for ") +
+            fileLabel +
+            " (" +
+            total +
+            " point" +
+            (total === 1 ? "" : "s") +
+            ")" +
+            (saveToKmz ? "." : " — not written to the file until Save to KMZ is checked.")
+        );
+        if (saveToKmz) {
+          noteEdit();
+        }
+        return true;
+      }
+      if (context.featureId) {
+        GisMap.setFeaturePointIcon(context.featureId, normalized, { skipInspect: true });
+        setMessage("Updated icon for " + (context.featureName || "feature") + ".");
+        if (saveToKmz) {
+          noteEdit();
+        }
+        GisMap.selectFeature(context.featureId, false);
+        return true;
+      }
+      return false;
+    }
+
+    if (preset === "png") {
+      var pngUrl = spec.iconUrl;
+      if (!pngUrl) {
+        setMessage("Choose an icon.");
+        return Promise.resolve(false);
+      }
+      return ensureDesktop().then(function (desktop) {
+        var token = desktop ? desktop.token : "";
+        return fetchIconBlob(pngUrl, token)
+          .then(function (blob) {
+            var objectUrl = URL.createObjectURL(blob);
+            currentBlobUrls.push(objectUrl);
+            var fileName = iconBasename(pngUrl) || "icon.png";
+            var kmlHref = iconHrefWithFilename("icons/" + fileName, fileName);
+            if (saveToKmz) {
+              registerReplacementIcon(source, kmlHref, blob);
+            }
+            var pngSpec = {
+              iconPreset: "png",
+              iconUrl: objectUrl,
+              iconScale: scale,
+              iconColor: color,
+              kmlHref: kmlHref,
+            };
+            var useShared = !!(context.applyShared && context.iconStyleKey);
+            if (useShared) {
+              syncSharedStyleKml(source, context.iconStyleKey, pngSpec, kmlHref, blob);
+              var count = GisMap.setSharedStylePointIcon(sourceId, context.iconStyleKey, pngSpec);
+              setMessage(
+                "Updated " +
+                  context.iconStyleKey +
+                  " on " +
+                  count +
+                  " point" +
+                  (count === 1 ? "" : "s") +
+                  "."
+              );
+            } else if (context.mode === "file") {
+              var total = GisMap.applySourcePointIcon(sourceId, pngSpec, iconApplyOptions);
+              var pngFileLabel = source.doc.fileName || "file";
+              setMessage(
+                (saveToKmz ? "Saved icon into " : "Updated map icon for ") +
+                  pngFileLabel +
+                  " (" +
+                  total +
+                  " point" +
+                  (total === 1 ? "" : "s") +
+                  ")" +
+                  (saveToKmz ? "." : " — not written to the file until Save to KMZ is checked.")
+              );
+            } else if (context.featureId) {
+              GisMap.setFeatureIconUrl(context.featureId, objectUrl, {
+                kmlHref: kmlHref,
+                skipInspect: true,
+              });
+              GisMap.setFeaturePointIcon(context.featureId, pngSpec, { skipInspect: true });
+              setMessage("Updated icon for " + (context.featureName || "feature") + ".");
+              GisMap.selectFeature(context.featureId, false);
+            }
+            if (saveToKmz) {
+              noteEdit();
+            }
+            return true;
+          })
+          .catch(function () {
+            setMessage("Could not load that icon.");
+            return false;
+          });
+      });
+    }
+
+    return Promise.resolve(applyBuiltinOrShared(null, null, null));
+  }
+
+  function iconPickerThumbStyle(preset, color) {
+    if (preset === "dot") {
+      return (
+        "background:radial-gradient(circle at center," +
+        color +
+        " 0," +
+        color +
+        " 42%,transparent 43%)"
+      );
+    }
+    if (preset === "square") {
+      return "background:" + color + ";width:12px;height:12px;margin:auto";
+    }
+    return (
+      "background:linear-gradient(" +
+      color +
+      "," +
+      color +
+      "),linear-gradient(90deg,transparent 46%," +
+      color +
+      " 46%," +
+      color +
+      " 54%,transparent 54%),linear-gradient(transparent 46%," +
+      color +
+      " 46%," +
+      color +
+      " 54%,transparent 54%)"
+    );
+  }
+
+  function buildIconPickerHtml(prefix, state) {
+    var color = state.color || PointIcons.DEFAULT_COLOR;
+    var scalePct = Math.round(PointIcons.clampScale(state.scale) * 100);
+    var html =
+      '<div class="icon-picker-grid" role="listbox" aria-label="Point icon">' +
+      PointIcons.builtinCatalog()
+        .map(function (item) {
+          var selected = state.selection === item.id;
+          return (
+            '<button type="button" class="icon-picker-btn' +
+            (selected ? " is-selected" : "") +
+            '" data-icon-id="' +
+            escapeText(item.id) +
+            '" role="option" aria-selected="' +
+            (selected ? "true" : "false") +
+            '" title="' +
+            escapeText(item.label) +
+            '">' +
+            '<span class="icon-picker-thumb icon-picker-thumb-' +
+            escapeText(item.id) +
+            '" style="' +
+            iconPickerThumbStyle(item.id, color) +
+            '"></span>' +
+            '<span class="icon-picker-label">' +
+            escapeText(item.label) +
+            "</span></button>"
+          );
+        })
+        .join("") +
+      customIconsCatalog
+        .map(function (item) {
+          var id = item.id || "custom:" + item.label;
+          var selected = state.selection === id;
+          return (
+            '<button type="button" class="icon-picker-btn' +
+            (selected ? " is-selected" : "") +
+            '" data-icon-id="' +
+            escapeText(id) +
+            '" data-icon-url="' +
+            escapeText(item.url || "") +
+            '" role="option" aria-selected="' +
+            (selected ? "true" : "false") +
+            '" title="' +
+            escapeText(item.label || id) +
+            '">' +
+            '<img class="icon-picker-img" src="' +
+            escapeText(item.url || "") +
+            '" alt="" />' +
+            '<span class="icon-picker-label">' +
+            escapeText(item.label || id) +
+            "</span></button>"
+          );
+        })
+        .join("") +
+      "</div>" +
+      '<div class="icon-picker-controls">' +
+      '<label class="icon-picker-color-label">Color' +
+      '<input type="color" id="' +
+      prefix +
+      '-icon-color" value="' +
+      escapeText(color) +
+      '" /></label>' +
+      '<div class="inspect-icon-scale">' +
+      '<label for="' +
+      prefix +
+      '-icon-scale">Icon size</label>' +
+      '<div class="inspect-icon-scale-row">' +
+      '<input id="' +
+      prefix +
+      '-icon-scale" type="range" min="1" max="400" step="5" value="' +
+      scalePct +
+      '" />' +
+      '<span id="' +
+      prefix +
+      '-icon-scale-value" class="inspect-icon-scale-value">' +
+      escapeText(formatIconScale(state.scale)) +
+      "</span></div></div></div>";
+    return html;
+  }
+
+  function specFromPickerState(state) {
+    var scale = PointIcons.clampScale(state.scale);
+    var color = state.color || PointIcons.DEFAULT_COLOR;
+    var selection = state.selection || "crosshair";
+    if (selection.indexOf("custom:") === 0) {
+      var custom = customIconsCatalog.find(function (item) {
+        return item.id === selection;
+      });
+      return {
+        iconPreset: "png",
+        iconUrl: (custom && custom.url) || state.customUrl || "",
+        iconColor: color,
+        iconScale: scale,
+      };
+    }
+    if (PointIcons.BUILTIN_IDS.indexOf(selection) !== -1) {
+      return {
+        iconPreset: selection,
+        iconColor: color,
+        iconScale: scale,
+      };
+    }
+    return {
+      iconPreset: "crosshair",
+      iconColor: color,
+      iconScale: scale,
+    };
+  }
+
+  function bindIconPicker(containerId, prefix, state, onApply) {
+    var container = document.getElementById(containerId);
+    var grid = container && container.querySelector(".icon-picker-grid");
+    if (!grid) {
+      return;
+    }
+    grid.querySelectorAll(".icon-picker-btn").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        state.selection = btn.getAttribute("data-icon-id") || "crosshair";
+        if (state.selection.indexOf("custom:") === 0) {
+          state.customUrl = btn.getAttribute("data-icon-url") || "";
+        }
+        grid.querySelectorAll(".icon-picker-btn").forEach(function (other) {
+          other.classList.toggle("is-selected", other === btn);
+          other.setAttribute("aria-selected", other === btn ? "true" : "false");
+        });
+        if (onApply && onApply.live) {
+          onApply.live();
+        }
+      });
+    });
+    var colorInput = document.getElementById(prefix + "-icon-color");
+    if (colorInput) {
+      colorInput.addEventListener("input", function () {
+        state.color = colorInput.value;
+        grid.querySelectorAll(".icon-picker-thumb").forEach(function (thumb) {
+          var parent = thumb.closest(".icon-picker-btn");
+          var preset = parent ? parent.getAttribute("data-icon-id") : "crosshair";
+          if (PointIcons.BUILTIN_IDS.indexOf(preset) !== -1) {
+            thumb.setAttribute("style", iconPickerThumbStyle(preset, state.color));
+          }
+        });
+        if (onApply && onApply.live) {
+          onApply.live();
+        }
+      });
+    }
+    var slider = document.getElementById(prefix + "-icon-scale");
+    var valueEl = document.getElementById(prefix + "-icon-scale-value");
+    if (slider && valueEl) {
+      slider.addEventListener("input", function () {
+        state.scale = parseInt(slider.value, 10) / 100;
+        valueEl.textContent = formatIconScale(state.scale);
+        if (onApply && onApply.live) {
+          onApply.live();
+        }
+      });
+      slider.addEventListener("change", function () {
+        if (onApply && onApply.commitScale) {
+          onApply.commitScale();
+        }
+      });
+    }
+    if (onApply && onApply.bindExtra) {
+      onApply.bindExtra();
+    }
+  }
+
+  function loadedSourcesWithPointPlacemarks() {
+    return loadedSources.filter(function (source) {
+      return GisMap.countSourcePointPlacemarks(source.id) > 0;
+    });
+  }
+
+  function resolveFilePointIconSourceId() {
+    var candidates = loadedSourcesWithPointPlacemarks();
+    if (!candidates.length) {
+      return null;
+    }
+    if (filePointIconSourceUserPick && filePointIconSourceId) {
+      for (var i = 0; i < candidates.length; i += 1) {
+        if (candidates[i].id === filePointIconSourceId) {
+          return filePointIconSourceId;
+        }
+      }
+      filePointIconSourceUserPick = false;
+      filePointIconSourceId = null;
+    }
+    if (activeSourceId && GisMap.countSourcePointPlacemarks(activeSourceId) > 0) {
+      return activeSourceId;
+    }
+    return candidates[0].id;
+  }
+
+  function buildFilePointIconTargetSelectHtml(selectedSourceId) {
+    var candidates = loadedSourcesWithPointPlacemarks();
+    if (candidates.length <= 1) {
+      return "";
+    }
+    var options = candidates
+      .map(function (source) {
+        var name = source.doc.fileName || "Untitled";
+        var count = GisMap.countSourcePointPlacemarks(source.id);
+        var label = name + " (" + count + " point" + (count === 1 ? "" : "s") + ")";
+        return (
+          '<option value="' +
+          escapeText(source.id) +
+          '"' +
+          (source.id === selectedSourceId ? " selected" : "") +
+          ">" +
+          escapeText(label) +
+          "</option>"
+        );
+      })
+      .join("");
+    return (
+      '<div class="file-point-icon-target">' +
+      '<label for="file-point-icon-source">Apply to file</label>' +
+      '<select id="file-point-icon-source" aria-label="KMZ or KML file for point icons">' +
+      options +
+      "</select></div>"
+    );
+  }
+
+  function refreshFilePointIconsPanel() {
+    if (!filePointIconsEl) {
+      return;
+    }
+    var sourceId = resolveFilePointIconSourceId();
+    var enabled = !!sourceId;
+    filePointIconsEl.hidden = !enabled;
+    if (!enabled) {
+      filePointIconsEl.innerHTML = "";
+      return;
+    }
+    var hint =
+      customIconsUserFolder ||
+      "custom-icons/ in the app folder (see custom-icons/README.md)";
+    filePointIconsEl.innerHTML =
+      "<h3>Point icons</h3>" +
+      '<p class="muted icon-picker-hint">Applies to every point in the chosen file. Saved icons go to: ' +
+      escapeText(hint) +
+      "</p>" +
+      '<div class="file-point-icon-load">' +
+      '<button type="button" class="btn btn-subtle" id="file-load-custom-icon">Load icon…</button>' +
+      '<input id="file-load-custom-icon-file" type="file" accept="image/png,.png" hidden />' +
+      "</div>" +
+      buildFilePointIconTargetSelectHtml(sourceId) +
+      '<div id="file-icon-picker">' +
+      buildIconPickerHtml("file", filePointIconState) +
+      "</div>" +
+      '<label class="file-point-icon-save-kmz">' +
+      '<input id="file-point-icon-save-kmz" type="checkbox"' +
+      (filePointIconSaveToKmz ? " checked" : "") +
+      " />Save to KMZ — embed the icon in the chosen file (included in Save copy)</label>" +
+      '<button type="button" class="btn" id="file-apply-point-icons">Apply to all points</button>';
+    bindLoadCustomIconControl();
+    bindIconPicker("file-icon-picker", "file", filePointIconState, {
+      bindExtra: function () {
+        var sourceSelect = document.getElementById("file-point-icon-source");
+        if (sourceSelect) {
+          sourceSelect.addEventListener("change", function () {
+            filePointIconSourceId = sourceSelect.value || null;
+            filePointIconSourceUserPick = !!filePointIconSourceId;
+          });
+        }
+        var saveToggle = document.getElementById("file-point-icon-save-kmz");
+        if (saveToggle) {
+          saveToggle.addEventListener("change", function () {
+            filePointIconSaveToKmz = saveToggle.checked;
+          });
+        }
+        var applyBtn = document.getElementById("file-apply-point-icons");
+        if (applyBtn) {
+          applyBtn.addEventListener("click", function () {
+            var targetId = resolveFilePointIconSourceId();
+            if (sourceSelect && sourceSelect.value) {
+              targetId = sourceSelect.value;
+            }
+            var saveToKmz = saveToggle ? saveToggle.checked : filePointIconSaveToKmz;
+            commitPointIconSpec(specFromPickerState(filePointIconState), {
+              mode: "file",
+              sourceId: targetId,
+              saveToKmz: saveToKmz,
+            });
+          });
+        }
+      },
+    });
   }
 
   function applyIconPngFile(file, info, applyShared) {
@@ -606,7 +1564,7 @@
       return;
     }
     var percent = Math.round((info.iconScale || 1) * 100);
-    slider.value = String(Math.max(25, Math.min(400, percent)));
+    slider.value = String(Math.max(1, Math.min(400, percent)));
     valueEl.textContent = formatIconScale(info.iconScale);
 
     slider.addEventListener("input", function () {
@@ -642,32 +1600,27 @@
       html += "<dt>" + escapeText(row[0]) + "</dt><dd>" + escapeText(row[1]) + "</dd>";
     });
     html += "</dl>";
-    if (info.canResizeIcon) {
-      html +=
-        '<div class="inspect-icon-scale">' +
-        '<label for="inspect-icon-scale">Icon size</label>' +
-        '<div class="inspect-icon-scale-row">' +
-        '<input id="inspect-icon-scale" type="range" min="25" max="400" step="5" ' +
-        'value="' +
-        Math.round((info.iconScale || 1) * 100) +
-        '" aria-valuetext="' +
-        escapeText(formatIconScale(info.iconScale)) +
-        '" />' +
-        '<span id="inspect-icon-scale-value" class="inspect-icon-scale-value">' +
-        escapeText(formatIconScale(info.iconScale)) +
-        "</span>" +
-        "</div>" +
-        "</div>";
-    }
+    var inspectIconState = null;
     if (info.canChooseIcon) {
-      var iconLabel = iconBasename(info.iconUrl) || "icon.png";
+      var inspectSelection = info.iconPreset || "crosshair";
+      if (inspectSelection === "png" && info.iconUrl) {
+        var base = iconBasename(info.iconUrl);
+        var matched = customIconsCatalog.find(function (item) {
+          return item.label === base || item.url === info.iconUrl;
+        });
+        inspectSelection = matched ? matched.id : "custom:" + base;
+      }
+      inspectIconState = {
+        selection: inspectSelection,
+        color: info.iconColor || PointIcons.DEFAULT_COLOR,
+        scale: info.iconScale || 1,
+      };
       html +=
         '<div class="inspect-icon-choose">' +
-        '<label>Icon PNG</label>' +
-        '<p class="inspect-icon-current muted">' +
-        escapeText(iconLabel) +
-        (info.iconStyleKey ? " · " + escapeText(info.iconStyleKey) : "") +
-        "</p>" +
+        "<label>Point icon</label>" +
+        '<div id="inspect-icon-picker">' +
+        buildIconPickerHtml("inspect", inspectIconState) +
+        "</div>" +
         '<div class="inspect-icon-choose-row">' +
         '<button type="button" class="btn" id="inspect-icon-choose">Choose PNG…</button>' +
         '<input id="inspect-icon-file" type="file" accept="image/png,.png" hidden />' +
@@ -696,8 +1649,26 @@
         "</div>";
     }
     inspectEl.innerHTML = html;
-    bindInspectIconScale(info);
-    bindInspectIconChoose(info);
+    if (inspectIconState) {
+      bindIconPicker("inspect-icon-picker", "inspect", inspectIconState, {
+        live: function () {
+          var sharedToggle = document.getElementById("inspect-icon-shared");
+          var applyShared = sharedToggle ? sharedToggle.checked : !!info.iconStyleKey;
+          commitPointIconSpec(specFromPickerState(inspectIconState), {
+            mode: "feature",
+            sourceId: sourceIdFromNodeId(info.id),
+            featureId: info.id,
+            featureName: info.name,
+            iconStyleKey: info.iconStyleKey,
+            applyShared: applyShared,
+          });
+        },
+        commitScale: function () {
+          noteEdit();
+        },
+      });
+      bindInspectIconChoose(info);
+    }
     bindInspectDirections(info);
   }
 
@@ -784,7 +1755,7 @@
     hideNodeBalloon();
     if (!root || (!(root.children || []).length && !root.feature)) {
       layerTreeEl.innerHTML =
-        '<p class="muted empty-hint">Open a KMZ or KML file to see folders and features.</p>';
+        '<p class="muted empty-hint">Open or add a KMZ or KML file (+) to see folders and features.</p>';
       updateLayerVisibilityButtons();
       return;
     }
@@ -1895,6 +2866,10 @@
     refreshFileLabel();
     updateFileActions();
     renderLoadedSources();
+    if (!filePointIconSourceUserPick && filePointIconsEl && !filePointIconsEl.hidden) {
+      refreshFilePointIconsPanel();
+    }
+    persistLoadedSession();
   }
 
   function revokeAllBlobUrls() {
@@ -1911,6 +2886,44 @@
       return source.blobUrls.indexOf(url) < 0;
     });
     source.blobUrls = [];
+  }
+
+  function displayNameFromFileName(fileName) {
+    var base = String(fileName || "").replace(/\.(kmz|kml)$/i, "").trim();
+    return base || "Untitled";
+  }
+
+  function applySourceTreeLabel(sourceId, fileName) {
+    var root = GisMap.getDocumentSourceRoot(sourceId);
+    if (root) {
+      root.name = displayNameFromFileName(fileName);
+    }
+  }
+
+  function syncMultiSourceTreeLabels() {
+    if (GisMap.listDocumentSources().length <= 1) {
+      return;
+    }
+    loadedSources.forEach(function (source) {
+      applySourceTreeLabel(source.id, source.doc.fileName);
+    });
+  }
+
+  function expandSourceInLayerTree(sourceId) {
+    if (!sourceId || !layerTreeEl) {
+      return;
+    }
+    var mapRoot = GisMap.getRoot();
+    if (mapRoot && mapRoot.children && mapRoot.children.length > 1) {
+      var compositeWrap = layerTreeEl.querySelector('.layer-node[data-id="' + mapRoot.id + '"]');
+      if (compositeWrap) {
+        setNodeCollapsed(compositeWrap, false);
+      }
+    }
+    var wrap = layerTreeEl.querySelector('.layer-node[data-id="' + sourceId + '"]');
+    if (wrap) {
+      setNodeCollapsed(wrap, false);
+    }
   }
 
   function buildSourceDoc(parsed, handle, sourcePath) {
@@ -1975,6 +2988,7 @@
       });
     }
     refreshHoverBalloon();
+    persistLoadedSession();
   }
 
   function renderLoadedSources() {
@@ -2030,6 +3044,64 @@
     }
   }
 
+  function loadedSessionEntryFromSource(source) {
+    if (!source || !source.doc) {
+      return null;
+    }
+    var doc = source.doc;
+    var name = doc.fileName || "untitled.kmz";
+    var entry = {
+      name: name,
+      path: doc.sourcePath || null,
+      visible: source.visible !== false,
+      handle: doc.handle || null,
+      snapshot: null,
+    };
+    if (!entry.path && !entry.handle && doc.originalBuffer) {
+      var mime =
+        doc.sourceKind === "kmz"
+          ? "application/vnd.google-earth.kmz"
+          : "application/vnd.google-earth.kml+xml";
+      entry.snapshot = new File([doc.originalBuffer], name, { type: mime });
+    }
+    if (!entry.path && !entry.handle && !entry.snapshot) {
+      return null;
+    }
+    return entry;
+  }
+
+  function persistLoadedSession() {
+    if (launchWindowParams || !window.LoadedSession) {
+      return;
+    }
+    if (!loadedSources.length) {
+      LoadedSession.clear().catch(function () {});
+      return;
+    }
+    var activeIndex = 0;
+    for (var i = 0; i < loadedSources.length; i += 1) {
+      if (loadedSources[i].id === activeSourceId) {
+        activeIndex = i;
+        break;
+      }
+    }
+    var entries = [];
+    loadedSources.forEach(function (source) {
+      var entry = loadedSessionEntryFromSource(source);
+      if (entry) {
+        entries.push(entry);
+      }
+    });
+    if (!entries.length) {
+      LoadedSession.clear().catch(function () {});
+      return;
+    }
+    if (activeIndex >= entries.length) {
+      activeIndex = 0;
+    }
+    LoadedSession.save({ entries: entries, activeIndex: activeIndex }).catch(function () {});
+  }
+
   function removeLoadedSource(sourceId) {
     var idx = -1;
     for (var i = 0; i < loadedSources.length; i += 1) {
@@ -2058,6 +3130,7 @@
     renderLoadedSources();
     renderTree(GisMap.getRoot());
     renderInspect(null);
+    persistLoadedSession();
   }
 
   function clearAllSources() {
@@ -2070,6 +3143,7 @@
     GisMap.clearDocument();
     Directions.clear();
     resetFileUi();
+    persistLoadedSession();
   }
 
   function resetFileUi() {
@@ -2078,6 +3152,8 @@
     activeSourceId = null;
     currentDoc = null;
     docDirty = false;
+    filePointIconSourceId = null;
+    filePointIconSourceUserPick = false;
     refreshFileLabel();
     updateFileActions();
     renderLoadedSources();
@@ -2117,6 +3193,7 @@
 
   function updateFileActions() {
     var canWrite = !saveInFlight && !!currentDoc && !!currentDoc.xmlDoc;
+    refreshFilePointIconsPanel();
     if (fileSaveBtn) {
       fileSaveBtn.disabled = !canWrite;
     }
@@ -2814,15 +3891,23 @@
       resetSelectionState();
     }
 
+    syncMultiSourceTreeLabels();
     docDirty = false;
     refreshFileLabel();
     updateFileActions();
     renderTree(GisMap.getRoot());
+    if (!replaceAll && loadedSources.length > 1) {
+      var addedRoot = GisMap.getDocumentSourceRoot(sourceId);
+      if (addedRoot) {
+        expandSourceInLayerTree(addedRoot.id);
+      }
+    }
     renderInspect(null);
     var warn = (parsed.warnings || []).join(" ");
     setMessage(warn || "Loaded " + (parsed.fileName || file.name) + ".");
     RecentFiles.remember(file, handle || null, sourcePath || null).then(renderRecent).catch(function () {});
     refreshDuplicateWindowButton();
+    persistLoadedSession();
   }
 
   function openFile(file, handle, sourcePath, openOptions) {
@@ -2850,6 +3935,29 @@
       });
   }
 
+  function openOptionsForBatchIndex(index, openOptions) {
+    if (!openOptions) {
+      return null;
+    }
+    if (index === 0) {
+      return openOptions;
+    }
+    if (openOptions.replaceAll) {
+      return null;
+    }
+    if (openOptions.keepMapView) {
+      return { keepMapView: true };
+    }
+    return null;
+  }
+
+  function addLayersOpenOptions() {
+    if (loadedSources.length) {
+      return { keepMapView: true };
+    }
+    return { replaceAll: true };
+  }
+
   function openFilesFromList(files, openOptions) {
     if (!files || !files.length) {
       return;
@@ -2865,10 +3973,7 @@
     var chain = Promise.resolve();
     valid.forEach(function (file, index) {
       chain = chain.then(function () {
-        var options = index === 0 && openOptions ? openOptions : null;
-        if (index > 0 && openOptions && openOptions.replaceAll) {
-          options = null;
-        }
+        var options = openOptionsForBatchIndex(index, openOptions);
         return KmzLoader.loadKmzOrKml(file).then(function (parsed) {
           applyParsedFile(file, null, null, parsed, options);
         });
@@ -2917,8 +4022,10 @@
   createNodeHoverBalloon();
   initSidebarSectionFolding();
   initSidebarPanelResize();
+  initSidebarWidthResize();
 
   var map = GisMap.init("map");
+  scheduleSidebarMapInvalidate();
   GisMap.onFeatureHover(function (hit, related) {
     if (!hit) {
       return;
@@ -3188,10 +4295,9 @@
   layerTreeEl.addEventListener("dblclick", onTreeDblClick);
   layerTreeEl.addEventListener("change", onTreeCheckbox);
 
-  function openWithBrowserPicker() {
+  function openWithBrowserPicker(openOptions) {
     if (typeof window.showOpenFilePicker !== "function") {
-      fileInput.click();
-      return;
+      return false;
     }
     var picker;
     try {
@@ -3201,9 +4307,9 @@
       });
     } catch (err) {
       if (!err || err.name !== "AbortError") {
-        fileInput.click();
+        return false;
       }
-      return;
+      return true;
     }
     picker
       .then(function (handles) {
@@ -3214,7 +4320,11 @@
         handles.forEach(function (handle, index) {
           chain = chain.then(function () {
             return handle.getFile().then(function (file) {
-              openFile(file, handle, null, index === 0 && !loadedSources.length ? { replaceAll: true } : null);
+              var options =
+                openOptions ||
+                (index === 0 && !loadedSources.length ? { replaceAll: true } : null);
+              options = openOptionsForBatchIndex(index, options);
+              openFile(file, handle, null, options);
             });
           });
         });
@@ -3224,15 +4334,58 @@
         if (err && err.name === "AbortError") {
           return null;
         }
+        return false;
+      });
+    return true;
+  }
+
+  var pendingLayerFilePick = false;
+
+  function promptLayerFilePicker() {
+    var addOptions = addLayersOpenOptions();
+    var api = getDesktopApi();
+    if (!api || typeof api.choose_kmz !== "function") {
+      setMessage("Choose KMZ or KML files to add…");
+      if (!openWithBrowserPicker(addOptions)) {
+        pendingLayerFilePick = true;
         fileInput.click();
-        return null;
+      }
+      return;
+    }
+    setMessage("Choose KMZ or KML files to add…");
+    ensureDesktop()
+      .then(function (desktop) {
+        if (!desktop || typeof desktop.api.choose_kmz !== "function") {
+          setMessage("");
+          if (!openWithBrowserPicker(addOptions)) {
+            pendingLayerFilePick = true;
+            fileInput.click();
+          }
+          return null;
+        }
+        return Promise.resolve(desktop.api.choose_kmz()).then(function (meta) {
+          if (!meta || !meta.token) {
+            setMessage("");
+            return null;
+          }
+          return readDesktopFile(desktop.token, meta, addOptions);
+        });
+      })
+      .catch(function (err) {
+        if (err && err.name === "AbortError") {
+          setMessage("");
+          return;
+        }
+        setMessage((err && err.message) || "Could not add that file.");
       });
   }
 
   function promptOpenFile() {
     var api = getDesktopApi();
     if (!api || typeof api.choose_kmz !== "function") {
-      openWithBrowserPicker();
+      if (!openWithBrowserPicker()) {
+        fileInput.click();
+      }
       return;
     }
     setMessage("Choose a KMZ or KML file…");
@@ -3240,7 +4393,9 @@
       .then(function (desktop) {
         if (!desktop || typeof desktop.api.choose_kmz !== "function") {
           setMessage("");
-          openWithBrowserPicker();
+          if (!openWithBrowserPicker()) {
+            fileInput.click();
+          }
           return null;
         }
         return Promise.resolve(desktop.api.choose_kmz()).then(function (meta) {
@@ -3261,6 +4416,9 @@
   }
 
   document.getElementById("btn-open").addEventListener("click", promptOpenFile);
+  if (layersAddBtn) {
+    layersAddBtn.addEventListener("click", promptLayerFilePicker);
+  }
   if (duplicateWindowBtn) {
     duplicateWindowBtn.addEventListener("click", function () {
       var paths = collectDuplicateSourcePaths();
@@ -3286,7 +4444,13 @@
   }
   fileInput.addEventListener("change", function () {
     if (fileInput.files && fileInput.files.length) {
-      openFilesFromList(fileInput.files, loadedSources.length ? null : { replaceAll: true });
+      var options = pendingLayerFilePick
+        ? addLayersOpenOptions()
+        : loadedSources.length
+          ? null
+          : { replaceAll: true };
+      pendingLayerFilePick = false;
+      openFilesFromList(fileInput.files, options);
       fileInput.value = "";
     }
   });
@@ -3556,11 +4720,99 @@
     openFile(file, null, null, loadedSources.length ? null : { replaceAll: true });
   });
 
+  function openSessionEntryFallback(entry, openOptions) {
+    var permit = Promise.resolve();
+    if (entry.handle && typeof entry.handle.requestPermission === "function") {
+      permit = entry.handle.requestPermission({ mode: "read" }).then(function (state) {
+        if (state !== "granted") {
+          throw new Error("File access was not granted.");
+        }
+      });
+    }
+    return permit.then(function () {
+      if (entry.handle && typeof entry.handle.getFile === "function") {
+        return entry.handle.getFile().then(function (file) {
+          return openFile(file, entry.handle, entry.path || null, openOptions);
+        });
+      }
+      if (entry.snapshot) {
+        return openFile(entry.snapshot, null, entry.path || null, openOptions);
+      }
+      throw new Error((entry.name || "That file") + " is no longer available.");
+    });
+  }
+
+  function openSessionEntry(entry, openOptions) {
+    return ensureDesktop()
+      .then(function (desktop) {
+        if (desktop && entry.path && typeof desktop.api.register_path === "function") {
+          return Promise.resolve(desktop.api.register_path(entry.path)).then(function (meta) {
+            if (meta && meta.token) {
+              return readDesktopFile(desktop.token, meta, openOptions);
+            }
+            return openSessionEntryFallback(entry, openOptions);
+          });
+        }
+        return openSessionEntryFallback(entry, openOptions);
+      });
+  }
+
+  function applyLoadedSessionUi(session) {
+    if (!session || !session.entries || !session.entries.length || !loadedSources.length) {
+      return;
+    }
+    var count = Math.min(session.entries.length, loadedSources.length);
+    for (var i = 0; i < count; i += 1) {
+      if (session.entries[i].visible === false) {
+        applyLoadedSourceVisibility(loadedSources[i].id, false);
+      }
+    }
+    var activeIndex = session.activeIndex;
+    if (activeIndex >= 0 && activeIndex < loadedSources.length) {
+      setActiveSource(loadedSources[activeIndex].id);
+    }
+  }
+
+  function restoreLoadedSession(session) {
+    if (launchWindowParams || loadedSources.length || !session || !session.entries || !session.entries.length) {
+      return Promise.resolve();
+    }
+    setMessage("Restoring " + session.entries.length + " file(s)…");
+    var chain = Promise.resolve();
+    session.entries.forEach(function (entry, index) {
+      chain = chain.then(function () {
+        var options =
+          index === 0 ? { replaceAll: true } : { keepMapView: true };
+        return openSessionEntry(entry, options).catch(function (err) {
+          setMessage((err && err.message) || "Could not restore " + (entry.name || "a file") + ".");
+        });
+      });
+    });
+    return chain.then(function () {
+      if (!loadedSources.length) {
+        return;
+      }
+      applyLoadedSessionUi(session);
+      setMessage("Restored " + loadedSources.length + " file(s).");
+    });
+  }
+
   function restoreLastFile(items) {
     if (launchWindowParams || currentDoc || !items || !items.length) {
       return;
     }
     openRecent(items[0]);
+  }
+
+  function restoreOnStartup(recentItems, session) {
+    if (launchWindowParams || loadedSources.length) {
+      return Promise.resolve();
+    }
+    if (session && session.entries && session.entries.length) {
+      return restoreLoadedSession(session);
+    }
+    restoreLastFile(recentItems);
+    return Promise.resolve();
   }
 
   if (window.MapScreenshot) {
@@ -3579,6 +4831,9 @@
     refreshExternalEditorUi();
     refreshDuplicateWindowButton();
     scheduleExternalEditUiRetries();
+    refreshCustomIconCatalog().then(function () {
+      refreshFilePointIconsPanel();
+    });
   });
   if (launchWindowParams) {
     whenDesktopReady()
@@ -3589,19 +4844,26 @@
         setMessage("Could not open the file for this window.");
       });
   }
-  if (recentFilesEl && window.RecentFiles) {
-    Promise.all([RecentFiles.load(), whenDesktopReady()])
-      .then(function (results) {
-        var items = results[0] || [];
-        renderRecent(items);
-        restoreLastFile(items);
-      })
-      .catch(function () {
+  Promise.all([
+    window.RecentFiles ? RecentFiles.load().catch(function () { return []; }) : Promise.resolve([]),
+    window.LoadedSession ? LoadedSession.load().catch(function () { return null; }) : Promise.resolve(null),
+    whenDesktopReady(),
+  ])
+    .then(function (results) {
+      var recentItems = results[0] || [];
+      var session = results[1];
+      if (recentFilesEl && window.RecentFiles) {
+        renderRecent(recentItems);
+      }
+      return restoreOnStartup(recentItems, session);
+    })
+    .catch(function () {
+      if (recentFilesEl && window.RecentFiles) {
         renderRecent([]);
-      })
-      .then(function () {
-        refreshExternalEditorUi();
-        scheduleExternalEditUiRetries();
-      });
-  }
+      }
+    })
+    .then(function () {
+      refreshExternalEditorUi();
+      scheduleExternalEditUiRetries();
+    });
 })();

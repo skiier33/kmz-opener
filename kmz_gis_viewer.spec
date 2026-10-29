@@ -6,6 +6,7 @@ datas = [
     ("index.html", "."),
     ("css", "css"),
     ("js", "js"),
+    ("custom-icons", "custom-icons"),
     ("examples", "examples"),
 ]
 binaries = []

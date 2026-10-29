@@ -154,91 +154,17 @@
       .replace(/>/g, "&gt;");
   }
 
-  var GEO_CROSSHAIR_SIZE = 32;
-  var GEO_CROSSHAIR_RADIUS = 10;
-  var GEO_CROSSHAIR_COLOR = "#ff0000";
-
   function pointIconSize(style) {
-    return Math.max(16, Math.round(32 * (style.iconScale || 1)));
-  }
-
-  function geoCrosshairIcon(style) {
-    var scale = style && style.iconScale > 0 ? style.iconScale : 1;
-    var size = Math.max(16, Math.round(GEO_CROSSHAIR_SIZE * scale));
-    var mid = size / 2;
-    var radius = Math.max(4, Math.round(GEO_CROSSHAIR_RADIUS * scale));
-    var color = GEO_CROSSHAIR_COLOR;
-    var east = mid + radius;
-    var west = mid - radius;
-    var north = mid - radius;
-    var south = mid + radius;
-    var arc = radius + " " + radius + " 0 0 0 ";
-    // North is up: Q2 is upper-left, Q4 is lower-right. Q1 and Q3 stay open.
-    var q2 = "M " + mid + " " + mid + " L " + mid + " " + north + " A " + arc + west + " " + mid + " Z";
-    var q4 = "M " + mid + " " + mid + " L " + mid + " " + south + " A " + arc + east + " " + mid + " Z";
-    var html =
-      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' +
-      size +
-      " " +
-      size +
-      '" width="' +
-      size +
-      '" height="' +
-      size +
-      '" aria-hidden="true">' +
-      '<path class="geo-crosshair-q2" d="' +
-      q2 +
-      '" fill="' +
-      color +
-      '"/>' +
-      '<path class="geo-crosshair-q4" d="' +
-      q4 +
-      '" fill="' +
-      color +
-      '"/>' +
-      '<circle class="geo-crosshair-ring" cx="' +
-      mid +
-      '" cy="' +
-      mid +
-      '" r="' +
-      radius +
-      '" fill="none" stroke="' +
-      color +
-      '" stroke-width="2"/>' +
-      '<line class="geo-crosshair-v" x1="' +
-      mid +
-      '" y1="' +
-      north +
-      '" x2="' +
-      mid +
-      '" y2="' +
-      south +
-      '" stroke="' +
-      color +
-      '" stroke-width="2" stroke-linecap="butt"/>' +
-      '<line class="geo-crosshair-h" x1="' +
-      west +
-      '" y1="' +
-      mid +
-      '" x2="' +
-      east +
-      '" y2="' +
-      mid +
-      '" stroke="' +
-      color +
-      '" stroke-width="2" stroke-linecap="butt"/>' +
-      "</svg>";
-    return L.divIcon({
-      className: "geo-crosshair",
-      html: html,
-      iconSize: [size, size],
-      iconAnchor: [mid, mid],
-      popupAnchor: [0, -mid],
-    });
+    if (global.PointIcons) {
+      return global.PointIcons.iconSize(style || {});
+    }
+    return Math.max(16, Math.round(32 * ((style && style.iconScale) || 1)));
   }
 
   function pointToLayer(latlng, style) {
-    if (style.iconUrl) {
+    style = style || {};
+    var preset = global.PointIcons ? global.PointIcons.effectivePreset(style) : style.iconUrl ? "png" : "crosshair";
+    if (preset === "png" && style.iconUrl) {
       var size = pointIconSize(style);
       return L.marker(latlng, {
         icon: L.icon({
@@ -249,15 +175,23 @@
         }),
       });
     }
-    return L.marker(latlng, { icon: geoCrosshairIcon(style) });
+    var divIcon = global.PointIcons ? global.PointIcons.divIconForStyle(style) : null;
+    if (divIcon) {
+      return L.marker(latlng, { icon: divIcon });
+    }
+    return L.marker(latlng);
   }
 
   function pointLabelOffset(style) {
-    var scale = style && style.iconScale > 0 ? style.iconScale : 1;
-    if (style && style.iconUrl) {
+    style = style || {};
+    var preset = global.PointIcons ? global.PointIcons.effectivePreset(style) : style.iconUrl ? "png" : "crosshair";
+    if (preset === "png" && style.iconUrl) {
       return [Math.round(pointIconSize(style) / 2) + 4, 0];
     }
-    return [Math.max(4, Math.round(GEO_CROSSHAIR_RADIUS * scale)) + 6, 0];
+    if (global.PointIcons) {
+      return [global.PointIcons.labelOffsetRadius(style), 0];
+    }
+    return [16, 0];
   }
 
   function bindPointLabel(marker, text, style) {
@@ -568,7 +502,7 @@
     if (Number.isNaN(parsed) || parsed <= 0) {
       return false;
     }
-    parsed = Math.max(0.25, Math.min(4, parsed));
+    parsed = Math.max(0.01, Math.min(4, parsed));
     if (!node.feature.style) {
       node.feature.style = {};
     }
@@ -597,6 +531,7 @@
       node.feature.style = {};
     }
     node.feature.style.iconUrl = iconUrl;
+    node.feature.style.iconPreset = "png";
     node.iconUrlEdited = true;
     if (node.sourceEl && global.KmzSave && global.KmzSave.setPlacemarkIconHref) {
       global.KmzSave.setPlacemarkIconHref(node.sourceEl, options && options.kmlHref ? options.kmlHref : iconUrl);
@@ -607,6 +542,155 @@
       selectFeature(id, false);
     }
     return true;
+  }
+
+  function syncPlacemarkIconKml(node, spec) {
+    if (!node || !node.sourceEl || !global.KmzSave) {
+      return;
+    }
+    var scale = global.PointIcons ? global.PointIcons.clampScale(spec.iconScale) : spec.iconScale || 1;
+    if (global.KmzSave.setPlacemarkIconScale) {
+      global.KmzSave.setPlacemarkIconScale(node.sourceEl, scale);
+    }
+    if (spec.iconColor && global.KmzSave.setPlacemarkIconColor && global.PointIcons) {
+      global.KmzSave.setPlacemarkIconColor(
+        node.sourceEl,
+        global.PointIcons.cssColorToKmlAbgr(spec.iconColor)
+      );
+    }
+    var preset = spec.iconPreset || "crosshair";
+    if (preset === "png") {
+      if (spec.kmlHref && global.KmzSave.setPlacemarkIconHref) {
+        global.KmzSave.setPlacemarkIconHref(node.sourceEl, spec.kmlHref);
+      }
+      return;
+    }
+    if (global.KmzSave.clearPlacemarkIconHref) {
+      global.KmzSave.clearPlacemarkIconHref(node.sourceEl);
+    }
+  }
+
+  function applySpecToNodeStyle(node, spec, options) {
+    if (!node.feature) {
+      return;
+    }
+    if (!node.feature.style) {
+      node.feature.style = {};
+    }
+    var style = node.feature.style;
+    var preset = spec.iconPreset || "crosshair";
+    var saveToKmz = !options || options.saveToKmz !== false;
+    style.iconPreset = preset;
+    if (spec.iconColor !== undefined) {
+      style.iconColor = spec.iconColor;
+    }
+    if (spec.iconScale !== undefined) {
+      style.iconScale = global.PointIcons
+        ? global.PointIcons.clampScale(spec.iconScale)
+        : spec.iconScale;
+    }
+    if (preset === "png") {
+      style.iconUrl = spec.iconUrl || style.iconUrl || "";
+    } else {
+      style.iconUrl = "";
+    }
+    if (saveToKmz) {
+      node.iconScaleEdited = true;
+      node.iconUrlEdited = true;
+      syncPlacemarkIconKml(node, {
+        iconPreset: preset,
+        iconColor: style.iconColor,
+        iconScale: style.iconScale,
+        kmlHref: spec.kmlHref,
+      });
+    }
+    refreshNodeLayer(node);
+  }
+
+  function setFeaturePointIcon(id, spec, options) {
+    var node = currentRoot ? findNode(currentRoot, id) : null;
+    if (!node || !node.feature || !featureHasPointGeometry(node.feature) || !spec) {
+      return false;
+    }
+    applySpecToNodeStyle(node, spec);
+    var skipInspect = options && options.skipInspect;
+    if (!skipInspect && selectedId === id) {
+      selectFeature(id, false);
+    }
+    return true;
+  }
+
+  function applySourcePointIcon(sourceId, spec, options) {
+    if (!sourceId || !spec) {
+      return 0;
+    }
+    var count = 0;
+    walkSourceRoot(sourceId, function (root) {
+      walkTree(root, function (node) {
+        if (!node.feature || !featureHasPointGeometry(node.feature)) {
+          return;
+        }
+        applySpecToNodeStyle(node, spec, options);
+        count += 1;
+      });
+    });
+    if (count && selectedId) {
+      selectFeature(selectedId, false);
+    }
+    return count;
+  }
+
+  function countSourcePointPlacemarks(sourceId) {
+    var count = 0;
+    walkSourceRoot(sourceId, function (root) {
+      walkTree(root, function (node) {
+        if (node.feature && featureHasPointGeometry(node.feature)) {
+          count += 1;
+        }
+      });
+    });
+    return count;
+  }
+
+  function setSharedStylePointIcon(sourceId, iconStyleKey, spec) {
+    if (!sourceId || !iconStyleKey || !spec) {
+      return 0;
+    }
+    var count = 0;
+    walkSourceRoot(sourceId, function (root) {
+      walkTree(root, function (node) {
+        if (node.iconStyleKey !== iconStyleKey || !node.feature || !featureHasPointGeometry(node.feature)) {
+          return;
+        }
+        if (!node.feature.style) {
+          node.feature.style = {};
+        }
+        var style = node.feature.style;
+        var preset = spec.iconPreset || "crosshair";
+        style.iconPreset = preset;
+        if (spec.iconColor !== undefined) {
+          style.iconColor = spec.iconColor;
+        }
+        if (spec.iconScale !== undefined) {
+          style.iconScale = global.PointIcons
+            ? global.PointIcons.clampScale(spec.iconScale)
+            : spec.iconScale;
+        }
+        if (preset === "png") {
+          style.iconUrl = spec.iconUrl || "";
+        } else {
+          style.iconUrl = "";
+        }
+        node.iconUrlEdited = true;
+        node.iconScaleEdited = true;
+        refreshNodeLayer(node);
+        count += 1;
+      });
+    });
+    if (count && selectedId) {
+      selectFeature(selectedId, false);
+    }
+    return count;
   }
 
   function setSharedStyleIconUrl(sourceId, iconStyleKey, iconUrl, options) {
@@ -623,6 +707,7 @@
           node.feature.style = {};
         }
         node.feature.style.iconUrl = iconUrl;
+        node.feature.style.iconPreset = "png";
         node.iconUrlEdited = true;
         refreshNodeLayer(node);
         count += 1;
@@ -939,9 +1024,15 @@
       destination: dest,
       iconScale: style.iconScale > 0 ? style.iconScale : 1,
       iconUrl: style.iconUrl || "",
+      iconPreset: global.PointIcons
+        ? global.PointIcons.effectivePreset(style)
+        : style.iconUrl
+          ? "png"
+          : "crosshair",
+      iconColor: style.iconColor || (global.PointIcons ? global.PointIcons.DEFAULT_COLOR : "#ff0000"),
       iconStyleKey: node.iconStyleKey || "",
       canResizeIcon: featureHasPointGeometry(feature),
-      canChooseIcon: featureHasPointGeometry(feature) && !!style.iconUrl,
+      canChooseIcon: featureHasPointGeometry(feature),
     };
   }
 
@@ -1422,7 +1513,11 @@
     renameNode: renameNode,
     setFeatureIconScale: setFeatureIconScale,
     setFeatureIconUrl: setFeatureIconUrl,
+    setFeaturePointIcon: setFeaturePointIcon,
+    applySourcePointIcon: applySourcePointIcon,
+    countSourcePointPlacemarks: countSourcePointPlacemarks,
     setSharedStyleIconUrl: setSharedStyleIconUrl,
+    setSharedStylePointIcon: setSharedStylePointIcon,
     deleteNodes: deleteNodes,
     sortChildrenByName: sortChildrenByName,
     moveNodes: moveNodes,

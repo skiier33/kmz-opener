@@ -158,6 +158,149 @@
     scaleEl.textContent = Number.isNaN(value) || value <= 0 ? "1" : String(value);
   }
 
+  function clearIconHrefInIconStyle(iconStyle) {
+    if (!iconStyle) {
+      return;
+    }
+    var icon = childByLocalName(iconStyle, "Icon");
+    if (!icon) {
+      return;
+    }
+    var hrefEl = childByLocalName(icon, "href");
+    if (hrefEl && hrefEl.parentNode) {
+      hrefEl.parentNode.removeChild(hrefEl);
+    }
+  }
+
+  function clearStyleIconHref(styleEl) {
+    if (!styleEl || localName(styleEl) !== "style") {
+      return;
+    }
+    clearIconHrefInIconStyle(childByLocalName(styleEl, "IconStyle"));
+  }
+
+  function setStyleIconColor(styleEl, kmlAbgr) {
+    if (!styleEl || localName(styleEl) !== "style" || !kmlAbgr) {
+      return;
+    }
+    var iconStyle = ensureChild(styleEl, "IconStyle");
+    var colorEl = childByLocalName(iconStyle, "color");
+    if (!colorEl) {
+      colorEl = createElementNS(iconStyle, "color");
+      iconStyle.appendChild(colorEl);
+    }
+    colorEl.textContent = kmlAbgr;
+  }
+
+  function setStyleIconScale(styleEl, scale) {
+    if (!styleEl || localName(styleEl) !== "style") {
+      return;
+    }
+    var iconStyle = ensureChild(styleEl, "IconStyle");
+    var scaleEl = childByLocalName(iconStyle, "scale");
+    if (!scaleEl) {
+      scaleEl = createElementNS(iconStyle, "scale");
+      iconStyle.appendChild(scaleEl);
+    }
+    var value = parseFloat(scale);
+    scaleEl.textContent = Number.isNaN(value) || value <= 0 ? "1" : String(value);
+  }
+
+  function setPlacemarkIconColor(placemarkEl, kmlAbgr) {
+    if (!placemarkEl || localName(placemarkEl) !== "placemark" || !kmlAbgr) {
+      return;
+    }
+    var styleEl = childByLocalName(placemarkEl, "Style");
+    if (!styleEl) {
+      styleEl = createElementNS(placemarkEl, "Style");
+      var anchor = firstGeometryChild(placemarkEl);
+      if (anchor) {
+        placemarkEl.insertBefore(styleEl, anchor);
+      } else {
+        placemarkEl.appendChild(styleEl);
+      }
+    }
+    setStyleIconColor(styleEl, kmlAbgr);
+  }
+
+  function clearPlacemarkIconHref(placemarkEl) {
+    if (!placemarkEl || localName(placemarkEl) !== "placemark") {
+      return;
+    }
+    var styleEl = childByLocalName(placemarkEl, "Style");
+    if (styleEl) {
+      clearIconHrefInIconStyle(childByLocalName(styleEl, "IconStyle"));
+    }
+  }
+
+  function featureHasPointGeometry(feature) {
+    return (feature.geometries || []).some(function (geom) {
+      return geom.type === "Point";
+    });
+  }
+
+  function walkTree(node, fn) {
+    if (!node) {
+      return;
+    }
+    fn(node);
+    (node.children || []).forEach(function (child) {
+      walkTree(child, fn);
+    });
+  }
+
+  function shouldMaterializeBuiltin(node) {
+    if (!node || !node.feature || !node.iconUrlEdited || !global.PointIcons) {
+      return false;
+    }
+    var preset = global.PointIcons.effectivePreset(node.feature.style || {});
+    return preset !== "png";
+  }
+
+  function materializePointIcons(doc, root) {
+    if (!doc || !root || !global.PointIcons) {
+      return Promise.resolve();
+    }
+    var groups = {};
+    var groupedNodes = {};
+    walkTree(root, function (node) {
+      if (!shouldMaterializeBuiltin(node)) {
+        return;
+      }
+      var style = node.feature.style || {};
+      var preset = global.PointIcons.effectivePreset(style);
+      var color = style.iconColor || global.PointIcons.DEFAULT_COLOR;
+      var key = preset + "|" + global.PointIcons.colorHash(color);
+      if (!groups[key]) {
+        groups[key] = { preset: preset, color: color, zipPath: global.PointIcons.zipPathForPreset(preset, color) };
+        groupedNodes[key] = [];
+      }
+      groupedNodes[key].push(node);
+    });
+    var keys = Object.keys(groups);
+    if (!keys.length) {
+      return Promise.resolve();
+    }
+    if (!doc.replacementIcons) {
+      doc.replacementIcons = {};
+    }
+    var chain = Promise.resolve();
+    keys.forEach(function (key) {
+      chain = chain.then(function () {
+        var group = groups[key];
+        return global.PointIcons.rasterizePreset(group.preset, group.color, 1).then(function (blob) {
+          doc.replacementIcons[group.zipPath] = { blob: blob };
+          groupedNodes[key].forEach(function (node) {
+            if (node.sourceEl) {
+              setPlacemarkIconHref(node.sourceEl, group.zipPath);
+            }
+          });
+        });
+      });
+    });
+    return chain;
+  }
+
   function clearSource(node) {
     if (!node) {
       return;
@@ -343,16 +486,18 @@
       return Promise.reject(new Error("This file cannot be saved."));
     }
     syncTree(root);
-    var xml = serializeXml(doc.xmlDoc);
-    if (doc.sourceKind === "kmz") {
-      if (!doc.zip || !doc.kmlPath) {
-        return Promise.reject(new Error("This KMZ cannot be saved."));
+    return materializePointIcons(doc, root).then(function () {
+      var xml = serializeXml(doc.xmlDoc);
+      if (doc.sourceKind === "kmz") {
+        if (!doc.zip || !doc.kmlPath) {
+          return Promise.reject(new Error("This KMZ cannot be saved."));
+        }
+        applyReplacementIcons(doc);
+        doc.zip.file(doc.kmlPath, xml);
+        return generateKmz(doc.zip);
       }
-      applyReplacementIcons(doc);
-      doc.zip.file(doc.kmlPath, xml);
-      return generateKmz(doc.zip);
-    }
-    return Promise.resolve(new Blob([xml], { type: "application/vnd.google-earth.kml+xml" }));
+      return Promise.resolve(new Blob([xml], { type: "application/vnd.google-earth.kml+xml" }));
+    });
   }
 
   function buildKmzBlob(doc, root, preferOriginal) {
@@ -376,15 +521,25 @@
       return Promise.reject(new Error("This file cannot be exported."));
     }
     syncTree(root);
-    var xml = serializeXml(doc.xmlDoc);
-    if (doc.sourceKind === "kmz" && doc.zip && doc.kmlPath) {
-      applyReplacementIcons(doc);
-      doc.zip.file(doc.kmlPath, xml);
-      return generateKmz(doc.zip);
-    }
-    var zip = new JSZip();
-    zip.file("doc.kml", xml);
-    return generateKmz(zip);
+    return materializePointIcons(doc, root).then(function () {
+      var xml = serializeXml(doc.xmlDoc);
+      if (doc.sourceKind === "kmz" && doc.zip && doc.kmlPath) {
+        applyReplacementIcons(doc);
+        doc.zip.file(doc.kmlPath, xml);
+        return generateKmz(doc.zip);
+      }
+      var zip = new JSZip();
+      zip.file("doc.kml", xml);
+      if (doc.replacementIcons) {
+        Object.keys(doc.replacementIcons).forEach(function (zipPath) {
+          var entry = doc.replacementIcons[zipPath];
+          if (entry && entry.blob) {
+            zip.file(zipPath, entry.blob);
+          }
+        });
+      }
+      return generateKmz(zip);
+    });
   }
 
   function buildKmlText(doc, root) {
@@ -398,8 +553,14 @@
   global.KmzSave = {
     setElementName: setElementName,
     setStyleIconHref: setStyleIconHref,
+    clearStyleIconHref: clearStyleIconHref,
+    setStyleIconColor: setStyleIconColor,
+    setStyleIconScale: setStyleIconScale,
     setPlacemarkIconHref: setPlacemarkIconHref,
+    clearPlacemarkIconHref: clearPlacemarkIconHref,
     setPlacemarkIconScale: setPlacemarkIconScale,
+    setPlacemarkIconColor: setPlacemarkIconColor,
+    materializePointIcons: materializePointIcons,
     detachNode: detachNode,
     cloneSourceElement: cloneSourceElement,
     syncTree: syncTree,

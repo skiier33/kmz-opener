@@ -23,9 +23,12 @@ from desktop.server import (  # noqa: E402
     DESKTOP_TOKEN,
     EXPORT_PATHS,
     STATE_LOCK,
+    ensure_user_custom_icons_dir,
+    import_custom_icon_from_path,
     normalize_path,
     register_source,
     start_server,
+    user_custom_icons_dir,
 )
 
 _EXTERNAL_EDIT = ExternalEditManager()
@@ -254,6 +257,40 @@ class DesktopApi:
             The desktop session token.
         """
         return DESKTOP_TOKEN
+
+    def custom_icons_folder(self) -> str:
+        """
+        Return the folder where users can drop custom point icon PNG files.
+
+        Returns:
+            Absolute path to the user custom-icons directory.
+        """
+        return user_custom_icons_dir()
+
+    def import_custom_icon(self) -> Optional[dict]:
+        """
+        Pick a PNG with a native dialog and copy it into the user custom-icons folder.
+
+        Returns:
+            Saved icon metadata (name and url), or None if the dialog was cancelled.
+        """
+        windows = webview.windows
+        if not windows:
+            return None
+        window = windows[0]
+
+        def _pick() -> Optional[str]:
+            result = window.create_file_dialog(
+                _open_dialog_flag(),
+                allow_multiple=False,
+                file_types=("PNG images (*.png)", "All files (*.*)"),
+            )
+            return _first_path(result)
+
+        path = _invoke_on_ui(window, _pick)
+        if not path or not isinstance(path, str):
+            return None
+        return import_custom_icon_from_path(path)
 
     def choose_kmz(self) -> Optional[dict]:
         """
@@ -542,6 +579,7 @@ def main() -> None:
     global _VIEWER_BASE_URL
     server: Optional[ThreadingHTTPServer] = None
     try:
+        ensure_user_custom_icons_dir()
         server, port = start_server(app_root())
         _VIEWER_BASE_URL = f"http://127.0.0.1:{port}/"
         webview.create_window(

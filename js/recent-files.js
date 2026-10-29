@@ -2,7 +2,7 @@
   "use strict";
 
   var DB_NAME = "kmz-gis-viewer";
-  var DB_VERSION = 1;
+  var DB_VERSION = 2;
   var STORE = "recent";
   var LIST_KEY = "files";
   var LIMIT = 3;

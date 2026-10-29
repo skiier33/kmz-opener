@@ -32,7 +32,7 @@ Use **Open** or drag a `.kmz` / `.kml` file onto the map. Demo files: `examples/
 
 | Action | How |
 |---|---|
-| Pan / inspect | Pan tool, then click a feature. Point placemarks show an **Icon size** slider and **Choose PNG…** in Inspect for live icon changes (shared styles such as `#white-xhair` can update every linked placemark; included in **Save copy**) |
+| Pan / inspect | Pan tool, then click a feature. **File → Point icons** sets crosshair, dot, square, or custom PNGs (with color and size) for **all points** in the active file. **Inspect** offers the same picker for one point (optional shared-style apply). Custom PNGs: `custom-icons/` in the app folder and `%LOCALAPPDATA%\\KMZ-GIS-Viewer\\custom-icons` in the desktop app. **Save copy** embeds icons in the KMZ |
 | Distance | Distance tool, click vertices, double-click or Enter to finish |
 | Area | Area tool, click vertices, close on the first point, double-click, or Enter |
 | Cancel draft | Esc |
