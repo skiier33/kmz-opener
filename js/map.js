@@ -875,6 +875,37 @@
     return count;
   }
 
+  function listSourcePointLatLngs(sourceId) {
+    var list = [];
+    if (!sourceId) {
+      return list;
+    }
+    walkSourceRoot(sourceId, function (root) {
+      walkTree(root, function (node) {
+        if (!node.feature || !featureHasPointGeometry(node.feature)) {
+          return;
+        }
+        (node.feature.geometries || []).forEach(function (geom) {
+          if (geom.type !== "Point") {
+            return;
+          }
+          (geom.latlngs || []).forEach(function (ll) {
+            if (!ll || !Number.isFinite(ll.lat) || !Number.isFinite(ll.lng)) {
+              return;
+            }
+            list.push({
+              nodeId: node.id,
+              name: node.name || node.feature.name || "",
+              lat: ll.lat,
+              lng: ll.lng,
+            });
+          });
+        });
+      });
+    });
+    return list;
+  }
+
   function syncFeatureExtendedData(feature, fieldName, value) {
     if (!feature) {
       return;
@@ -1980,6 +2011,7 @@
     setFeaturePointIcon: setFeaturePointIcon,
     applySourcePointIcon: applySourcePointIcon,
     countSourcePointPlacemarks: countSourcePointPlacemarks,
+    listSourcePointLatLngs: listSourcePointLatLngs,
     setSourcePointNameLabelsHidden: setSourcePointNameLabelsHidden,
     getSourcePointNameLabelsHidden: getSourcePointNameLabelsHidden,
     validateBhCoordCsvToSource: validateBhCoordCsvToSource,

@@ -901,6 +901,7 @@ body.sidebar-panel-resizing * {
 .screenshot-hint,
 .screenshot-field-wide,
 .screenshot-toggle,
+.screenshot-frame-style,
 .screenshot-save-row {
   grid-column: 1 / -1;
 }
@@ -975,6 +976,10 @@ body.sidebar-panel-resizing * {
   justify-content: center;
 }
 
+.screenshot-take-two-hide-names {
+  margin-bottom: 0.35rem;
+}
+
 .screenshot-take-two-panel {
   display: flex;
   flex-direction: column;
@@ -1029,12 +1034,65 @@ body.sidebar-panel-resizing * {
   display: none;
 }
 
+.screenshot-frame-style {
+  margin: 0;
+  padding: 8px 10px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.screenshot-frame-style-legend {
+  padding: 0 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.screenshot-frame-style-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.screenshot-frame-style-row > span {
+  min-width: 0;
+}
+
+.screenshot-frame-style-row input[type="range"] {
+  width: 100%;
+  min-width: 0;
+}
+
+.screenshot-frame-style-color input[type="color"] {
+  width: 44px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  cursor: pointer;
+}
+
+.screenshot-frame-style-dash select {
+  min-width: 96px;
+  padding: 4px 6px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+}
+
 .screenshot-frame {
   position: absolute;
   box-sizing: border-box;
-  border: 2px solid #fff;
   outline: 1px solid rgba(0, 0, 0, 0.65);
-  box-shadow: 0 0 0 9999px rgba(8, 10, 14, 0.45);
 }
 
 .sidebar-inspect:not(.collapsed) {
@@ -1352,6 +1410,269 @@ textarea.inspect-field-input {
 .file-point-name-labels-toggle input {
   margin-top: 2px;
   flex-shrink: 0;
+}
+
+.point-chain-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.point-chain-actions .btn {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.point-chain-committed-summary {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.point-chain-trim-wrap {
+  margin-top: 12px;
+}
+
+.point-chain-trim-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.point-chain-order-wrap {
+  margin: 10px 0;
+}
+
+.point-chain-order-scroller {
+  height: 220px;
+  min-height: 72px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px 6px 0 0;
+  background: var(--surface);
+}
+
+.point-chain-order-resize {
+  flex-shrink: 0;
+  height: 7px;
+  margin: 0;
+  cursor: row-resize;
+  touch-action: none;
+  position: relative;
+  z-index: 1;
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 6px 6px;
+  background: var(--surface);
+}
+
+.point-chain-order-resize::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 3px;
+  height: 1px;
+  background: var(--border);
+  transition: background 0.12s ease, height 0.12s ease;
+}
+
+.point-chain-order-resize:hover::before,
+.point-chain-order-resize:focus-visible::before,
+.point-chain-order-resize.is-dragging::before {
+  top: 2px;
+  height: 3px;
+  background: var(--accent);
+}
+
+.point-chain-order-resize:focus-visible {
+  outline: none;
+}
+
+body.point-chain-order-resizing {
+  cursor: row-resize !important;
+  user-select: none;
+}
+
+body.point-chain-order-resizing * {
+  cursor: row-resize !important;
+}
+
+.point-chain-order-empty {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.point-chain-order-summary {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+
+.point-chain-order-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: none;
+  height: 100%;
+  overflow-y: auto;
+  background: transparent;
+}
+
+.point-chain-order-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  line-height: 1.35;
+  cursor: grab;
+}
+
+.point-chain-order-item:last-child {
+  border-bottom: none;
+}
+
+.point-chain-order-item-dragging {
+  opacity: 0.55;
+}
+
+.point-chain-order-item-drop-target {
+  background: color-mix(in srgb, var(--accent, #4c8bf5) 12%, transparent);
+}
+
+.point-chain-order-grip {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: -1px;
+  user-select: none;
+  padding-top: 2px;
+}
+
+.point-chain-order-num {
+  flex-shrink: 0;
+  width: 1.25rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.point-chain-order-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.point-chain-order-name {
+  display: block;
+  word-break: break-word;
+}
+
+.point-chain-order-coords {
+  display: block;
+  font-size: 10px;
+  margin-top: 2px;
+}
+
+.point-chain-order-move {
+  flex-shrink: 0;
+  display: flex;
+  gap: 2px;
+}
+
+.point-chain-move-btn {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: inherit;
+  border-radius: 4px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.point-chain-move-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.point-chain-move-btn:not(:disabled):hover {
+  background: var(--surface);
+}
+
+.point-chain-style {
+  margin: 12px 0 0;
+  padding: 10px 10px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.point-chain-style-legend {
+  padding: 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.point-chain-style-hint {
+  margin: 0 0 8px;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.point-chain-style-row {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.point-chain-style-row > span {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.point-chain-style-row input[type="range"] {
+  width: 100%;
+}
+
+.point-chain-style-color input[type="color"] {
+  width: 100%;
+  height: 32px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  cursor: pointer;
+}
+
+.point-chain-style-markers {
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.point-chain-style-markers input[type="checkbox"] {
+  flex-shrink: 0;
+}
+
+.point-chain-save-hint {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.point-chain-save-actions {
+  margin-top: 8px;
+}
+
+.point-chain-style-dash select {
+  width: 100%;
 }
 
 .file-point-icon-save-kmz {

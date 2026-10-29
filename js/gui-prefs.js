@@ -133,6 +133,18 @@
       options.gisMap.setImageryLabelGranularity(stored.imageryLabelGranularity);
     }
     applyMapView(options.map, stored.mapView);
+    if (
+      stored.mapScalePreset
+      && options.mapScaleSelect
+      && options.gisMap
+      && typeof options.gisMap.setMapScaleDenominator === "function"
+    ) {
+      var denom = Number(stored.mapScalePreset);
+      if (Number.isFinite(denom) && denom > 0) {
+        options.gisMap.setMapScaleDenominator(denom);
+        options.mapScaleSelect.value = String(stored.mapScalePreset);
+      }
+    }
     if (validTool(stored.tool) && typeof options.chooseTool === "function") {
       options.chooseTool(stored.tool);
     }

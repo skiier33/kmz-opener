@@ -25,15 +25,31 @@
   var saveBtn = null;
   var toolbarSaveBtn = null;
   var showToggle = null;
+  var dimOutsideToggle = null;
+  var frameColorInput = null;
+  var frameWeightInput = null;
+  var frameWeightValueEl = null;
+  var frameDashSelect = null;
   var takeTwoToggle = null;
+  var takeTwoHideNamesToggle = null;
   var takeTwoPanelEl = null;
   var takeTwoSourcesEl = null;
   var getLoadedSourcesFn = null;
   var setLoadedSourceVisibleFn = null;
+  var getSourcePointNameLabelsHiddenFn = null;
+  var setSourcePointNameLabelsHiddenFn = null;
   var ensureDesktopFn = null;
   var setMessageFn = null;
   var readJsonResponseFn = null;
   var saveInFlight = false;
+
+  var OUTSIDE_DIM_SHADOW = "0 0 0 9999px rgba(8, 10, 14, 0.45)";
+
+  var defaultFrameLineStyle = {
+    color: "#ffffff",
+    weight: 2,
+    dash: "solid",
+  };
 
   function pad(n) {
     return n < 10 ? "0" + n : String(n);
@@ -89,7 +105,12 @@
           nameSuffix: nameSuffixMode(),
           directory: dirInput ? dirInput.value : "",
           showFrame: showToggle ? showToggle.checked : true,
+          dimOutside: dimOutsideToggle ? dimOutsideToggle.checked : true,
+          frameColor: frameColorInput ? frameColorInput.value : defaultFrameLineStyle.color,
+          frameWeight: frameWeightInput ? frameWeightInput.value : String(defaultFrameLineStyle.weight),
+          frameDash: frameDashSelect ? frameDashSelect.value : defaultFrameLineStyle.dash,
           takeTwo: takeTwoToggle ? takeTwoToggle.checked : false,
+          takeTwoHideNames: takeTwoHideNamesToggle ? takeTwoHideNamesToggle.checked : false,
           takeTwoHideIds: readTakeTwoHideIds(),
         })
       );
@@ -203,6 +224,50 @@
     return dimensionsToPx(dimensionUnit());
   }
 
+  function borderStyleFromDash(dash) {
+    if (dash === "dashed" || dash === "dotted") {
+      return dash;
+    }
+    return "solid";
+  }
+
+  function readFrameLineStyleFromUi() {
+    var weight = frameWeightInput ? parseInt(frameWeightInput.value, 10) : defaultFrameLineStyle.weight;
+    if (!weight || weight < 1) {
+      weight = defaultFrameLineStyle.weight;
+    }
+    return {
+      color: (frameColorInput && frameColorInput.value) || defaultFrameLineStyle.color,
+      weight: weight,
+      dash: (frameDashSelect && frameDashSelect.value) || defaultFrameLineStyle.dash,
+    };
+  }
+
+  function syncFrameLineStyleValueLabels(style) {
+    if (frameWeightValueEl) {
+      frameWeightValueEl.textContent = (style.weight || defaultFrameLineStyle.weight) + " px";
+    }
+    if (frameWeightInput) {
+      frameWeightInput.setAttribute("aria-valuenow", String(style.weight || defaultFrameLineStyle.weight));
+    }
+  }
+
+  function applyFrameStyle() {
+    if (!frameEl) {
+      return;
+    }
+    var style = readFrameLineStyleFromUi();
+    syncFrameLineStyleValueLabels(style);
+    var lineStyle = borderStyleFromDash(style.dash);
+    frameEl.style.border =
+      String(style.weight) + "px " + lineStyle + " " + (style.color || defaultFrameLineStyle.color);
+    if (dimOutsideToggle && !dimOutsideToggle.checked) {
+      frameEl.style.boxShadow = "none";
+    } else {
+      frameEl.style.boxShadow = OUTSIDE_DIM_SHADOW;
+    }
+  }
+
   function layoutFrame() {
     if (!mapWrap || !frameEl || !overlayEl || overlayEl.classList.contains("hidden")) {
       return;
@@ -220,6 +285,7 @@
     frameEl.style.top = Math.round((wrapH - displayH) / 2) + "px";
     frameEl.dataset.outWidth = String(dims.width);
     frameEl.dataset.outHeight = String(dims.height);
+    applyFrameStyle();
   }
 
   function setOverlayVisible(show) {
@@ -465,7 +531,7 @@
     takeTwoSourcesEl.innerHTML = "";
     if (!sources.length) {
       takeTwoSourcesEl.innerHTML =
-        '<p class="muted empty-hint">Load KMZ/KML files to choose which map to hide, or use Layers None for the 2nd shot.</p>';
+        '<p class="muted empty-hint">Load KMZ/KML files to choose which map to hide, enable Hide name, or use Layers None for the 2nd shot.</p>';
       return;
     }
     sources.forEach(function (source) {
@@ -570,6 +636,36 @@
     clickLayersToolbarButton("layers-all");
   }
 
+  function snapshotPointNameLabelsVisibility() {
+    return listLoadedSources().map(function (source) {
+      var hidden = false;
+      if (getSourcePointNameLabelsHiddenFn) {
+        hidden = !!getSourcePointNameLabelsHiddenFn(source.id);
+      }
+      return { id: source.id, hidden: hidden };
+    });
+  }
+
+  function hidePointNameLabelsForSecondShot() {
+    if (!setSourcePointNameLabelsHiddenFn) {
+      return null;
+    }
+    var snapshot = snapshotPointNameLabelsVisibility();
+    listLoadedSources().forEach(function (source) {
+      setSourcePointNameLabelsHiddenFn(source.id, true);
+    });
+    return snapshot;
+  }
+
+  function restorePointNameLabelsSnapshot(snapshot) {
+    if (!snapshot || !snapshot.length || !setSourcePointNameLabelsHiddenFn) {
+      return;
+    }
+    snapshot.forEach(function (item) {
+      setSourcePointNameLabelsHiddenFn(item.id, item.hidden);
+    });
+  }
+
   function persistBlob(blob, baseNameStem, nameOpts) {
     nameOpts = nameOpts || {};
     var directory = dirInput ? String(dirInput.value || "").trim() : "";
@@ -636,12 +732,17 @@
     }
     var baseStem = baseNameInput && baseNameInput.value;
     var takeTwo = takeTwoToggle && takeTwoToggle.checked;
+    var hideNames = takeTwo && takeTwoHideNamesToggle && takeTwoHideNamesToggle.checked;
     var loadedSources = listLoadedSources();
     var hideIds = takeTwo ? readTakeTwoHideIds() : [];
     var visibilitySnapshot = null;
-    if (takeTwo && loadedSources.length && !hideIds.length) {
+    var pointNameLabelsSnapshot = null;
+    var layerHidingApplied = false;
+    if (takeTwo && loadedSources.length && !hideIds.length && !hideNames) {
       if (setMessageFn) {
-        setMessageFn("Select at least one loaded file to hide for the second screenshot.");
+        setMessageFn(
+          "Select at least one loaded file to hide for the second screenshot, or enable Hide name."
+        );
       }
       return;
     }
@@ -660,9 +761,19 @@
             return;
           }
           if (setMessageFn) {
-            setMessageFn("Hiding layers for screenshot 2 of 2…");
+            if (hideNames) {
+              setMessageFn("Hiding point name tags for screenshot 2 of 2…");
+            } else {
+              setMessageFn("Hiding layers for screenshot 2 of 2…");
+            }
           }
-          visibilitySnapshot = applySecondShotLayerHiding(hideIds);
+          if (hideNames) {
+            pointNameLabelsSnapshot = hidePointNameLabelsForSecondShot();
+          }
+          if (hideIds.length || !hideNames) {
+            visibilitySnapshot = applySecondShotLayerHiding(hideIds);
+            layerHidingApplied = true;
+          }
           return waitForRepaint().then(function () {
             return waitMs(150);
           });
@@ -676,6 +787,9 @@
           setMessageFn("Capturing screenshot 2 of 2…");
         }
         var suffix = secondShotFilenameSuffix(hideIds, loadedSources);
+        if (hideNames) {
+          suffix = hideIds.length ? suffix + "-no-names" : "-no-names";
+        }
         return captureMapPng().then(function (blob) {
           return persistBlob(blob, baseStem, { suffix: suffix }).then(function (result) {
             savedResults.push(result);
@@ -686,7 +800,10 @@
         if (!takeTwo) {
           return;
         }
-        restoreSecondShotLayerHiding(visibilitySnapshot);
+        if (layerHidingApplied) {
+          restoreSecondShotLayerHiding(visibilitySnapshot);
+        }
+        restorePointNameLabelsSnapshot(pointNameLabelsSnapshot);
         return waitForRepaint();
       })
       .then(function () {
@@ -704,7 +821,10 @@
       })
       .catch(function (err) {
         if (takeTwo) {
-          restoreSecondShotLayerHiding(visibilitySnapshot);
+          if (layerHidingApplied) {
+            restoreSecondShotLayerHiding(visibilitySnapshot);
+          }
+          restorePointNameLabelsSnapshot(pointNameLabelsSnapshot);
         }
         if (setMessageFn) {
           setMessageFn((err && err.message) || "Could not save the screenshot.");
@@ -780,11 +900,38 @@
         setOverlayVisible(showToggle.checked);
       });
     }
+    if (dimOutsideToggle) {
+      dimOutsideToggle.addEventListener("change", function () {
+        writeSettings();
+        applyFrameStyle();
+      });
+    }
+    if (frameColorInput) {
+      frameColorInput.addEventListener("input", function () {
+        writeSettings();
+        applyFrameStyle();
+      });
+    }
+    if (frameWeightInput) {
+      frameWeightInput.addEventListener("input", function () {
+        writeSettings();
+        applyFrameStyle();
+      });
+    }
+    if (frameDashSelect) {
+      frameDashSelect.addEventListener("change", function () {
+        writeSettings();
+        applyFrameStyle();
+      });
+    }
     if (takeTwoToggle) {
       takeTwoToggle.addEventListener("change", function () {
         syncTakeTwoPanelVisibility();
         writeSettings();
       });
+    }
+    if (takeTwoHideNamesToggle) {
+      takeTwoHideNamesToggle.addEventListener("change", writeSettings);
     }
     [saveBtn, toolbarSaveBtn].forEach(function (btn) {
       if (!btn) {
@@ -831,8 +978,30 @@
     if (showToggle) {
       showToggle.checked = settings.showFrame !== false;
     }
+    if (dimOutsideToggle) {
+      dimOutsideToggle.checked = settings.dimOutside !== false;
+    }
+    if (frameColorInput && settings.frameColor) {
+      frameColorInput.value = settings.frameColor;
+    }
+    if (frameWeightInput) {
+      var storedWeight = parseInt(settings.frameWeight, 10);
+      if (storedWeight >= 1 && storedWeight <= 8) {
+        frameWeightInput.value = String(storedWeight);
+      }
+    }
+    if (frameDashSelect && settings.frameDash) {
+      var dash = String(settings.frameDash);
+      if (dash === "dashed" || dash === "dotted" || dash === "solid") {
+        frameDashSelect.value = dash;
+      }
+    }
+    applyFrameStyle();
     if (takeTwoToggle) {
       takeTwoToggle.checked = !!settings.takeTwo;
+    }
+    if (takeTwoHideNamesToggle) {
+      takeTwoHideNamesToggle.checked = !!settings.takeTwoHideNames;
     }
     syncTakeTwoPanelVisibility();
   }
@@ -854,11 +1023,19 @@
     saveBtn = document.getElementById("screenshot-save");
     toolbarSaveBtn = document.getElementById("screenshot-save-toolbar");
     showToggle = document.getElementById("screenshot-show-frame");
+    dimOutsideToggle = document.getElementById("screenshot-dim-outside");
+    frameColorInput = document.getElementById("screenshot-frame-color");
+    frameWeightInput = document.getElementById("screenshot-frame-weight");
+    frameWeightValueEl = document.getElementById("screenshot-frame-weight-value");
+    frameDashSelect = document.getElementById("screenshot-frame-dash");
     takeTwoToggle = document.getElementById("screenshot-take-two");
+    takeTwoHideNamesToggle = document.getElementById("screenshot-take-two-hide-names");
     takeTwoPanelEl = document.getElementById("screenshot-take-two-panel");
     takeTwoSourcesEl = document.getElementById("screenshot-take-two-sources");
     getLoadedSourcesFn = options.getLoadedSources || null;
     setLoadedSourceVisibleFn = options.setLoadedSourceVisible || null;
+    getSourcePointNameLabelsHiddenFn = options.getSourcePointNameLabelsHidden || null;
+    setSourcePointNameLabelsHiddenFn = options.setSourcePointNameLabelsHidden || null;
     ensureDesktopFn = options.ensureDesktop || null;
     setMessageFn = options.setMessage || null;
     readJsonResponseFn = options.readJsonResponse || null;
@@ -884,5 +1061,6 @@
     init: init,
     layoutFrame: layoutFrame,
     refreshTakeTwoSources: refreshTakeTwoSources,
+    persistSettings: writeSettings,
   };
 })(window);

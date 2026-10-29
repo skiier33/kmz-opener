@@ -87,6 +87,34 @@
               </button>
             </div>
           </div>
+          <div class="menubar-menu" id="menubar-options">
+            <button
+              type="button"
+              class="menubar-top-item"
+              id="menubar-options-trigger"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="menubar-options-popup"
+            >
+              Options
+            </button>
+            <div
+              class="menubar-popup hidden"
+              id="menubar-options-popup"
+              role="menu"
+              aria-labelledby="menubar-options-trigger"
+            >
+              <button
+                type="button"
+                class="menubar-menu-item"
+                id="btn-save-as-default"
+                role="menuitem"
+                title="Save toolbar, sidebar, screenshot, and map settings as defaults for the next launch"
+              >
+                Save as default
+              </button>
+            </div>
+          </div>
         </div>
         <input
           id="file-input"
@@ -288,25 +316,14 @@
             </div>
           </section>
 
-          <section class="sidebar-section">
-            <h2>File</h2>
-            <p id="file-label" class="muted">No file loaded</p>
-            <div class="file-actions">
-              <button
-                type="button"
-                class="btn"
-                id="file-save-copy"
-                disabled
-                title="Save a timestamped copy in the same folder as the original file"
-              >
-                Save copy
-              </button>
-            </div>
-          </section>
-
           <section class="sidebar-section sidebar-point-icons" id="point-icons-section" hidden>
             <h2>Point icons</h2>
             <div id="file-point-icons" class="file-point-icons" aria-label="Point icon settings"></div>
+          </section>
+
+          <section class="sidebar-section sidebar-point-chain" id="point-chain-section" hidden>
+            <h2>Point chain</h2>
+            <div id="point-chain-panel" class="point-chain-panel" aria-label="Nearest-neighbor point chain"></div>
           </section>
 
           <section class="sidebar-section sidebar-csv-coords">
@@ -442,12 +459,52 @@
                 <input id="screenshot-show-frame" type="checkbox" checked />
                 Show capture frame on map
               </label>
+              <label class="screenshot-toggle">
+                <input id="screenshot-dim-outside" type="checkbox" checked />
+                Dim map outside capture frame
+              </label>
+              <fieldset class="screenshot-frame-style">
+                <legend class="screenshot-frame-style-legend">Frame line style</legend>
+                <label class="screenshot-frame-style-row screenshot-frame-style-color">
+                  <span>Color</span>
+                  <input id="screenshot-frame-color" type="color" value="#ffffff" aria-label="Capture frame line color" />
+                </label>
+                <label class="screenshot-frame-style-row">
+                  <span
+                    >Width <strong id="screenshot-frame-weight-value">2 px</strong></span
+                  >
+                  <input
+                    id="screenshot-frame-weight"
+                    type="range"
+                    min="1"
+                    max="8"
+                    step="1"
+                    value="2"
+                    aria-valuemin="1"
+                    aria-valuemax="8"
+                    aria-valuenow="2"
+                    aria-label="Capture frame line width"
+                  />
+                </label>
+                <label class="screenshot-frame-style-row screenshot-frame-style-dash">
+                  <span>Pattern</span>
+                  <select id="screenshot-frame-dash" aria-label="Capture frame line pattern">
+                    <option value="solid" selected>Solid</option>
+                    <option value="dashed">Dashed</option>
+                    <option value="dotted">Dotted</option>
+                  </select>
+                </label>
+              </fieldset>
               <div class="screenshot-save-row">
                 <label class="screenshot-toggle screenshot-save-option">
                   <input id="screenshot-take-two" type="checkbox" />
                   Take 2
                 </label>
                 <div id="screenshot-take-two-panel" class="screenshot-take-two-panel hidden">
+                  <label class="screenshot-toggle screenshot-take-two-hide-names">
+                    <input id="screenshot-take-two-hide-names" type="checkbox" />
+                    Hide name
+                  </label>
                   <span class="screenshot-label">Hide for 2nd screenshot</span>
                   <div
                     id="screenshot-take-two-sources"
@@ -727,8 +784,11 @@
     <script src="js/map.js"></script>
     <script src="js/measure.js"></script>
     <script src="js/directions.js"></script>
+    <script src="js/point-chain.js"></script>
+    <script src="js/point-chain-persist.js"></script>
     <script src="js/screenshot.js"></script>
     <script src="js/gui-prefs.js"></script>
+    <script src="js/viewer-defaults.js"></script>
     <script src="js/main.js"></script>
   </body>
 </html>

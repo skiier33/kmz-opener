@@ -210,19 +210,22 @@
     return null;
   }
 
-  function setExtendedDataValue(placemarkEl, fieldName, value) {
-    if (!placemarkEl || localName(placemarkEl) !== "placemark" || !fieldName) {
-      return;
-    }
-    var extEl = childByLocalName(placemarkEl, "ExtendedData");
+  function ensureExtendedData(hostEl, insertBeforeEl) {
+    var extEl = childByLocalName(hostEl, "ExtendedData");
     if (!extEl) {
-      extEl = createElementNS(placemarkEl, "ExtendedData");
-      var anchor = firstGeometryChild(placemarkEl);
-      if (anchor) {
-        placemarkEl.insertBefore(extEl, anchor);
+      extEl = createElementNS(hostEl, "ExtendedData");
+      if (insertBeforeEl && insertBeforeEl.parentNode === hostEl) {
+        hostEl.insertBefore(extEl, insertBeforeEl);
       } else {
-        placemarkEl.appendChild(extEl);
+        hostEl.insertBefore(extEl, hostEl.firstChild);
       }
+    }
+    return extEl;
+  }
+
+  function writeExtendedDataField(extEl, fieldName, value) {
+    if (!extEl || !fieldName) {
+      return;
     }
     var fieldEl = findExtendedDataField(extEl, fieldName);
     if (!fieldEl) {
@@ -240,6 +243,144 @@
       fieldEl.appendChild(valueEl);
     }
     valueEl.textContent = String(value);
+  }
+
+  function readExtendedDataValue(hostEl, fieldName) {
+    if (!hostEl || !fieldName) {
+      return null;
+    }
+    var extEl = childByLocalName(hostEl, "ExtendedData");
+    if (!extEl) {
+      return null;
+    }
+    var fieldEl = findExtendedDataField(extEl, fieldName);
+    if (!fieldEl) {
+      return null;
+    }
+    if (localName(fieldEl) === "simpledata") {
+      return String(fieldEl.textContent || "");
+    }
+    var valueEl = childByLocalName(fieldEl, "value");
+    return valueEl ? String(valueEl.textContent || "") : null;
+  }
+
+  function setExtendedDataOnElement(hostEl, fieldName, value) {
+    if (!hostEl || !fieldName) {
+      return;
+    }
+    var tag = localName(hostEl);
+    var insertBefore = null;
+    if (tag === "placemark") {
+      insertBefore = firstGeometryChild(hostEl);
+    }
+    var extEl = ensureExtendedData(hostEl, insertBefore);
+    writeExtendedDataField(extEl, fieldName, value);
+  }
+
+  function setExtendedDataValue(placemarkEl, fieldName, value) {
+    if (!placemarkEl || localName(placemarkEl) !== "placemark" || !fieldName) {
+      return;
+    }
+    setExtendedDataOnElement(placemarkEl, fieldName, value);
+  }
+
+  function getKmlDocumentElement(xmlDoc) {
+    if (!xmlDoc || !xmlDoc.documentElement) {
+      return null;
+    }
+    var kml = xmlDoc.documentElement;
+    if (localName(kml) !== "kml") {
+      return null;
+    }
+    var documentEl = childByLocalName(kml, "Document");
+    return documentEl || kml;
+  }
+
+  function removeFeatureChildByName(parentEl, featureLocalName, displayName) {
+    if (!parentEl || !displayName) {
+      return;
+    }
+    var wantedName = String(displayName);
+    var features = featureChildren(parentEl);
+    features.forEach(function (featureEl) {
+      if (localName(featureEl) !== featureLocalName) {
+        return;
+      }
+      var nameEl = childByLocalName(featureEl, "name");
+      var text = nameEl ? String(nameEl.textContent || "").trim() : "";
+      if (text === wantedName && featureEl.parentNode) {
+        featureEl.parentNode.removeChild(featureEl);
+      }
+    });
+  }
+
+  function cssOpacityToKmlColor(cssColor, opacity, cssToAbgr) {
+    var abgr = cssToAbgr ? cssToAbgr(cssColor) : "ff3388ff";
+    if (!abgr || abgr.length < 8) {
+      return abgr || "ff3388ff";
+    }
+    var alpha = Math.round(Math.max(0, Math.min(1, opacity)) * 255);
+    var hex = alpha.toString(16);
+    if (hex.length < 2) {
+      hex = "0" + hex;
+    }
+    return hex + abgr.slice(2);
+  }
+
+  function syncPointChainLineFolder(documentEl, chainExport) {
+    if (!documentEl || !chainExport) {
+      return;
+    }
+    var folderName =
+      chainExport.folderName || "kmz-opener Point chain";
+    removeFeatureChildByName(documentEl, "folder", folderName);
+    var segments = chainExport.segments || [];
+    if (!segments.length) {
+      return;
+    }
+    var style = chainExport.style || {};
+    var cssToAbgr =
+      chainExport.cssColorToKmlAbgr
+      || (global.PointIcons && global.PointIcons.cssColorToKmlAbgr);
+    var folder = createElementNS(documentEl, "Folder");
+    setElementName(folder, folderName);
+    var folderExt = ensureExtendedData(folder, null);
+    writeExtendedDataField(
+      folderExt,
+      "kmz_opener_generated",
+      "point-chain-lines"
+    );
+    documentEl.appendChild(folder);
+    segments.forEach(function (segment, index) {
+      if (!segment || segment.length < 2) {
+        return;
+      }
+      var placemark = createElementNS(folder, "Placemark");
+      setElementName(placemark, "Point chain segment " + (index + 1));
+      var lineStyle = ensureChild(
+        ensureChild(placemark, "Style"),
+        "LineStyle"
+      );
+      var colorEl = ensureChild(lineStyle, "color");
+      colorEl.textContent = cssOpacityToKmlColor(
+        style.color || "#e8710a",
+        style.opacity != null ? style.opacity : 0.92,
+        cssToAbgr
+      );
+      var widthEl = ensureChild(lineStyle, "width");
+      widthEl.textContent = String(style.weight || 3);
+      var lineString = createElementNS(placemark, "LineString");
+      var tessellate = createElementNS(lineString, "tessellate");
+      tessellate.textContent = "1";
+      var coords = createElementNS(lineString, "coordinates");
+      coords.textContent = segment
+        .map(function (entry) {
+          return entry.lng + "," + entry.lat + ",0";
+        })
+        .join(" ");
+      placemark.appendChild(lineString);
+      folder.appendChild(placemark);
+    });
   }
 
   function setStyleIconHref(styleEl, href) {
@@ -779,6 +920,10 @@
     setPlacemarkIconColor: setPlacemarkIconColor,
     setPlacemarkPointCoordinates: setPlacemarkPointCoordinates,
     setExtendedDataValue: setExtendedDataValue,
+    setExtendedDataOnElement: setExtendedDataOnElement,
+    readExtendedDataValue: readExtendedDataValue,
+    getKmlDocumentElement: getKmlDocumentElement,
+    syncPointChainLineFolder: syncPointChainLineFolder,
     materializePointIcons: materializePointIcons,
     detachNode: detachNode,
     cloneSourceElement: cloneSourceElement,
