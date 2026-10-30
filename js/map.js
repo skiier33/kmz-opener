@@ -1590,7 +1590,7 @@
       return;
     }
     var bearing = map.getBearing() || 0;
-    northArrowEl.style.transform = "rotate(" + -bearing + "deg)";
+    northArrowEl.style.transform = "rotate(" + bearing + "deg)";
   }
 
   function rotateMapByDegrees(delta) {
