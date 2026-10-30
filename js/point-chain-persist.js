@@ -47,6 +47,7 @@
           }
         : null,
       showEndpointMarkers: state.showEndpointMarkers !== false,
+      mapVisible: state.mapVisible !== false,
       startDirection: state.startDirection || "N",
       startNodeKey: state.startNodeKey || null,
       draft: state.draft ? cloneSegment(state.draft) : null,

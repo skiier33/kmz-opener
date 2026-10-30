@@ -1283,6 +1283,110 @@
     return removed;
   }
 
+  function removeNodesFromTree(ids) {
+    if (!currentRoot) {
+      return [];
+    }
+    var toDelete = topLevelIds(ids).filter(function (id) {
+      return id !== currentRoot.id;
+    });
+    var removed = [];
+    var clearedSelection = false;
+    toDelete.forEach(function (id) {
+      var loc = locateNode(currentRoot, id);
+      if (!loc || !loc.parent) {
+        return;
+      }
+      if (selectedId && (selectedId === id || containsId(loc.node, selectedId))) {
+        clearedSelection = true;
+      }
+      removeLayers(loc.node);
+      loc.parent.children.splice(loc.index, 1);
+      removed.push(id);
+    });
+    if (clearedSelection) {
+      selectedId = null;
+      if (map) {
+        map.closePopup();
+      }
+    }
+    return removed;
+  }
+
+  function findNodeBySourceEl(root, sourceEl) {
+    if (!root || !sourceEl) {
+      return null;
+    }
+    var found = null;
+    walkTree(root, function (node) {
+      if (!found && node.sourceEl === sourceEl) {
+        found = node;
+      }
+    });
+    return found;
+  }
+
+  function findGeneratedPointChainFolderNode(sourceRoot) {
+    if (!sourceRoot || !global.KmzSave) {
+      return null;
+    }
+    var found = null;
+    walkTree(sourceRoot, function (node) {
+      if (
+        !found
+        && node.type === "folder"
+        && node.sourceEl
+        && KmzSave.isPointChainLineFolderEl(node.sourceEl)
+      ) {
+        found = node;
+      }
+    });
+    return found;
+  }
+
+  function syncPointChainFolderInTree(sourceId, xmlDoc, resolveHref) {
+    var source = getDocumentSource(sourceId);
+    if (
+      !source
+      || !source.root
+      || !xmlDoc
+      || !global.KmlParse
+      || !global.KmzSave
+    ) {
+      return null;
+    }
+    var documentEl = KmzSave.getKmlDocumentElement(xmlDoc);
+    if (!documentEl) {
+      return null;
+    }
+    var folderEl = KmzSave.findPointChainLineFolder(documentEl);
+    var existing = findGeneratedPointChainFolderNode(source.root);
+    if (!folderEl) {
+      if (existing) {
+        removeNodesFromTree([existing.id]);
+      }
+      return null;
+    }
+    var parentNode = findNodeBySourceEl(source.root, folderEl.parentNode) || source.root;
+    if (existing) {
+      removeNodesFromTree([existing.id]);
+    }
+    var parsed = KmlParse.parseKmlFeatureNode(
+      folderEl,
+      xmlDoc,
+      resolveHref || function (href) {
+        return href || "";
+      }
+    );
+    if (!parsed) {
+      return null;
+    }
+    parsed.expanded = true;
+    prefixNodeIds(parsed, sourceId + ":");
+    insertNodes(parentNode.id, null, [parsed]);
+    return parsed.id;
+  }
+
   function moveNodes(ids, parentId, beforeId) {
     if (!currentRoot) {
       return [];
@@ -2019,6 +2123,9 @@
     setSharedStyleIconUrl: setSharedStyleIconUrl,
     setSharedStylePointIcon: setSharedStylePointIcon,
     deleteNodes: deleteNodes,
+    removeNodesFromTree: removeNodesFromTree,
+    syncPointChainFolderInTree: syncPointChainFolderInTree,
+    findGeneratedPointChainFolderNode: findGeneratedPointChainFolderNode,
     sortChildrenByName: sortChildrenByName,
     moveNodes: moveNodes,
     cloneNode: cloneNode,

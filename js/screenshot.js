@@ -395,6 +395,134 @@
     });
   }
 
+  function canvasLineDash(dash) {
+    if (dash === "dashed") {
+      return [12, 8];
+    }
+    if (dash === "dotted") {
+      return [2, 7];
+    }
+    return [];
+  }
+
+  function projectPointChainCoord(map, entry, crop) {
+    if (!map || !global.L || !entry) {
+      return null;
+    }
+    var pt = map.latLngToContainerPoint(global.L.latLng(entry.lat, entry.lng));
+    return {
+      x: (pt.x - crop.cropX) * crop.scale,
+      y: (pt.y - crop.cropY) * crop.scale,
+    };
+  }
+
+  function drawPointChainCircleMarker(ctx, coord, markerStyle) {
+    if (!coord || !markerStyle) {
+      return;
+    }
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(coord.x, coord.y, markerStyle.radius, 0, Math.PI * 2);
+    ctx.fillStyle = markerStyle.fillColor || "#ffffff";
+    ctx.globalAlpha = markerStyle.fillOpacity != null ? markerStyle.fillOpacity : 1;
+    ctx.fill();
+    ctx.strokeStyle = markerStyle.color || "#000000";
+    ctx.lineWidth = markerStyle.weight || 2;
+    ctx.globalAlpha = 1;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function compositePointChainOntoCanvas(canvas, map, crop) {
+    if (!canvas || !map || !global.PointChain || typeof PointChain.getExportRenderState !== "function") {
+      return;
+    }
+    var state = PointChain.getExportRenderState();
+    if (!state || !state.segments || !state.segments.length) {
+      return;
+    }
+    var ctx = canvas.getContext("2d");
+    if (!ctx) {
+      return;
+    }
+    var style = state.style || {};
+    var lineColor = style.color || "#e8710a";
+    var lineWeight = style.weight || 3;
+    var lineOpacity = style.opacity != null ? style.opacity : 0.92;
+    var dash = canvasLineDash(style.dash);
+    state.segments.forEach(function (segment) {
+      if (!segment || segment.length < 2) {
+        return;
+      }
+      ctx.save();
+      ctx.beginPath();
+      segment.forEach(function (entry, index) {
+        var coord = projectPointChainCoord(map, entry, crop);
+        if (!coord) {
+          return;
+        }
+        if (index === 0) {
+          ctx.moveTo(coord.x, coord.y);
+        } else {
+          ctx.lineTo(coord.x, coord.y);
+        }
+      });
+      ctx.strokeStyle = lineColor;
+      ctx.lineWidth = lineWeight;
+      ctx.globalAlpha = lineOpacity;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      if (dash.length) {
+        ctx.setLineDash(dash);
+      }
+      ctx.stroke();
+      ctx.restore();
+      if (state.showEndpointMarkers && state.endpointMarkers) {
+        var startCoord = projectPointChainCoord(map, segment[0], crop);
+        var endCoord = projectPointChainCoord(map, segment[segment.length - 1], crop);
+        drawPointChainCircleMarker(ctx, startCoord, state.endpointMarkers.start);
+        drawPointChainCircleMarker(ctx, endCoord, state.endpointMarkers.end);
+      }
+    });
+  }
+
+  function hidePointChainForCapture() {
+    if (!global.PointChain || typeof PointChain.setLayerVisible !== "function") {
+      return false;
+    }
+    if (!PointChain.hasChainOnMap || !PointChain.hasChainOnMap()) {
+      return false;
+    }
+    PointChain.setLayerVisible(false);
+    return true;
+  }
+
+  function restorePointChainAfterCapture(wasHidden) {
+    if (!wasHidden || !global.PointChain || typeof PointChain.setLayerVisible !== "function") {
+      return;
+    }
+    PointChain.setLayerVisible(true);
+  }
+
+  function html2canvasWithPointChain(mapEl, options, map, crop) {
+    var chainHidden = hidePointChainForCapture();
+    return waitForRepaint()
+      .then(function () {
+        return global.html2canvas(mapEl, options);
+      })
+      .then(function (canvas) {
+        if (map) {
+          compositePointChainOntoCanvas(canvas, map, crop);
+        }
+        restorePointChainAfterCapture(chainHidden);
+        return canvas;
+      })
+      .catch(function (err) {
+        restorePointChainAfterCapture(chainHidden);
+        throw err;
+      });
+  }
+
   function latLngBoundsForMapRect(map, cropX, cropY, cropW, cropH) {
     if (!map || !global.L) {
       return null;
@@ -524,18 +652,20 @@
     map.setView(bounds.getCenter(), zoom, { animate: false });
     return waitForMapIdle(map)
       .then(function () {
-        return waitForRepaint();
-      })
-      .then(function () {
-        return global.html2canvas(mapEl, {
-          useCORS: true,
-          allowTaint: false,
-          backgroundColor: null,
-          logging: false,
-          width: outW,
-          height: outH,
-          scale: 1,
-        });
+        return html2canvasWithPointChain(
+          mapEl,
+          {
+            useCORS: true,
+            allowTaint: false,
+            backgroundColor: null,
+            logging: false,
+            width: outW,
+            height: outH,
+            scale: 1,
+          },
+          map,
+          { cropX: 0, cropY: 0, scale: 1 }
+        );
       })
       .then(function (canvas) {
         restoreMapExportState(map, mapEl, saved);
@@ -617,20 +747,23 @@
     if (shouldUseHiResCapture(useFrame, scale)) {
       return captureMapAtTileResolution(outW, outH, cropX, cropY, cropW, cropH, hadOverlay);
     }
-    return waitForRepaint()
-      .then(function () {
-        return global.html2canvas(mapEl, {
-          useCORS: true,
-          allowTaint: false,
-          backgroundColor: null,
-          logging: false,
-          x: cropX,
-          y: cropY,
-          width: cropW,
-          height: cropH,
-          scale: scale,
-        });
-      })
+    var map = getMapFn ? getMapFn() : null;
+    return html2canvasWithPointChain(
+      mapEl,
+      {
+        useCORS: true,
+        allowTaint: false,
+        backgroundColor: null,
+        logging: false,
+        x: cropX,
+        y: cropY,
+        width: cropW,
+        height: cropH,
+        scale: scale,
+      },
+      map,
+      { cropX: cropX, cropY: cropY, scale: scale }
+    )
       .then(function (canvas) {
         if (hadOverlay && showToggle && showToggle.checked) {
           setOverlayVisible(true);
@@ -1045,7 +1178,14 @@
           }
           return;
         }
-        return Promise.resolve(desktop.api.choose_directory()).then(function (picked) {
+        var initial = "";
+        if (dirInput && String(dirInput.value || "").trim()) {
+          initial = String(dirInput.value).trim();
+        } else if (global.ViewerPathPrefs) {
+          initial =
+            ViewerPathPrefs.getScreenshotFolder() || ViewerPathPrefs.getProjectRoot() || "";
+        }
+        return Promise.resolve(desktop.api.choose_directory(initial)).then(function (picked) {
           if (!picked || !picked.path || !dirInput) {
             return;
           }
@@ -1236,6 +1376,16 @@
     }
 
     applyStoredSettings(readSettings());
+    if (
+      dirInput
+      && !String(dirInput.value || "").trim()
+      && global.ViewerPathPrefs
+    ) {
+      var prefFolder = ViewerPathPrefs.getScreenshotFolder();
+      if (prefFolder) {
+        dirInput.value = prefFolder;
+      }
+    }
     bindInputs();
     bindBrowse();
     refreshTakeTwoSources();

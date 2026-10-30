@@ -201,6 +201,24 @@ def kmz_export_name(file_name: str) -> str:
     return stem + ".kmz"
 
 
+def _dialog_directory(initial: Optional[str]) -> str:
+    """
+    Return a folder path suitable for pywebview dialog ``directory=``.
+
+    Args:
+        initial: Preferred starting folder from user settings.
+
+    Returns:
+        Normalized path when it exists, otherwise an empty string.
+    """
+    if not initial or not isinstance(initial, str):
+        return ""
+    full = normalize_path(initial.strip())
+    if os.path.isdir(full):
+        return full
+    return ""
+
+
 def _first_path(result: object) -> Optional[str]:
     """Return the first path from a file-dialog result."""
     if isinstance(result, str) and result:
@@ -293,9 +311,12 @@ class DesktopApi:
             return None
         return import_custom_icon_from_path(path)
 
-    def choose_kmz(self) -> Optional[dict]:
+    def choose_kmz(self, initial_directory: str = "") -> Optional[dict]:
         """
         Show a native open dialog and register the chosen KMZ or KML.
+
+        Args:
+            initial_directory: Folder to open the dialog in when set.
 
         Returns:
             Path metadata for the chosen file, or None if the dialog was cancelled.
@@ -304,10 +325,12 @@ class DesktopApi:
         if not windows:
             return None
         window = windows[0]
+        start_dir = _dialog_directory(initial_directory)
 
         def _open() -> Optional[str]:
             result = window.create_file_dialog(
                 _open_dialog_flag(),
+                directory=start_dir,
                 allow_multiple=False,
                 file_types=("KMZ and KML (*.kmz;*.kml)", "All files (*.*)"),
             )
@@ -318,9 +341,12 @@ class DesktopApi:
             return None
         return _source_payload(path)
 
-    def choose_directory(self) -> Optional[dict]:
+    def choose_directory(self, initial_directory: str = "") -> Optional[dict]:
         """
         Show a native folder picker for screenshot export.
+
+        Args:
+            initial_directory: Folder to open the dialog in when set.
 
         Returns:
             The chosen folder path, or None if the dialog was cancelled.
@@ -329,9 +355,13 @@ class DesktopApi:
         if not windows:
             return None
         window = windows[0]
+        start_dir = _dialog_directory(initial_directory)
 
         def _pick() -> Optional[str]:
-            result = window.create_file_dialog(_folder_dialog_flag())
+            result = window.create_file_dialog(
+                _folder_dialog_flag(),
+                directory=start_dir,
+            )
             return _first_path(result)
 
         path = _invoke_on_ui(window, _pick)
@@ -342,12 +372,15 @@ class DesktopApi:
             return None
         return {"path": full}
 
-    def choose_export_path(self, suggested_name: str) -> Optional[dict]:
+    def choose_export_path(
+        self, suggested_name: str, initial_directory: str = ""
+    ) -> Optional[dict]:
         """
         Show a native save dialog for exporting the map as a KMZ file.
 
         Args:
             suggested_name: Default file name shown in the dialog.
+            initial_directory: Folder to open the dialog in when set.
 
         Returns:
             The chosen path, or None if the dialog was cancelled.
@@ -357,10 +390,12 @@ class DesktopApi:
             return None
         window = windows[0]
         file_name = kmz_export_name(suggested_name)
+        start_dir = _dialog_directory(initial_directory)
 
         def _save() -> Optional[str]:
             result = window.create_file_dialog(
                 _save_dialog_flag(),
+                directory=start_dir,
                 save_filename=file_name,
                 file_types=("KMZ (*.kmz)",),
             )

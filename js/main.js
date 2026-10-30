@@ -170,7 +170,7 @@
   }
 
   function initSidebarSectionFolding() {
-    var sections = document.querySelectorAll(".sidebar > .sidebar-section");
+    var sections = document.querySelectorAll(".sidebar-left .sidebar-scroll > .sidebar-section");
     if (!sections.length) {
       return;
     }
@@ -240,29 +240,13 @@
     }
   }
 
-  function sidebarSectionVisibleHeight(section) {
-    if (!section || section.classList.contains("collapsed")) {
-      return 0;
-    }
-    return section.offsetHeight;
-  }
-
   function clampSidebarInspectHeight(sidebar, inspectSection, desiredPx) {
     var sidebarH = sidebar.clientHeight;
-    var fixedH = 0;
-    Array.prototype.forEach.call(sidebar.children, function (child) {
-      if (
-        child === inspectSection
-        || (child.classList && child.classList.contains("sidebar-split-handle"))
-      ) {
-        return;
-      }
-      fixedH += sidebarSectionVisibleHeight(child);
-    });
-    var handleH = 7;
+    var handleH =
+      inspectSection && !inspectSection.classList.contains("collapsed") ? 7 : 0;
     var maxInspect = Math.max(
       SIDEBAR_INSPECT_MIN_H,
-      sidebarH - fixedH - handleH - SIDEBAR_UPPER_MIN_H
+      sidebarH - handleH - SIDEBAR_UPPER_MIN_H
     );
     return Math.min(Math.max(desiredPx, SIDEBAR_INSPECT_MIN_H), maxInspect);
   }
@@ -769,6 +753,8 @@
   var pointChainUsedKeys = {};
   var pointChainStartNodeKey = null;
   var pointChainShowEndpointMarkers = true;
+  var pointChainMapVisible = true;
+  var pointChainAutoAddToLayers = false;
   var pointChainSavedBySourceId = {};
   var saveInFlight = false;
   var desktopSession = null;
@@ -1785,7 +1771,15 @@
       '<label class="point-chain-style-row point-chain-style-markers">' +
       '<input id="point-chain-show-end-markers" type="checkbox"' +
       (pointChainShowEndpointMarkers ? " checked" : "") +
-      " /> Show segment end markers on map</label></fieldset>"
+      " /> Show segment end markers on map</label>" +
+      '<label class="point-chain-style-row point-chain-style-markers">' +
+      '<input id="point-chain-show-on-map" type="checkbox"' +
+      (pointChainMapVisible ? " checked" : "") +
+      ' /> Show preview line on map <span class="muted">(L)</span></label>' +
+      '<label class="point-chain-style-row point-chain-style-markers">' +
+      '<input id="point-chain-auto-add-layers" type="checkbox"' +
+      (pointChainAutoAddToLayers ? " checked" : "") +
+      " /> Add each drawn segment to the layer tree</label></fieldset>"
     );
   }
 
@@ -1824,10 +1818,107 @@
     if (markersEl) {
       pointChainShowEndpointMarkers = markersEl.checked;
     }
+    var mapVisibleEl = document.getElementById("point-chain-show-on-map");
+    if (mapVisibleEl) {
+      pointChainMapVisible = mapVisibleEl.checked;
+    }
+    var autoAddEl = document.getElementById("point-chain-auto-add-layers");
+    if (autoAddEl) {
+      pointChainAutoAddToLayers = autoAddEl.checked;
+    }
     if (window.PointChain) {
       PointChain.setLineStyle(pointChainLineStyle);
       PointChain.setShowEndpointMarkers(pointChainShowEndpointMarkers);
+      applyPointChainMapVisibility();
     }
+  }
+
+  function applyPointChainMapVisibility() {
+    if (window.PointChain) {
+      PointChain.setLayerVisible(pointChainMapVisible);
+    }
+    syncPointChainMapVisibilityUi();
+  }
+
+  function syncPointChainMapVisibilityUi() {
+    var toggle = document.getElementById("point-chain-show-on-map");
+    if (!toggle) {
+      return;
+    }
+    var hasPreview =
+      pointChainHasCommittedLine()
+      || (window.PointChain && PointChain.hasChainOnMap && PointChain.hasChainOnMap());
+    toggle.checked = pointChainMapVisible;
+    toggle.disabled = !hasPreview;
+  }
+
+  function togglePointChainMapVisibility() {
+    if (
+      !pointChainHasCommittedLine()
+      && (!window.PointChain || !PointChain.hasChainOnMap || !PointChain.hasChainOnMap())
+    ) {
+      return false;
+    }
+    pointChainMapVisible = !pointChainMapVisible;
+    applyPointChainMapVisibility();
+    setMessage(
+      pointChainMapVisible
+        ? "Point chain preview lines are shown on the map."
+        : "Point chain preview lines are hidden on the map."
+    );
+    return true;
+  }
+
+  function syncPointChainSegmentsToLayerTree(options) {
+    options = options || {};
+    var sourceId = resolvePointChainSourceId();
+    var source = findLoadedSource(sourceId);
+    if (!source || !source.doc || !source.doc.xmlDoc) {
+      setMessage("Select a loaded KMZ/KML file for the point chain.");
+      return false;
+    }
+    if (!pointChainHasCommittedLine()) {
+      setMessage("Draw at least one segment before adding layer nodes.");
+      return false;
+    }
+    if (
+      !window.PointChainPersist
+      || !window.KmzSave
+      || !GisMap.syncPointChainFolderInTree
+    ) {
+      setMessage("Could not add point chain segments to the layer tree.");
+      return false;
+    }
+    pointChainStashCurrentToMemory();
+    var payload = pointChainExportSerializableState();
+    if (!PointChainPersist.writeIntoSource(source, payload)) {
+      setMessage("Could not write point chain lines into " + source.doc.fileName + ".");
+      return false;
+    }
+    var folderNodeId = GisMap.syncPointChainFolderInTree(
+      sourceId,
+      source.doc.xmlDoc,
+      function (href) {
+        return href || "";
+      }
+    );
+    markSourceEdited(source);
+    renderTree(GisMap.getRoot());
+    if (options.hidePreviewOverlay) {
+      pointChainMapVisible = false;
+      applyPointChainMapVisibility();
+    }
+    if (options.setStatus !== false) {
+      var folderName = KmzSave.POINT_CHAIN_FOLDER_NAME || "kmz-opener Point chain";
+      setMessage(
+        folderNodeId
+          ? "Added line segments to the layer tree under \"" +
+              folderName +
+              "\". Show or hide them with the layer tree checkboxes."
+          : "Updated point chain layers in " + source.doc.fileName + "."
+      );
+    }
+    return !!folderNodeId;
   }
 
   function bindPointChainStyleControls() {
@@ -1836,6 +1927,8 @@
     var opacityEl = document.getElementById("point-chain-line-opacity");
     var dashEl = document.getElementById("point-chain-line-dash");
     var markersEl = document.getElementById("point-chain-show-end-markers");
+    var mapVisibleEl = document.getElementById("point-chain-show-on-map");
+    var autoAddEl = document.getElementById("point-chain-auto-add-layers");
     if (colorEl) {
       colorEl.addEventListener("input", applyPointChainLineStyleLive);
     }
@@ -1850,6 +1943,12 @@
     }
     if (markersEl) {
       markersEl.addEventListener("change", applyPointChainLineStyleLive);
+    }
+    if (mapVisibleEl) {
+      mapVisibleEl.addEventListener("change", applyPointChainLineStyleLive);
+    }
+    if (autoAddEl) {
+      autoAddEl.addEventListener("change", applyPointChainLineStyleLive);
     }
   }
 
@@ -1878,12 +1977,14 @@
     if (!window.PointChain) {
       return null;
     }
-    return PointChain.drawChain(null, {
+    var summary = PointChain.drawChain(null, {
       segments: pointChainCommittedSegments,
       fitBounds: fitBounds !== false,
       style: pointChainLineStyle,
       showEndpointMarkers: pointChainShowEndpointMarkers,
     });
+    applyPointChainMapVisibility();
+    return summary;
   }
 
   function pointChainCloneSegment(segment) {
@@ -1913,6 +2014,7 @@
         dash: pointChainLineStyle.dash,
       },
       showEndpointMarkers: pointChainShowEndpointMarkers,
+      mapVisible: pointChainMapVisible,
       startDirection: pointChainStartDirection,
       startNodeKey: pointChainStartNodeKey,
       draft:
@@ -1941,6 +2043,7 @@
       dash: (state.style && state.style.dash) || pointChainLineStyle.dash,
     };
     pointChainShowEndpointMarkers = state.showEndpointMarkers !== false;
+    pointChainMapVisible = state.mapVisible !== false;
     pointChainStartDirection = state.startDirection || pointChainStartDirection;
     pointChainStartNodeKey = state.startNodeKey || null;
     if (state.draft && state.draft.length >= 2) {
@@ -2033,11 +2136,21 @@
       setMessage("Could not write point chain data into " + source.doc.fileName + ".");
       return;
     }
+    if (GisMap.syncPointChainFolderInTree) {
+      GisMap.syncPointChainFolderInTree(
+        sourceId,
+        source.doc.xmlDoc,
+        function (href) {
+          return href || "";
+        }
+      );
+      renderTree(GisMap.getRoot());
+    }
     markSourceEdited(source);
     setMessage(
       "Stored point chain lines in " +
         source.doc.fileName +
-        ". Save the file to disk when ready."
+        ". Layer tree updated — save the file to disk when ready."
     );
   }
 
@@ -2478,6 +2591,11 @@
     }
     syncPointChainTrimUi();
     syncPointChainUndoButton();
+    syncPointChainMapVisibilityUi();
+    var addLayersBtn = document.getElementById("point-chain-add-to-layers");
+    if (addLayersBtn) {
+      addLayersBtn.disabled = !hasCommitted;
+    }
   }
 
   function buildPointChainDirectionSelectHtml(selectedDirection) {
@@ -2842,6 +2960,12 @@
     }
     syncPointChainSegmentUi();
     pointChainStashCurrentToMemory();
+    if (pointChainAutoAddToLayers) {
+      syncPointChainSegmentsToLayerTree({
+        hidePreviewOverlay: true,
+        setStatus: false,
+      });
+    }
     var unvisitedLeft = getPointChainUnvisitedEntries(sourceId).length;
     setMessage(
       (isFirstSegment ? "Drew first segment — " : "Appended segment — ") +
@@ -2850,6 +2974,7 @@
         fileName +
         ". Path length: " +
         summary.lengthText +
+        (pointChainAutoAddToLayers ? " Added to the layer tree; preview line hidden." : "") +
         (unvisitedLeft > 0 ? " (" + unvisitedLeft + " point(s) not on the line yet.)" : ".")
     );
   }
@@ -3015,6 +3140,12 @@
         setMessage("Cleared point chain and segment progress.");
       });
     }
+    var addLayersBtn = document.getElementById("point-chain-add-to-layers");
+    if (addLayersBtn) {
+      addLayersBtn.addEventListener("click", function () {
+        syncPointChainSegmentsToLayerTree({ hidePreviewOverlay: true });
+      });
+    }
     var saveLinesBtn = document.getElementById("point-chain-save-to-kmz");
     if (saveLinesBtn) {
       saveLinesBtn.addEventListener("click", savePointChainLinesIntoSourceKmz);
@@ -3091,10 +3222,11 @@
       "</div>" +
       buildPointChainStyleHtml(pointChainLineStyle) +
       '<div class="point-chain-actions point-chain-save-actions">' +
+      '<button type="button" class="btn btn-subtle" id="point-chain-add-to-layers">Add segments to layer tree</button>' +
       '<button type="button" class="btn btn-subtle" id="point-chain-save-to-kmz">Save lines into selected file</button>' +
       '<button type="button" class="btn btn-subtle" id="point-chain-export-kmz">Export lines as new KMZ</button>' +
       "</div>" +
-      '<p class="muted point-chain-save-hint">Save embeds line data in the open file (ExtendedData + a Point chain folder). Export builds a standalone KMZ.</p>';
+      '<p class="muted point-chain-save-hint">Add to layer tree creates KML line placemarks you can show or hide in the left panel. Save also embeds JSON in ExtendedData. Export builds a standalone KMZ.</p>';
     bindPointChainPanelControls();
     bindPointChainOrderListResize();
     bindPointChainStyleControls();
@@ -4964,7 +5096,7 @@
         var downloadName = AppState.suggestedFileName();
         return ensureDesktop().then(function (desktop) {
           if (desktop && typeof desktop.api.choose_export_path === "function") {
-            return Promise.resolve(desktop.api.choose_export_path(downloadName)).then(function (dest) {
+            return desktopChooseExportPath(desktop.api, downloadName).then(function (dest) {
               if (!dest || !dest.path) {
                 setMessage("Save cancelled.");
                 return;
@@ -6091,6 +6223,89 @@
     });
   }
 
+  function desktopProjectRootInitial() {
+    if (!window.ViewerPathPrefs) {
+      return "";
+    }
+    return ViewerPathPrefs.getProjectRoot() || "";
+  }
+
+  function desktopScreenshotFolderInitial() {
+    if (!window.ViewerPathPrefs) {
+      return "";
+    }
+    var folder = ViewerPathPrefs.getScreenshotFolder() || "";
+    if (folder) {
+      return folder;
+    }
+    return desktopProjectRootInitial();
+  }
+
+  function desktopChooseKmz(api) {
+    var initial = desktopProjectRootInitial();
+    if (initial) {
+      return Promise.resolve(api.choose_kmz(initial));
+    }
+    return Promise.resolve(api.choose_kmz());
+  }
+
+  function desktopChooseExportPath(api, downloadName) {
+    var initial = desktopProjectRootInitial();
+    if (initial) {
+      return Promise.resolve(api.choose_export_path(downloadName, initial));
+    }
+    return Promise.resolve(api.choose_export_path(downloadName));
+  }
+
+  function deferNativeFolderDialog(callback) {
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        setTimeout(callback, 80);
+      });
+    });
+  }
+
+  function promptChooseDesktopDirectory(options) {
+    options = options || {};
+    whenDesktopReady()
+      .then(function () {
+        return ensureDesktop();
+      })
+      .then(function (desktop) {
+        if (!desktop || typeof desktop.api.choose_directory !== "function") {
+          setMessage(
+            options.unavailableMessage || "Folder settings are available in the desktop app."
+          );
+          return null;
+        }
+        var initial =
+          typeof options.initialDirectory === "function"
+            ? options.initialDirectory()
+            : options.initialDirectory || "";
+        return new Promise(function (resolve) {
+          deferNativeFolderDialog(function () {
+            Promise.resolve(desktop.api.choose_directory(initial || ""))
+              .then(resolve)
+              .catch(resolve.bind(null, null));
+          });
+        }).then(function (picked) {
+          if (!picked || !picked.path) {
+            if (options.cancelledMessage != null) {
+              setMessage(options.cancelledMessage);
+            }
+            return null;
+          }
+          if (typeof options.onPick === "function") {
+            options.onPick(picked.path);
+          }
+          return picked.path;
+        });
+      })
+      .catch(function (err) {
+        setMessage((err && err.message) || "Could not choose that folder.");
+      });
+  }
+
   function browserFileTypes() {
     return [
       {
@@ -6252,7 +6467,7 @@
       .then(function (blob) {
         return ensureDesktop().then(function (desktop) {
           if (desktop && typeof desktop.api.choose_export_path === "function") {
-            return Promise.resolve(desktop.api.choose_export_path(downloadName)).then(function (dest) {
+            return desktopChooseExportPath(desktop.api, downloadName).then(function (dest) {
               if (!dest || !dest.path) {
                 setMessage("Save cancelled.");
                 return;
@@ -6581,7 +6796,7 @@
     setMessage("Choose a KMZ or KML file to update…");
     return ensureDesktop().then(function (desktop) {
       if (desktop && desktop.api && typeof desktop.api.choose_kmz === "function") {
-        return Promise.resolve(desktop.api.choose_kmz()).then(function (meta) {
+        return desktopChooseKmz(desktop.api).then(function (meta) {
           if (!meta || !meta.token) {
             setMessage("CSV coordinates update cancelled.");
             return null;
@@ -7201,7 +7416,7 @@
           }
           return null;
         }
-        return Promise.resolve(desktop.api.choose_kmz()).then(function (meta) {
+        return desktopChooseKmz(desktop.api).then(function (meta) {
           if (!meta || !meta.token) {
             setMessage("");
             return null;
@@ -7236,7 +7451,7 @@
           }
           return null;
         }
-        return Promise.resolve(desktop.api.choose_kmz()).then(function (meta) {
+        return desktopChooseKmz(desktop.api).then(function (meta) {
           if (!meta || !meta.token) {
             setMessage("");
             return null;
@@ -7294,6 +7509,39 @@
       entry.popup.addEventListener("click", function (event) {
         var item = event.target.closest(".menubar-menu-item");
         if (!item || item.disabled) {
+          return;
+        }
+        if (item.id === "btn-set-screenshot-folder") {
+          event.preventDefault();
+          event.stopPropagation();
+          closeAllMenus();
+          promptChooseDesktopDirectory({
+            initialDirectory: desktopScreenshotFolderInitial,
+            onPick: function (path) {
+              if (window.ViewerPathPrefs) {
+                ViewerPathPrefs.setScreenshotFolder(path);
+              }
+              if (window.MapScreenshot && typeof MapScreenshot.persistSettings === "function") {
+                MapScreenshot.persistSettings();
+              }
+              setMessage("Screenshot save folder set to " + path + ".");
+            },
+          });
+          return;
+        }
+        if (item.id === "btn-set-project-root") {
+          event.preventDefault();
+          event.stopPropagation();
+          closeAllMenus();
+          promptChooseDesktopDirectory({
+            initialDirectory: desktopProjectRootInitial,
+            onPick: function (path) {
+              if (window.ViewerPathPrefs) {
+                ViewerPathPrefs.setProjectRoot(path);
+              }
+              setMessage("Project root set to " + path + ".");
+            },
+          });
           return;
         }
         closeAllMenus();
@@ -7628,6 +7876,11 @@
     }
     if (key === "c") {
       Measure.clear();
+    }
+    if (key === "l") {
+      if (togglePointChainMapVisibility()) {
+        event.preventDefault();
+      }
     }
   });
 

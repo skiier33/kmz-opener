@@ -549,6 +549,28 @@
     return node;
   }
 
+  function parseKmlFeatureNode(featureEl, xmlDoc, resolveHref) {
+    if (!featureEl || !xmlDoc || !xmlDoc.documentElement) {
+      return null;
+    }
+    var styleBook = collectStyles(xmlDoc.documentElement, resolveHref || function (href) {
+      return href || "";
+    });
+    var warnings = [];
+    var counters = { folder: 0, placemark: 0, overlay: 0 };
+    var tag = localName(featureEl);
+    if (tag === "folder" || tag === "document") {
+      return walkContainer(featureEl, styleBook, resolveHref, warnings, counters);
+    }
+    if (tag === "placemark") {
+      return parsePlacemark(featureEl, styleBook, resolveHref, counters.placemark);
+    }
+    if (tag === "groundoverlay") {
+      return parseGroundOverlay(featureEl, resolveHref, counters.overlay);
+    }
+    return null;
+  }
+
   function parseKmlDocument(xmlDoc, resolveHref) {
     var root = xmlDoc.documentElement;
     if (!root) {
@@ -614,6 +636,7 @@
 
   global.KmlParse = {
     parseKmlDocument: parseKmlDocument,
+    parseKmlFeatureNode: parseKmlFeatureNode,
     parseCoordinates: parseCoordinates,
     kmlColorToCss: kmlColorToCss,
     parseExtendedData: parseExtendedData,

@@ -427,6 +427,53 @@
     return lastSummary;
   }
 
+  function cloneSegmentsForExport() {
+    if (!lastSegments || !lastSegments.length) {
+      return [];
+    }
+    return lastSegments.map(function (segment) {
+      if (!segment || !segment.length) {
+        return [];
+      }
+      return segment.map(function (entry) {
+        return {
+          lat: entry.lat,
+          lng: entry.lng,
+        };
+      });
+    });
+  }
+
+  function getExportRenderState() {
+    if (!segmentsHaveDrawableLine(lastSegments)) {
+      return null;
+    }
+    return {
+      segments: cloneSegmentsForExport(),
+      style: getLineStyle(),
+      showEndpointMarkers: showEndpointMarkers,
+      endpointMarkers: {
+        start: segmentEndpointMarkerStart,
+        end: segmentEndpointMarkerEnd,
+      },
+    };
+  }
+
+  function setLayerVisible(visible) {
+    if (!map || !chainGroup) {
+      return;
+    }
+    if (visible) {
+      if (!map.hasLayer(chainGroup)) {
+        chainGroup.addTo(map);
+      }
+      return;
+    }
+    if (map.hasLayer(chainGroup)) {
+      map.removeLayer(chainGroup);
+    }
+  }
+
   global.PointChain = {
     init: init,
     clear: clear,
@@ -435,6 +482,8 @@
     setShowEndpointMarkers: setShowEndpointMarkers,
     getShowEndpointMarkers: getShowEndpointMarkers,
     getLineStyle: getLineStyle,
+    getExportRenderState: getExportRenderState,
+    setLayerVisible: setLayerVisible,
     hasChainOnMap: hasChainOnMap,
     buildNearestNeighborChain: buildNearestNeighborChain,
     entryKey: entryKey,

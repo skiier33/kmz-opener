@@ -107,6 +107,25 @@
               <button
                 type="button"
                 class="menubar-menu-item"
+                id="btn-set-screenshot-folder"
+                role="menuitem"
+                title="Choose the default folder for map screenshots (desktop app)"
+              >
+                Set screenshot save folder…
+              </button>
+              <button
+                type="button"
+                class="menubar-menu-item"
+                id="btn-set-project-root"
+                role="menuitem"
+                title="Choose the default folder for opening and saving KMZ/KML files (desktop app)"
+              >
+                Set project root…
+              </button>
+              <div class="menubar-sep" role="separator"></div>
+              <button
+                type="button"
+                class="menubar-menu-item"
                 id="btn-save-as-default"
                 role="menuitem"
                 title="Save toolbar, sidebar, screenshot, and map settings as defaults for the next launch"
@@ -302,6 +321,7 @@
       <div class="workspace">
         <div class="sidebar-shell" id="sidebar-shell">
         <aside class="sidebar sidebar-left">
+          <div class="sidebar-scroll">
           <section class="sidebar-section sidebar-recent">
             <h2>Recent</h2>
             <div id="recent-files" class="recent-files" aria-label="Recent KMZ files">
@@ -524,6 +544,7 @@
               </div>
             </div>
           </section>
+          </div>
 
           <div
             class="sidebar-split-handle"
@@ -793,6 +814,7 @@
     <script src="js/point-chain-persist.js"></script>
     <script src="js/screenshot.js"></script>
     <script src="js/gui-prefs.js"></script>
+    <script src="js/viewer-path-prefs.js"></script>
     <script src="js/viewer-defaults.js"></script>
     <script src="js/main.js"></script>
   </body>

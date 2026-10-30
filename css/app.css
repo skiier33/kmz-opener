@@ -351,6 +351,17 @@ select {
   border-left: 1px solid var(--border);
 }
 
+.sidebar-left .sidebar-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.sidebar-left .sidebar-inspect {
+  flex-shrink: 0;
+}
+
 .workspace.is-right-pane-collapsed .sidebar-right {
   border-left-color: transparent;
 }
@@ -491,12 +502,12 @@ body.sidebar-panel-resizing * {
 
 .sidebar-section {
   flex-shrink: 0;
-  padding: 12px 14px 8px;
+  padding: 6px 12px 4px;
   border-bottom: 1px solid var(--border);
 }
 
 .sidebar-section.collapsed {
-  padding-bottom: 12px;
+  padding-bottom: 6px;
 }
 
 .sidebar-section-head {
@@ -504,7 +515,7 @@ body.sidebar-panel-resizing * {
   align-items: center;
   gap: 4px;
   width: 100%;
-  margin: 0 0 8px;
+  margin: 0 0 4px;
   padding: 0;
   border: 0;
   border-radius: 4px;
@@ -569,7 +580,7 @@ body.sidebar-panel-resizing * {
 }
 
 .sidebar-section h2 {
-  margin: 0 0 8px;
+  margin: 0 0 4px;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -764,7 +775,7 @@ body.sidebar-panel-resizing * {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 8px;
+  margin-bottom: 4px;
 }
 
 .sidebar-layers-head h2 {
@@ -803,7 +814,8 @@ body.sidebar-panel-resizing * {
 }
 
 .sidebar-right .sidebar-layers {
-  flex: 1;
+  flex: 1 1 auto;
+  flex-shrink: 1;
   min-height: 0;
   border-bottom: none;
 }

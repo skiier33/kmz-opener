@@ -8,6 +8,10 @@
     groundoverlay: true,
   };
 
+  var POINT_CHAIN_FOLDER_NAME = "kmz-opener Point chain";
+  var POINT_CHAIN_GENERATED_FIELD = "kmz_opener_generated";
+  var POINT_CHAIN_GENERATED_VALUE = "point-chain-lines";
+
   function localName(el) {
     if (!el || !el.tagName) {
       return "";
@@ -327,12 +331,39 @@
     return hex + abgr.slice(2);
   }
 
+  function isPointChainLineFolderEl(folderEl) {
+    if (!folderEl || localName(folderEl) !== "folder") {
+      return false;
+    }
+    var nameEl = childByLocalName(folderEl, "name");
+    var text = nameEl ? String(nameEl.textContent || "").trim() : "";
+    if (text === POINT_CHAIN_FOLDER_NAME) {
+      return true;
+    }
+    return (
+      readExtendedDataValue(folderEl, POINT_CHAIN_GENERATED_FIELD)
+      === POINT_CHAIN_GENERATED_VALUE
+    );
+  }
+
+  function findPointChainLineFolder(documentEl) {
+    if (!documentEl) {
+      return null;
+    }
+    var match = null;
+    featureChildren(documentEl).forEach(function (child) {
+      if (!match && isPointChainLineFolderEl(child)) {
+        match = child;
+      }
+    });
+    return match;
+  }
+
   function syncPointChainLineFolder(documentEl, chainExport) {
     if (!documentEl || !chainExport) {
       return;
     }
-    var folderName =
-      chainExport.folderName || "kmz-opener Point chain";
+    var folderName = chainExport.folderName || POINT_CHAIN_FOLDER_NAME;
     removeFeatureChildByName(documentEl, "folder", folderName);
     var segments = chainExport.segments || [];
     if (!segments.length) {
@@ -347,8 +378,8 @@
     var folderExt = ensureExtendedData(folder, null);
     writeExtendedDataField(
       folderExt,
-      "kmz_opener_generated",
-      "point-chain-lines"
+      POINT_CHAIN_GENERATED_FIELD,
+      POINT_CHAIN_GENERATED_VALUE
     );
     documentEl.appendChild(folder);
     segments.forEach(function (segment, index) {
@@ -923,6 +954,9 @@
     setExtendedDataOnElement: setExtendedDataOnElement,
     readExtendedDataValue: readExtendedDataValue,
     getKmlDocumentElement: getKmlDocumentElement,
+    POINT_CHAIN_FOLDER_NAME: POINT_CHAIN_FOLDER_NAME,
+    findPointChainLineFolder: findPointChainLineFolder,
+    isPointChainLineFolderEl: isPointChainLineFolderEl,
     syncPointChainLineFolder: syncPointChainLineFolder,
     materializePointIcons: materializePointIcons,
     detachNode: detachNode,

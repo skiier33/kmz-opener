@@ -38,13 +38,15 @@ Use **Open** or drag a `.kmz` / `.kml` file onto the map. Demo files: `examples/
 | Cancel draft | Esc |
 | Clear measurements | Clear (or `C`) |
 | Driving directions | Click a KMZ point, then **Drive from my location** or **Click map for start** |
-| Shortcuts | `P` pan, `D` distance, `A` area |
+| Point chain | Build line segments between points; **Add segments to layer tree** creates KML lines in the left panel. Toggle the orange preview with the **Show preview line on map** checkbox or **`L`**. |
+| Shortcuts | `P` pan, `D` distance, `A` area, `L` toggle point chain preview on map |
 | Layer tree | Click to select. `Ctrl` toggles, `Shift` selects a range, `Ctrl+A` selects visible layers |
 | Rearrange | Drag a layer onto a folder to nest it, or between rows to reorder |
 | Edit layers | Copy, Cut, Paste, Delete, and Rename act on the selection. Double-click a feature or press `F2` to rename. Show and Hide apply to every selected layer |
 | Sort | **Sort** orders every folder’s contents by name |
 | Save copy | **Save copy** writes a new KMZ or KML beside the original, with a timestamp added to the file name |
 | Save / load state | **Data files → Save state…** writes a `.kmzgis-state.json` file (loaded files, unsaved edits, layer visibility, map view, basemap, and tool). **Load state…** restores it. The app also auto-saves the same session to IndexedDB on quit for the next launch |
+| Default folders | **Options → Set project root…** and **Set screenshot save folder…** (desktop app). Project root is the starting folder for Open, Save As, CSV KMZ pick, and state export; screenshot folder is used for map PNG export and the screenshot panel |
 | Coords from CSV | **File → Coords from CSV → Update from CSV…** — pick a CSV (`BH_ID`, `LAT`, `LONG`), then a KMZ/KML. Validates point placemarks (`<Point><coordinates>`) and matches CSV **BH_ID** to ExtendedData **BH_ID** or placemark **&lt;name&gt;** (e.g. B6A), including common spelling variants (B-6A, B06A, BH-6A). Use **Save copy** to write changes |
 | Edit KML externally | Desktop app only: **Edit KML externally…** opens the document in Sublime Text (if installed) or another editor you choose. Saving in the editor reloads the map. Set a custom launcher under **Editor command**, or use the `KMZ_GIS_EDITOR` environment variable |
 
