@@ -1050,7 +1050,7 @@
       }
     });
 
-    global.KmzToolWindows = {
+    window.KmzToolWindows = {
       open: openToolWindow,
       close: closeToolWindow,
     };
@@ -1074,7 +1074,9 @@
   var mapContextMenu = null;
   var mapContextMenuNodeId = null;
   var layerTreeContextMenu = null;
+  var layerTreeContextMenuNodeId = null;
   var layerTreeContextMenuSourceId = null;
+  var layerTreeContextMenuGotoBtn = null;
   var layerTreeContextMenuExportBtn = null;
   var featurePropertiesDialog = document.getElementById("feature-properties-dialog");
   var featurePropertiesBody = document.getElementById("feature-properties-body");
@@ -5831,6 +5833,7 @@
   }
 
   function hideLayerTreeContextMenu() {
+    layerTreeContextMenuNodeId = null;
     layerTreeContextMenuSourceId = null;
     if (layerTreeContextMenu) {
       layerTreeContextMenu.classList.add("hidden");
@@ -5842,6 +5845,25 @@
     layerTreeContextMenu.id = "layer-tree-context-menu";
     layerTreeContextMenu.className = "map-context-menu hidden";
     layerTreeContextMenu.setAttribute("role", "menu");
+
+    layerTreeContextMenuGotoBtn = document.createElement("button");
+    layerTreeContextMenuGotoBtn.type = "button";
+    layerTreeContextMenuGotoBtn.className = "map-context-menu-item";
+    layerTreeContextMenuGotoBtn.setAttribute("role", "menuitem");
+    layerTreeContextMenuGotoBtn.textContent = "Goto";
+    layerTreeContextMenuGotoBtn.addEventListener("click", function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      var nodeId = layerTreeContextMenuNodeId;
+      hideLayerTreeContextMenu();
+      if (!nodeId) {
+        return;
+      }
+      if (GisMap.centerOnNode(nodeId)) {
+        return;
+      }
+      setMessage("Nothing to show on the map for that layer.");
+    });
 
     layerTreeContextMenuExportBtn = document.createElement("button");
     layerTreeContextMenuExportBtn.type = "button";
@@ -5858,6 +5880,7 @@
       }
     });
 
+    layerTreeContextMenu.appendChild(layerTreeContextMenuGotoBtn);
     layerTreeContextMenu.appendChild(layerTreeContextMenuExportBtn);
     document.body.appendChild(layerTreeContextMenu);
 
@@ -5882,17 +5905,23 @@
     window.addEventListener("blur", hideLayerTreeContextMenu);
   }
 
-  function showLayerTreeContextMenu(sourceId, clientX, clientY) {
-    if (!layerTreeContextMenu || !sourceId) {
+  function showLayerTreeContextMenu(nodeId, clientX, clientY) {
+    if (!layerTreeContextMenu || !nodeId) {
       return;
     }
     hideMapContextMenu();
     hideNodeBalloon();
+    layerTreeContextMenuNodeId = nodeId;
+    var sourceId = documentSourceIdForLayerNodeId(nodeId);
     layerTreeContextMenuSourceId = sourceId;
-    var source = findLoadedSource(sourceId);
+    if (layerTreeContextMenuGotoBtn) {
+      layerTreeContextMenuGotoBtn.disabled = !GisMap.nodeHasMapBounds(nodeId);
+    }
+    var source = sourceId ? findLoadedSource(sourceId) : null;
     var canExport =
       !saveInFlight && !!(source && source.doc && source.doc.xmlDoc);
     if (layerTreeContextMenuExportBtn) {
+      layerTreeContextMenuExportBtn.hidden = !sourceId;
       layerTreeContextMenuExportBtn.disabled = !canExport;
     }
     layerTreeContextMenu.classList.remove("hidden");
@@ -5911,14 +5940,10 @@
     if (!row || !layerTreeEl.contains(row)) {
       return;
     }
-    var sourceId = documentSourceIdForLayerNodeId(row.dataset.id);
-    if (!sourceId) {
-      return;
-    }
     event.preventDefault();
     event.stopPropagation();
     selectRow(row.dataset.id, event);
-    showLayerTreeContextMenu(sourceId, event.clientX, event.clientY);
+    showLayerTreeContextMenu(row.dataset.id, event.clientX, event.clientY);
   }
 
   function createMapContextMenu() {

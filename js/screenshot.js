@@ -62,6 +62,7 @@
   var onAddViewportFn = null;
   var saveViewportBtn = null;
   var frameSaveViewportBtn = null;
+  var frameSaveScreenshotBtn = null;
   var viewportSourceSelect = null;
   var viewportFolderSelect = null;
   var getViewportFolderOptionsFn = null;
@@ -1061,7 +1062,7 @@
       overlayEl.classList.add("hidden");
       overlayEl.setAttribute("aria-hidden", "true");
     }
-    syncFrameSaveViewportButton();
+    syncCaptureFrameButtons();
   }
 
   function invokeSaveViewport() {
@@ -1070,11 +1071,20 @@
     }
   }
 
-  function syncFrameSaveViewportButton() {
+  function syncCaptureFrameButtons() {
+    var frameVisible = isCaptureFrameVisible();
+    if (frameSaveScreenshotBtn) {
+      if (!frameVisible) {
+        frameSaveScreenshotBtn.classList.add("hidden");
+      } else {
+        frameSaveScreenshotBtn.classList.remove("hidden");
+        frameSaveScreenshotBtn.disabled = saveInFlight;
+      }
+    }
     if (!frameSaveViewportBtn) {
       return;
     }
-    if (!isCaptureFrameVisible()) {
+    if (!frameVisible) {
       frameSaveViewportBtn.classList.add("hidden");
       return;
     }
@@ -1097,6 +1107,7 @@
     if (toolbarSaveBtn) {
       toolbarSaveBtn.disabled = disabled;
     }
+    syncCaptureFrameButtons();
     if (boundarySaveAllBtn) {
       boundarySaveAllBtn.disabled = disabled || !readBoundaryCheckIds().length;
     }
@@ -1498,7 +1509,7 @@
       if (saveViewportBtn) {
         saveViewportBtn.disabled = true;
       }
-      syncFrameSaveViewportButton();
+      syncCaptureFrameButtons();
       return;
     }
     viewportSourceSelect.disabled = false;
@@ -1518,7 +1529,7 @@
     if (saveViewportBtn) {
       saveViewportBtn.disabled = !sources.length;
     }
-    syncFrameSaveViewportButton();
+    syncCaptureFrameButtons();
   }
 
   function refreshTakeTwoSources() {
@@ -1972,12 +1983,17 @@
     if (takeTwoHideNamesToggle) {
       takeTwoHideNamesToggle.addEventListener("change", writeSettings);
     }
-    [saveBtn, toolbarSaveBtn].forEach(function (btn) {
+    [saveBtn, toolbarSaveBtn, frameSaveScreenshotBtn].forEach(function (btn) {
       if (!btn) {
         return;
       }
       btn.addEventListener("click", saveScreenshot);
     });
+    if (frameSaveScreenshotBtn) {
+      frameSaveScreenshotBtn.addEventListener("pointerdown", function (event) {
+        event.stopPropagation();
+      });
+    }
     if (boundaryLoadBtn) {
       boundaryLoadBtn.addEventListener("click", loadBoundaryFromSelection);
     }
@@ -2305,6 +2321,7 @@
     boundaryListEl = document.getElementById("screenshot-boundary-list");
     saveViewportBtn = document.getElementById("screenshot-save-viewport");
     frameSaveViewportBtn = document.getElementById("screenshot-save-viewport-frame");
+    frameSaveScreenshotBtn = document.getElementById("screenshot-save-frame");
     viewportSourceSelect = document.getElementById("screenshot-viewport-source");
     viewportFolderSelect = document.getElementById("screenshot-viewport-folder");
     dimStrengthInput = document.getElementById("screenshot-dim-strength");
@@ -2353,7 +2370,7 @@
     refreshViewportTargets();
     refreshBoundaryList();
     setOverlayVisible(showToggle ? showToggle.checked : true);
-    syncFrameSaveViewportButton();
+    syncCaptureFrameButtons();
 
     (ensureDesktopFn ? ensureDesktopFn() : Promise.resolve(null)).then(function (desktop) {
       if (browseBtn) {

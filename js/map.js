@@ -533,6 +533,59 @@
     return ids;
   }
 
+  function extendBoundsWithLayer(bounds, layer) {
+    if (!layer || typeof layer.getBounds !== "function") {
+      return;
+    }
+    try {
+      bounds.extend(layer.getBounds());
+    } catch (err) {
+      // Degenerate geometry; skip bounds.
+    }
+  }
+
+  function boundsForNode(node) {
+    if (!node) {
+      return null;
+    }
+    var bounds = L.latLngBounds([]);
+    collectDescendantIds(node, []).forEach(function (childId) {
+      extendBoundsWithLayer(bounds, layersById[childId]);
+    });
+    return bounds.isValid() ? bounds : null;
+  }
+
+  function nodeHasMapBounds(id) {
+    if (!currentRoot) {
+      return false;
+    }
+    var node = findNode(currentRoot, id);
+    return !!boundsForNode(node);
+  }
+
+  function centerOnNode(id) {
+    if (!map || !currentRoot) {
+      return false;
+    }
+    var node = findNode(currentRoot, id);
+    var bounds = boundsForNode(node);
+    if (!bounds) {
+      return false;
+    }
+    var ne = bounds.getNorthEast();
+    var sw = bounds.getSouthWest();
+    if (ne.lat === sw.lat && ne.lng === sw.lng) {
+      var zoom = map.getZoom();
+      if (!Number.isFinite(zoom) || zoom < 14) {
+        zoom = 14;
+      }
+      map.setView(bounds.getCenter(), zoom);
+    } else {
+      map.fitBounds(bounds.pad(0.08));
+    }
+    return true;
+  }
+
   function findNode(root, id) {
     if (!root) {
       return null;
@@ -2168,6 +2221,8 @@
     locate: function (id) {
       return currentRoot ? locateNode(currentRoot, id) : null;
     },
+    nodeHasMapBounds: nodeHasMapBounds,
+    centerOnNode: centerOnNode,
     topLevelIds: topLevelIds,
     nodeContains: function (ancestorId, id) {
       var ancestor = currentRoot ? findNode(currentRoot, ancestorId) : null;

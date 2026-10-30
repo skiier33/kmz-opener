@@ -1385,10 +1385,9 @@ body.sidebar-panel-resizing * {
   outline: 1px solid rgba(0, 0, 0, 0.65);
 }
 
-.screenshot-add-viewport {
+.screenshot-frame-action {
   position: absolute;
   top: 0;
-  right: 0;
   z-index: 1;
   pointer-events: auto;
   height: auto;
@@ -1397,10 +1396,19 @@ body.sidebar-panel-resizing * {
   font-size: 11px;
   line-height: 1.2;
   white-space: nowrap;
+}
+
+.screenshot-save-screenshot-frame {
+  left: 0;
+  transform: translate(0, calc(-100% - 4px));
+}
+
+.screenshot-add-viewport {
+  right: 0;
   transform: translate(-100%, calc(-100% - 4px));
 }
 
-.screenshot-add-viewport.hidden {
+.screenshot-frame-action.hidden {
   display: none;
 }
 
