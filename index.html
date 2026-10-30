@@ -404,7 +404,8 @@
           <section class="sidebar-section sidebar-screenshot">
             <h2>Screenshot</h2>
             <p class="muted screenshot-hint">
-              Set size, pan the map so the area you want sits inside the frame, then save.
+              Set size, pan the map so the area you want sits inside the frame, then save. With
+              <strong>Sharper basemap</strong> on, export reloads tiles at the output size (up to zoom 19).
             </p>
             <div class="screenshot-fields">
               <label class="screenshot-field screenshot-field-wide">
@@ -462,6 +463,10 @@
               <label class="screenshot-toggle">
                 <input id="screenshot-dim-outside" type="checkbox" checked />
                 Dim map outside capture frame
+              </label>
+              <label class="screenshot-toggle">
+                <input id="screenshot-hi-res-tiles" type="checkbox" checked />
+                Sharper basemap (reload tiles at output size)
               </label>
               <fieldset class="screenshot-frame-style">
                 <legend class="screenshot-frame-style-legend">Frame line style</legend>

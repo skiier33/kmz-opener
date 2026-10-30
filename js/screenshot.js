@@ -9,6 +9,9 @@
   var MIN_IN = MIN_DIM / SCREENSHOT_DPI;
   var MAX_IN = MAX_DIM / SCREENSHOT_DPI;
   var MAX_PNG_BYTES = 50 * 1024 * 1024;
+  var HI_RES_MIN_SCALE = 1.05;
+  var HI_RES_TILE_WAIT_MS = 450;
+  var HI_RES_TILE_TIMEOUT_MS = 8000;
 
   var mapWrap = null;
   var overlayEl = null;
@@ -26,6 +29,8 @@
   var toolbarSaveBtn = null;
   var showToggle = null;
   var dimOutsideToggle = null;
+  var hiResToggle = null;
+  var getMapFn = null;
   var frameColorInput = null;
   var frameWeightInput = null;
   var frameWeightValueEl = null;
@@ -112,6 +117,7 @@
           takeTwo: takeTwoToggle ? takeTwoToggle.checked : false,
           takeTwoHideNames: takeTwoHideNamesToggle ? takeTwoHideNamesToggle.checked : false,
           takeTwoHideIds: readTakeTwoHideIds(),
+          hiResTiles: hiResToggle ? hiResToggle.checked : true,
         })
       );
     } catch (err) {
@@ -389,6 +395,180 @@
     });
   }
 
+  function latLngBoundsForMapRect(map, cropX, cropY, cropW, cropH) {
+    if (!map || !global.L) {
+      return null;
+    }
+    var nw = map.containerPointToLatLng(global.L.point(cropX, cropY));
+    var se = map.containerPointToLatLng(global.L.point(cropX + cropW, cropY + cropH));
+    return global.L.latLngBounds(nw, se);
+  }
+
+  function mapHasRotation(map) {
+    if (!map || typeof map.getBearing !== "function") {
+      return false;
+    }
+    var bearing = map.getBearing();
+    return bearing != null && Math.abs(bearing) > 0.5;
+  }
+
+  function shouldUseHiResCapture(useFrame, scale) {
+    if (!useFrame || scale <= HI_RES_MIN_SCALE) {
+      return false;
+    }
+    if (!hiResToggle || !hiResToggle.checked) {
+      return false;
+    }
+    if (!getMapFn) {
+      return false;
+    }
+    var map = getMapFn();
+    if (!map || typeof map.getBoundsZoom !== "function") {
+      return false;
+    }
+    if (mapHasRotation(map)) {
+      return false;
+    }
+    return true;
+  }
+
+  function saveMapExportState(map, mapEl) {
+    return {
+      center: map.getCenter(),
+      zoom: map.getZoom(),
+      bearing: typeof map.getBearing === "function" ? map.getBearing() : 0,
+      mapStyle: {
+        width: mapEl.style.width,
+        height: mapEl.style.height,
+        position: mapEl.style.position,
+        left: mapEl.style.left,
+        top: mapEl.style.top,
+        zIndex: mapEl.style.zIndex,
+      },
+    };
+  }
+
+  function applyMapExportLayout(mapEl, outW, outH) {
+    mapEl.style.position = "fixed";
+    mapEl.style.left = "-99999px";
+    mapEl.style.top = "0";
+    mapEl.style.width = outW + "px";
+    mapEl.style.height = outH + "px";
+    mapEl.style.zIndex = "10000";
+  }
+
+  function restoreMapExportState(map, mapEl, state) {
+    if (!state) {
+      return;
+    }
+    var style = state.mapStyle || {};
+    mapEl.style.width = style.width || "";
+    mapEl.style.height = style.height || "";
+    mapEl.style.position = style.position || "";
+    mapEl.style.left = style.left || "";
+    mapEl.style.top = style.top || "";
+    mapEl.style.zIndex = style.zIndex || "";
+    map.invalidateSize();
+    map.setView(state.center, state.zoom, { animate: false });
+    if (typeof map.setBearing === "function" && state.bearing != null) {
+      map.setBearing(state.bearing);
+    }
+  }
+
+  function waitForMapIdle(map) {
+    return new Promise(function (resolve) {
+      var settled = false;
+      function finish() {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        map.off("moveend", onMoveEnd);
+        resolve();
+      }
+      function onMoveEnd() {
+        waitMs(HI_RES_TILE_WAIT_MS).then(finish);
+      }
+      map.once("moveend", onMoveEnd);
+      setTimeout(finish, HI_RES_TILE_TIMEOUT_MS);
+    });
+  }
+
+  function captureMapAtTileResolution(outW, outH, cropX, cropY, cropW, cropH, hadOverlay) {
+    var map = getMapFn();
+    var mapEl = document.getElementById("map");
+    if (!map || !mapEl) {
+      return Promise.reject(new Error("Map is not ready."));
+    }
+    var bounds = latLngBoundsForMapRect(map, cropX, cropY, cropW, cropH);
+    if (!bounds || !bounds.isValid()) {
+      if (hadOverlay && showToggle && showToggle.checked) {
+        setOverlayVisible(true);
+      }
+      return Promise.reject(new Error("Could not read the capture area on the map."));
+    }
+    var saved = saveMapExportState(map, mapEl);
+    applyMapExportLayout(mapEl, outW, outH);
+    map.invalidateSize();
+    var zoom = map.getBoundsZoom(bounds, true);
+    if (!isFinite(zoom)) {
+      restoreMapExportState(map, mapEl, saved);
+      if (hadOverlay && showToggle && showToggle.checked) {
+        setOverlayVisible(true);
+      }
+      return Promise.reject(new Error("Could not fit the capture area."));
+    }
+    var maxZoom = typeof map.getMaxZoom === "function" ? map.getMaxZoom() : 19;
+    var minZoom = typeof map.getMinZoom === "function" ? map.getMinZoom() : 0;
+    zoom = Math.max(minZoom, Math.min(maxZoom, zoom));
+    map.setView(bounds.getCenter(), zoom, { animate: false });
+    return waitForMapIdle(map)
+      .then(function () {
+        return waitForRepaint();
+      })
+      .then(function () {
+        return global.html2canvas(mapEl, {
+          useCORS: true,
+          allowTaint: false,
+          backgroundColor: null,
+          logging: false,
+          width: outW,
+          height: outH,
+          scale: 1,
+        });
+      })
+      .then(function (canvas) {
+        restoreMapExportState(map, mapEl, saved);
+        if (hadOverlay && showToggle && showToggle.checked) {
+          setOverlayVisible(true);
+        }
+        return new Promise(function (resolve, reject) {
+          canvas.toBlob(
+            function (blob) {
+              if (!blob) {
+                reject(new Error("Could not encode the screenshot (map tiles may block export)."));
+                return;
+              }
+              if (blob.size > MAX_PNG_BYTES) {
+                reject(new Error("Screenshot is too large to save."));
+                return;
+              }
+              resolve(blob);
+            },
+            "image/png",
+            1
+          );
+        });
+      })
+      .catch(function (err) {
+        restoreMapExportState(map, mapEl, saved);
+        if (hadOverlay && showToggle && showToggle.checked) {
+          setOverlayVisible(true);
+        }
+        throw err;
+      });
+  }
+
   function captureMapPng() {
     if (!global.html2canvas) {
       return Promise.reject(new Error("Screenshot library did not load."));
@@ -433,6 +613,9 @@
     var hadOverlay = useFrame && overlayEl && !overlayEl.classList.contains("hidden");
     if (hadOverlay) {
       overlayEl.classList.add("hidden");
+    }
+    if (shouldUseHiResCapture(useFrame, scale)) {
+      return captureMapAtTileResolution(outW, outH, cropX, cropY, cropW, cropH, hadOverlay);
     }
     return waitForRepaint()
       .then(function () {
@@ -906,6 +1089,9 @@
         applyFrameStyle();
       });
     }
+    if (hiResToggle) {
+      hiResToggle.addEventListener("change", writeSettings);
+    }
     if (frameColorInput) {
       frameColorInput.addEventListener("input", function () {
         writeSettings();
@@ -1003,6 +1189,9 @@
     if (takeTwoHideNamesToggle) {
       takeTwoHideNamesToggle.checked = !!settings.takeTwoHideNames;
     }
+    if (hiResToggle) {
+      hiResToggle.checked = settings.hiResTiles !== false;
+    }
     syncTakeTwoPanelVisibility();
   }
 
@@ -1024,6 +1213,7 @@
     toolbarSaveBtn = document.getElementById("screenshot-save-toolbar");
     showToggle = document.getElementById("screenshot-show-frame");
     dimOutsideToggle = document.getElementById("screenshot-dim-outside");
+    hiResToggle = document.getElementById("screenshot-hi-res-tiles");
     frameColorInput = document.getElementById("screenshot-frame-color");
     frameWeightInput = document.getElementById("screenshot-frame-weight");
     frameWeightValueEl = document.getElementById("screenshot-frame-weight-value");
@@ -1032,6 +1222,7 @@
     takeTwoHideNamesToggle = document.getElementById("screenshot-take-two-hide-names");
     takeTwoPanelEl = document.getElementById("screenshot-take-two-panel");
     takeTwoSourcesEl = document.getElementById("screenshot-take-two-sources");
+    getMapFn = options.getMap || null;
     getLoadedSourcesFn = options.getLoadedSources || null;
     setLoadedSourceVisibleFn = options.setLoadedSourceVisible || null;
     getSourcePointNameLabelsHiddenFn = options.getSourcePointNameLabelsHidden || null;

@@ -7806,6 +7806,9 @@
   if (window.MapScreenshot) {
     window.MapScreenshot.init({
       mapWrap: mapWrap,
+      getMap: function () {
+        return GisMap.getMap();
+      },
       ensureDesktop: ensureDesktop,
       setMessage: setMessage,
       readJsonResponse: readJsonResponse,
