@@ -20,6 +20,7 @@ from desktop.external_edit import (  # noqa: E402
     set_editor_command,
     parse_editor_goto,
 )
+from desktop.google_earth import launch_google_earth  # noqa: E402
 from desktop.server import (  # noqa: E402
     DESKTOP_TOKEN,
     EXPORT_PATHS,
@@ -28,6 +29,7 @@ from desktop.server import (  # noqa: E402
     import_custom_icon_from_path,
     normalize_path,
     register_source,
+    resolve_session_kmz_paths,
     start_server,
     user_custom_icons_dir,
 )
@@ -540,6 +542,28 @@ class DesktopApi:
         """
         if session_id and isinstance(session_id, str):
             _EXTERNAL_EDIT.stop_session(session_id)
+
+    def open_google_earth(self, paths: object) -> dict:
+        """
+        Launch Google Earth with KMZ or KML files from this session.
+
+        Args:
+            paths: List of absolute paths already opened in the viewer.
+
+        Returns:
+            Result dict with ``ok`` and ``count``, or ``error`` when launch fails.
+        """
+        try:
+            allowed = resolve_session_kmz_paths(paths)
+        except ValueError as err:
+            return {"error": str(err)}
+        try:
+            launch_google_earth(allowed)
+        except FileNotFoundError as err:
+            return {"error": str(err)}
+        except OSError as err:
+            return {"error": err.strerror or "Could not start Google Earth."}
+        return {"ok": True, "count": len(allowed)}
 
     def duplicate_window(
         self,

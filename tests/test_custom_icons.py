@@ -5,14 +5,16 @@ from pathlib import Path
 from desktop.server import (
     import_custom_icon_png,
     list_custom_icons,
+    resolve_custom_icon_path,
     user_custom_icons_dir,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_list_custom_icons_skips_non_png(tmp_path) -> None:
+def test_list_custom_icons_skips_non_png(monkeypatch, tmp_path) -> None:
     """Only .png files are returned from custom icon directories."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "empty-local"))
     shipped = tmp_path / "custom-icons"
     shipped.mkdir()
     (shipped / "pin.png").write_bytes(b"\x89PNG\r\n\x1a\n")
@@ -20,6 +22,28 @@ def test_list_custom_icons_skips_non_png(tmp_path) -> None:
     icons = list_custom_icons(str(tmp_path))
     names = {row["name"] for row in icons}
     assert names == {"pin.png"}
+
+
+def test_list_custom_icons_includes_png128_subfolder(monkeypatch, tmp_path) -> None:
+    """Shipped png128 icons are always listed for the icon picker."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "empty-local"))
+    shipped = tmp_path / "custom-icons" / "png128"
+    shipped.mkdir(parents=True)
+    (shipped / "marker.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    icons = list_custom_icons(str(tmp_path))
+    by_name = {row["name"]: row["url"] for row in icons}
+    assert "png128/marker.png" in by_name
+    assert by_name["png128/marker.png"] == "custom-icons/png128/marker.png"
+
+
+def test_resolve_custom_icon_path_finds_png128(tmp_path) -> None:
+    """Icon lookup resolves shipped png128 catalog names."""
+    shipped = tmp_path / "custom-icons" / "png128"
+    shipped.mkdir(parents=True)
+    icon = shipped / "marker.png"
+    icon.write_bytes(b"\x89PNG\r\n\x1a\n")
+    path = resolve_custom_icon_path(str(tmp_path), "png128/marker.png")
+    assert path == str(icon)
 
 
 def test_import_custom_icon_png_writes_user_folder(monkeypatch, tmp_path) -> None:

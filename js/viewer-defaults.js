@@ -4,9 +4,15 @@
   var DEFAULTS_KEY = "kmz-viewer-user-defaults";
   var VERSION = 1;
 
+  var VIEW_MENU_KEYS = [
+    "kmz-sidebar-sections-collapsed",
+    "kmz-sidebar-sections-hidden",
+  ];
+
   var PERSISTED_KEYS = [
     "kmz-viewer-gui",
     "kmz-sidebar-sections-collapsed",
+    "kmz-sidebar-sections-hidden",
     "kmz-sidebar-inspect-height",
     "kmz-sidebar-width",
     "kmz-sidebar-collapsed",
@@ -101,9 +107,40 @@
     return storage;
   }
 
+  function savePartialSnapshot(keys) {
+    var keyList = Array.isArray(keys) ? keys : [];
+    if (!keyList.length) {
+      return collectFromLocalStorage();
+    }
+    var existing = readDefaults();
+    var storage =
+      existing && existing.storage && typeof existing.storage === "object"
+        ? Object.assign({}, existing.storage)
+        : {};
+    keyList.forEach(function (key) {
+      if (PERSISTED_KEYS.indexOf(key) < 0) {
+        return;
+      }
+      try {
+        var value = global.localStorage.getItem(key);
+        if (value !== null) {
+          storage[key] = value;
+        } else {
+          delete storage[key];
+        }
+      } catch (err) {
+        /* ignore */
+      }
+    });
+    writeDefaults(storage);
+    return storage;
+  }
+
   global.ViewerDefaults = {
+    VIEW_MENU_KEYS: VIEW_MENU_KEYS,
     applyBeforeInit: applyBeforeInit,
     saveSnapshot: saveSnapshot,
+    savePartialSnapshot: savePartialSnapshot,
     hasSaved: function () {
       return !!readDefaults();
     },

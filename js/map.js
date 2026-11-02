@@ -2267,6 +2267,8 @@
     setMapScaleDenominator: setMapScaleDenominator,
     nearestMapScalePreset: nearestMapScalePreset,
     feetPerInchForDenominator: feetPerInchForDenominator,
+    getScaleDenominatorAt: scaleDenominatorAt,
+    zoomForScaleDenominatorAt: zoomForScaleDenominator,
     rotateMapByDegrees: rotateMapByDegrees,
   };
 })(window);

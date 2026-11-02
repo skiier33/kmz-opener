@@ -17,11 +17,14 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from typing import Dict, List, Optional, Set, Tuple
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
+from desktop.google_earth import launch_google_earth
+
 # Fixed loopback port so the WebView origin stays stable and recent files persist.
 PREFERRED_PORT = 47821
 MAX_UPLOAD_BYTES = 1024 * 1024 * 1024
 MAX_SCREENSHOT_BYTES = 50 * 1024 * 1024
 MAX_CUSTOM_ICON_BYTES = 5 * 1024 * 1024
+SHIPPED_ICON_SUBDIRS = ("png128",)
 DESKTOP_TOKEN = secrets.token_urlsafe(24)
 OPENED_PATHS: Set[str] = set()
 EXPORT_PATHS: Set[str] = set()
@@ -54,46 +57,109 @@ def _safe_png_basename(name: str) -> Optional[str]:
     return base
 
 
+def _safe_shipped_icon_catalog_name(name: str) -> Optional[str]:
+    """Return a safe catalog name for a shipped PNG (basename or png128/name.png)."""
+    normalized = str(name or "").strip().replace("\\", "/")
+    if not normalized:
+        return None
+    if "/" not in normalized:
+        return _safe_png_basename(normalized)
+    parts = normalized.split("/")
+    if len(parts) != 2:
+        return None
+    subdir, file_name = parts
+    if subdir not in SHIPPED_ICON_SUBDIRS:
+        return None
+    safe_base = _safe_png_basename(file_name)
+    if not safe_base:
+        return None
+    return f"{subdir}/{safe_base}"
+
+
+def _shipped_icon_url(catalog_name: str) -> str:
+    """Build a static URL under custom-icons/ for a shipped catalog entry."""
+    if "/" in catalog_name:
+        subdir, file_name = catalog_name.split("/", 1)
+        return f"custom-icons/{subdir}/{quote(file_name)}"
+    return f"custom-icons/{quote(catalog_name)}"
+
+
 def list_custom_icons(viewer_root: str) -> List[Dict[str, str]]:
-    """List PNG icons from the shipped and user custom-icons folders."""
+    """List PNG icons from shipped custom-icons folders and the user folder."""
     seen: Set[str] = set()
     icons: List[Dict[str, str]] = []
-    directories = [
-        os.path.join(viewer_root, "custom-icons"),
-        user_custom_icons_dir(),
-    ]
-    for directory in directories:
-        if not os.path.isdir(directory):
-            continue
+    shipped_root = os.path.join(viewer_root, "custom-icons")
+    user_root = user_custom_icons_dir()
+
+    def append_shipped_png(catalog_name: str) -> None:
+        if catalog_name in seen:
+            return
+        seen.add(catalog_name)
+        icons.append({"name": catalog_name, "url": _shipped_icon_url(catalog_name)})
+
+    if os.path.isdir(shipped_root):
         try:
-            names = sorted(os.listdir(directory))
+            top_level = sorted(os.listdir(shipped_root))
         except OSError:
-            continue
-        for name in names:
+            top_level = []
+        for name in top_level:
+            safe = _safe_png_basename(name)
+            if safe:
+                append_shipped_png(safe)
+        for subdir in SHIPPED_ICON_SUBDIRS:
+            nested = os.path.join(shipped_root, subdir)
+            if not os.path.isdir(nested):
+                continue
+            try:
+                nested_names = sorted(os.listdir(nested))
+            except OSError:
+                continue
+            for name in nested_names:
+                safe = _safe_png_basename(name)
+                if safe:
+                    append_shipped_png(f"{subdir}/{safe}")
+
+    if os.path.isdir(user_root):
+        try:
+            user_names = sorted(os.listdir(user_root))
+        except OSError:
+            user_names = []
+        for name in user_names:
             safe = _safe_png_basename(name)
             if not safe or safe in seen:
                 continue
             seen.add(safe)
-            if directory == os.path.join(viewer_root, "custom-icons"):
-                url = f"custom-icons/{quote(safe)}"
-            else:
-                url = f"/__desktop/custom-icon?name={quote(safe)}"
-            icons.append({"name": safe, "url": url})
+            icons.append(
+                {
+                    "name": safe,
+                    "url": f"/__desktop/custom-icon?name={quote(safe)}",
+                }
+            )
     return icons
 
 
 def resolve_custom_icon_path(viewer_root: str, name: str) -> Optional[str]:
     """Return an absolute path to a custom icon PNG, preferring the user folder."""
-    safe = _safe_png_basename(name)
-    if not safe:
+    catalog_name = _safe_shipped_icon_catalog_name(unquote(str(name or "")))
+    if not catalog_name:
+        return None
+    if "/" in catalog_name:
+        subdir, file_name = catalog_name.split("/", 1)
+        shipped = os.path.join(viewer_root, "custom-icons", subdir, file_name)
+        if os.path.isfile(shipped):
+            return shipped
         return None
     candidates = [
-        os.path.join(user_custom_icons_dir(), safe),
-        os.path.join(viewer_root, "custom-icons", safe),
+        os.path.join(user_custom_icons_dir(), catalog_name),
+        os.path.join(viewer_root, "custom-icons", catalog_name),
     ]
     for path in candidates:
         if os.path.isfile(path):
             return path
+    for subdir in SHIPPED_ICON_SUBDIRS:
+        nested = os.path.join(viewer_root, "custom-icons", subdir, catalog_name)
+        if os.path.isfile(nested):
+            return nested
     return None
 
 
@@ -188,6 +254,39 @@ def token_ok(header_value: Optional[str]) -> bool:
     if not header_value or len(header_value) != len(DESKTOP_TOKEN):
         return False
     return secrets.compare_digest(header_value, DESKTOP_TOKEN)
+
+
+def resolve_session_kmz_paths(paths: object) -> List[str]:
+    """Return normalized on-disk paths opened in this session.
+
+    Args:
+        paths: List of filesystem paths from the viewer.
+
+    Returns:
+        Unique allowed paths that exist and are KMZ or KML files.
+
+    Raises:
+        ValueError: No paths were allowed or the input was invalid.
+    """
+    if not isinstance(paths, list):
+        raise ValueError("Invalid path list.")
+    resolved: List[str] = []
+    seen: Set[str] = set()
+    for item in paths:
+        if not item or not isinstance(item, str):
+            continue
+        full = normalize_path(item)
+        if full in seen:
+            continue
+        with STATE_LOCK:
+            allowed = full in OPENED_PATHS
+        if not allowed or not is_kmz_or_kml(full) or not os.path.isfile(full):
+            continue
+        seen.add(full)
+        resolved.append(full)
+    if not resolved:
+        raise ValueError("No opened KMZ or KML files were available.")
+    return resolved
 
 
 def register_source(path: str) -> str:
@@ -470,6 +569,9 @@ def _handler_class(viewer_root: str) -> type:
             if parsed.path == "/__desktop/import-custom-icon":
                 self._import_custom_icon()
                 return
+            if parsed.path == "/__desktop/open-google-earth":
+                self._open_google_earth()
+                return
             self._send_json(404, {"error": "Not found."})
 
         def _serve_source(self, query: str) -> None:
@@ -706,6 +808,48 @@ def _handler_class(viewer_root: str) -> type:
                 self._send_json(400, {"error": "Expected a PNG image."})
                 return
             self._send_json(200, {"ok": True, **saved})
+
+        def _open_google_earth(self) -> None:
+            """Launch Google Earth with KMZ or KML files open in this session."""
+            if not token_ok(self.headers.get("X-Desktop-Token")):
+                self._send_json(403, {"error": "Desktop access was denied."})
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0") or "0")
+            except ValueError:
+                self._send_json(400, {"error": "Invalid request size."})
+                return
+            if length <= 0 or length > 65536:
+                self._send_json(400, {"error": "Invalid request body."})
+                return
+            raw = self.rfile.read(length)
+            if len(raw) != length:
+                self._send_json(400, {"error": "The request was incomplete."})
+                return
+            try:
+                payload = json.loads(raw.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            if not isinstance(payload, dict):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            try:
+                allowed = resolve_session_kmz_paths(payload.get("paths"))
+            except ValueError as err:
+                self._send_json(403, {"error": str(err)})
+                return
+            try:
+                launch_google_earth(allowed)
+            except FileNotFoundError as err:
+                self._send_json(404, {"error": str(err)})
+                return
+            except OSError as err:
+                self._send_json(
+                    500, {"error": err.strerror or "Could not start Google Earth."}
+                )
+                return
+            self._send_json(200, {"ok": True, "count": len(allowed)})
 
     return QuietHandler
 
