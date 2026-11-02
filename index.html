@@ -221,15 +221,16 @@
             <input id="imagery-labels" type="checkbox" checked aria-label="Labels on satellite" />
             <span class="toolbar-select-caption">Labels</span>
           </label>
-          <label
-            class="basemap-label"
-            id="imagery-label-granularity-wrap"
+          <div
+            class="imagery-label-detail"
+            id="imagery-label-detail-wrap"
             hidden
-            title="Which reference labels to show over satellite imagery"
+            role="group"
+            aria-label="Satellite map detail layers"
           >
-            <span class="toolbar-select-caption">Label detail</span>
-            <select id="imagery-label-granularity" aria-label="Imagery label detail"></select>
-          </label>
+            <span class="toolbar-select-caption">Map detail</span>
+            <div id="imagery-label-layer-toggles" class="imagery-label-layer-toggles"></div>
+          </div>
         </div>
 
         <div class="toolbar-sep"></div>

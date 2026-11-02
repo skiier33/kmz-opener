@@ -7,31 +7,55 @@
   var activeBasemapKey = "satellite";
   var imageryLabelLayersByBasemap = null;
   var imageryLabelsEnabled = true;
-  var imageryLabelGranularityId = "all";
+  var imageryLabelGranularityId = "roads_places";
+  var imageryLabelLayerEnabled = {};
 
   var IMAGERY_LABEL_SOURCES = {
     satellite: {
       layers: [
         {
           id: "transport",
+          label: "Roads",
+          title: "Highways and major roads (Esri)",
           url:
             "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}",
           attribution:
             "Transportation &copy; Esri, HERE, Garmin, (c) OpenStreetMap contributors, and the GIS user community",
         },
         {
+          id: "street_names",
+          label: "Streets",
+          title: "Street and road name labels (OpenStreetMap via CARTO)",
+          url:
+            "https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png",
+          attribution: "&copy; OpenStreetMap &copy; CARTO",
+          subdomains: "abcd",
+        },
+        {
           id: "places",
+          label: "Places",
+          title: "Cities, boundaries, and geographic names (Esri)",
           url:
             "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
           attribution: "Boundaries &amp; Places &copy; Esri",
         },
       ],
       granularity: [
-        { id: "all", label: "All labels", layerIds: ["transport", "places"] },
+        {
+          id: "all",
+          label: "All map detail",
+          layerIds: ["transport", "street_names", "places"],
+        },
+        {
+          id: "roads_places",
+          label: "Roads & places",
+          layerIds: ["transport", "places"],
+        },
         { id: "places", label: "Places only", layerIds: ["places"] },
         { id: "roads", label: "Roads only", layerIds: ["transport"] },
+        { id: "streets", label: "Street names only", layerIds: ["street_names"] },
       ],
-      defaultGranularity: "all",
+      defaultGranularity: "roads_places",
     },
   };
   var dataGroup = null;
@@ -76,10 +100,14 @@
       return byId;
     }
     source.layers.forEach(function (def) {
-      byId[def.id] = L.tileLayer(def.url, {
-        maxZoom: 19,
+      var options = {
+        maxZoom: def.maxZoom || 19,
         attribution: def.attribution,
-      });
+      };
+      if (def.subdomains) {
+        options.subdomains = def.subdomains;
+      }
+      byId[def.id] = L.tileLayer(def.url, options);
     });
     return byId;
   }
@@ -164,6 +192,112 @@
     });
   }
 
+  function defaultImageryLabelLayerEnabled(key) {
+    var source = getImageryLabelSource(key);
+    var enabled = {};
+    if (!source) {
+      return enabled;
+    }
+    source.layers.forEach(function (layer) {
+      enabled[layer.id] = false;
+    });
+    var preset = resolveImageryLabelGranularityPreset(
+      key,
+      source.defaultGranularity || "roads_places"
+    );
+    (preset.layerIds || []).forEach(function (layerId) {
+      enabled[layerId] = true;
+    });
+    return enabled;
+  }
+
+  function ensureImageryLabelLayerState(key) {
+    var source = getImageryLabelSource(key);
+    if (!source) {
+      return;
+    }
+    source.layers.forEach(function (layer) {
+      if (typeof imageryLabelLayerEnabled[layer.id] !== "boolean") {
+        imageryLabelLayerEnabled[layer.id] = false;
+      }
+    });
+  }
+
+  function applyImageryLabelGranularityToLayerState(key, granularityId) {
+    var source = getImageryLabelSource(key);
+    if (!source) {
+      return;
+    }
+    ensureImageryLabelLayerState(key);
+    var preset = resolveImageryLabelGranularityPreset(key, granularityId);
+    if (!preset) {
+      return;
+    }
+    source.layers.forEach(function (layer) {
+      imageryLabelLayerEnabled[layer.id] = false;
+    });
+    (preset.layerIds || []).forEach(function (layerId) {
+      imageryLabelLayerEnabled[layerId] = true;
+    });
+    imageryLabelGranularityId = normalizeImageryLabelGranularity(key, preset.id || granularityId);
+  }
+
+  function getImageryLabelLayerCatalog(key) {
+    var source = getImageryLabelSource(key);
+    if (!source) {
+      return [];
+    }
+    return source.layers.map(function (layer) {
+      return {
+        id: layer.id,
+        label: layer.label || layer.id,
+        title: layer.title || layer.label || layer.id,
+      };
+    });
+  }
+
+  function getImageryLabelLayerEnabled(layerId) {
+    return !!imageryLabelLayerEnabled[layerId];
+  }
+
+  function setImageryLabelLayerEnabled(layerId, enabled) {
+    ensureImageryLabelLayerState(activeBasemapKey);
+    if (typeof imageryLabelLayerEnabled[layerId] !== "boolean") {
+      return;
+    }
+    imageryLabelLayerEnabled[layerId] = !!enabled;
+    imageryLabelGranularityId = "custom";
+    syncImageryLabelOverlays();
+  }
+
+  function getImageryLabelLayerState(key) {
+    var source = getImageryLabelSource(key);
+    if (!source) {
+      return {};
+    }
+    ensureImageryLabelLayerState(key);
+    var state = {};
+    source.layers.forEach(function (layer) {
+      state[layer.id] = !!imageryLabelLayerEnabled[layer.id];
+    });
+    return state;
+  }
+
+  function setImageryLabelLayerState(key, state) {
+    var source = getImageryLabelSource(key);
+    if (!source || !state || typeof state !== "object") {
+      return;
+    }
+    ensureImageryLabelLayerState(key);
+    source.layers.forEach(function (layer) {
+      if (typeof state[layer.id] === "boolean") {
+        imageryLabelLayerEnabled[layer.id] = state[layer.id];
+      }
+    });
+    imageryLabelGranularityId = "custom";
+    syncImageryLabelOverlays();
+  }
+
   function syncImageryLabelOverlays() {
     if (!map || !imageryLabelLayersByBasemap) {
       return;
@@ -172,18 +306,13 @@
     if (!basemapSupportsImageryLabels(activeBasemapKey) || !imageryLabelsEnabled) {
       return;
     }
-    var preset = resolveImageryLabelGranularityPreset(
-      activeBasemapKey,
-      imageryLabelGranularityId
-    );
-    if (!preset) {
-      return;
-    }
+    ensureImageryLabelLayerState(activeBasemapKey);
     var layers = imageryLabelLayersByBasemap[activeBasemapKey] || {};
-    (preset.layerIds || []).forEach(function (layerId) {
-      if (layers[layerId]) {
-        layers[layerId].addTo(map);
+    Object.keys(imageryLabelLayerEnabled).forEach(function (layerId) {
+      if (!imageryLabelLayerEnabled[layerId] || !layers[layerId]) {
+        return;
       }
+      layers[layerId].addTo(map);
     });
   }
 
@@ -197,8 +326,7 @@
   }
 
   function setImageryLabelGranularity(granularityId) {
-    var normalized = normalizeImageryLabelGranularity(activeBasemapKey, granularityId);
-    imageryLabelGranularityId = normalized || granularityId || "all";
+    applyImageryLabelGranularityToLayerState(activeBasemapKey, granularityId);
     syncImageryLabelOverlays();
   }
 
@@ -1762,10 +1890,8 @@
   function init(divId) {
     basemaps = createBasemaps();
     imageryLabelLayersByBasemap = createImageryLabelLayersByBasemap();
-    imageryLabelGranularityId = normalizeImageryLabelGranularity(
-      activeBasemapKey,
-      imageryLabelGranularityId
-    );
+    imageryLabelLayerEnabled = defaultImageryLabelLayerEnabled(activeBasemapKey);
+    applyImageryLabelGranularityToLayerState(activeBasemapKey, imageryLabelGranularityId);
     map = L.map(divId, {
       zoomControl: true,
       doubleClickZoom: true,
@@ -1802,10 +1928,7 @@
     }
     activeBasemapKey = key;
     activeBasemap = next.addTo(map);
-    imageryLabelGranularityId = normalizeImageryLabelGranularity(
-      activeBasemapKey,
-      imageryLabelGranularityId
-    );
+    applyImageryLabelGranularityToLayerState(activeBasemapKey, imageryLabelGranularityId);
     syncImageryLabelOverlays();
   }
 
@@ -2072,6 +2195,11 @@
     getImageryLabelGranularity: getImageryLabelGranularity,
     getImageryLabelGranularityOptions: getImageryLabelGranularityOptions,
     normalizeImageryLabelGranularity: normalizeImageryLabelGranularity,
+    getImageryLabelLayerCatalog: getImageryLabelLayerCatalog,
+    getImageryLabelLayerEnabled: getImageryLabelLayerEnabled,
+    setImageryLabelLayerEnabled: setImageryLabelLayerEnabled,
+    getImageryLabelLayerState: getImageryLabelLayerState,
+    setImageryLabelLayerState: setImageryLabelLayerState,
     getActiveBasemapKey: getActiveBasemapKey,
     basemapSupportsImageryLabels: basemapSupportsImageryLabels,
     loadDocument: loadDocument,

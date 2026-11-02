@@ -7731,28 +7731,63 @@
 
   var imageryLabelsInput = document.getElementById("imagery-labels");
   var imageryLabelsWrap = document.getElementById("imagery-labels-wrap");
-  var imageryLabelGranularityWrap = document.getElementById("imagery-label-granularity-wrap");
-  var imageryLabelGranularitySelect = document.getElementById("imagery-label-granularity");
+  var imageryLabelDetailWrap = document.getElementById("imagery-label-detail-wrap");
+  var imageryLabelLayerToggles = document.getElementById("imagery-label-layer-toggles");
+  var imageryLabelLayerToggleInputs = {};
 
-  function populateImageryLabelGranularitySelect(key) {
-    if (!imageryLabelGranularitySelect) {
+  function ensureImageryLabelLayerToggleInputs(key) {
+    if (!imageryLabelLayerToggles) {
       return;
     }
-    var options = GisMap.getImageryLabelGranularityOptions(key);
-    var current = GisMap.normalizeImageryLabelGranularity(key, GisMap.getImageryLabelGranularity());
-    imageryLabelGranularitySelect.innerHTML = "";
-    options.forEach(function (entry) {
-      var opt = document.createElement("option");
-      opt.value = entry.id;
-      opt.textContent = entry.label;
-      imageryLabelGranularitySelect.appendChild(opt);
+    var catalog = GisMap.getImageryLabelLayerCatalog(key);
+    if (!catalog.length) {
+      imageryLabelLayerToggles.innerHTML = "";
+      imageryLabelLayerToggleInputs = {};
+      return;
+    }
+    var existingIds = Object.keys(imageryLabelLayerToggleInputs);
+    var catalogIds = catalog.map(function (entry) {
+      return entry.id;
     });
-    if (current) {
-      imageryLabelGranularitySelect.value = current;
+    var same =
+      existingIds.length === catalogIds.length
+      && existingIds.every(function (id, index) {
+        return id === catalogIds[index];
+      });
+    if (same) {
+      return;
     }
-    if (current && imageryLabelGranularitySelect.value !== GisMap.getImageryLabelGranularity()) {
-      GisMap.setImageryLabelGranularity(imageryLabelGranularitySelect.value);
-    }
+    imageryLabelLayerToggles.innerHTML = "";
+    imageryLabelLayerToggleInputs = {};
+    catalog.forEach(function (entry) {
+      var label = document.createElement("label");
+      label.className = "imagery-label-layer-toggle";
+      label.title = entry.title || entry.label;
+      var input = document.createElement("input");
+      input.type = "checkbox";
+      input.dataset.layerId = entry.id;
+      input.setAttribute("aria-label", entry.label);
+      label.appendChild(input);
+      label.appendChild(document.createTextNode(entry.label));
+      input.addEventListener("change", function (event) {
+        GisMap.setImageryLabelLayerEnabled(entry.id, event.target.checked);
+        syncImageryLabelLayerToggleInputs(key);
+        persistViewerGuiPrefs();
+      });
+      imageryLabelLayerToggles.appendChild(label);
+      imageryLabelLayerToggleInputs[entry.id] = input;
+    });
+  }
+
+  function syncImageryLabelLayerToggleInputs(key) {
+    ensureImageryLabelLayerToggleInputs(key);
+    Object.keys(imageryLabelLayerToggleInputs).forEach(function (layerId) {
+      var input = imageryLabelLayerToggleInputs[layerId];
+      if (!input) {
+        return;
+      }
+      input.checked = GisMap.getImageryLabelLayerEnabled(layerId);
+    });
   }
 
   function syncImageryLabelsControl() {
@@ -7761,20 +7796,26 @@
     }
     var key = GisMap.getActiveBasemapKey();
     var supported = GisMap.basemapSupportsImageryLabels(key);
-    var granularityOptions = GisMap.getImageryLabelGranularityOptions(key);
+    var layerCatalog = GisMap.getImageryLabelLayerCatalog(key);
     var labelsOn = supported && GisMap.getImageryLabelsEnabled();
     imageryLabelsInput.disabled = !supported;
     imageryLabelsWrap.classList.toggle("is-disabled", !supported);
     if (supported) {
       imageryLabelsInput.checked = GisMap.getImageryLabelsEnabled();
     }
-    if (imageryLabelGranularityWrap && imageryLabelGranularitySelect) {
-      var showGranularity = supported && granularityOptions.length > 1 && labelsOn;
-      imageryLabelGranularityWrap.hidden = !showGranularity;
-      if (showGranularity) {
-        populateImageryLabelGranularitySelect(key);
+    if (imageryLabelDetailWrap) {
+      var showDetail = supported && layerCatalog.length > 0 && labelsOn;
+      imageryLabelDetailWrap.hidden = !showDetail;
+      if (showDetail) {
+        syncImageryLabelLayerToggleInputs(key);
+        Object.keys(imageryLabelLayerToggleInputs).forEach(function (layerId) {
+          var input = imageryLabelLayerToggleInputs[layerId];
+          if (input) {
+            input.disabled = false;
+            input.parentElement.classList.remove("is-disabled");
+          }
+        });
       }
-      imageryLabelGranularitySelect.disabled = !showGranularity;
     }
   }
 
@@ -7788,13 +7829,6 @@
     imageryLabelsInput.addEventListener("change", function (event) {
       GisMap.setImageryLabelsEnabled(event.target.checked);
       syncImageryLabelsControl();
-      persistViewerGuiPrefs();
-    });
-  }
-
-  if (imageryLabelGranularitySelect) {
-    imageryLabelGranularitySelect.addEventListener("change", function (event) {
-      GisMap.setImageryLabelGranularity(event.target.value);
       persistViewerGuiPrefs();
     });
   }
