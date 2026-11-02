@@ -46,6 +46,21 @@ def test_resolve_custom_icon_path_finds_png128(tmp_path) -> None:
     assert path == str(icon)
 
 
+def test_list_custom_icons_includes_north_arrows_subfolder(monkeypatch, tmp_path) -> None:
+    """Shipped NorthArrowsPNG128 icons are listed for north arrow pickers."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "empty-local"))
+    shipped = tmp_path / "custom-icons" / "NorthArrowsPNG128"
+    shipped.mkdir(parents=True)
+    (shipped / "arrow_blue-01.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    icons = list_custom_icons(str(tmp_path))
+    by_name = {row["name"]: row["url"] for row in icons}
+    assert "NorthArrowsPNG128/arrow_blue-01.png" in by_name
+    assert (
+        by_name["NorthArrowsPNG128/arrow_blue-01.png"]
+        == "custom-icons/NorthArrowsPNG128/arrow_blue-01.png"
+    )
+
+
 def test_import_custom_icon_png_writes_user_folder(monkeypatch, tmp_path) -> None:
     """Uploaded PNG bytes are stored under the user custom-icons directory."""
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))

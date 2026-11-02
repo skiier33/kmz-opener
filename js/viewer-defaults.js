@@ -21,6 +21,7 @@
     "kmz-point-chain-order-height",
     "kmz-screenshot-settings",
     "kmz-viewer-path-prefs",
+    "kmz-map-scale-presets",
   ];
 
   function readDefaults() {

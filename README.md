@@ -50,7 +50,7 @@ Use **Open** or drag a `.kmz` / `.kml` file onto the map. Demo files: `examples/
 | Coords from CSV | **File → Coords from CSV → Update from CSV…** — pick a CSV (`BH_ID`, `LAT`, `LONG`), then a KMZ/KML. Validates point placemarks (`<Point><coordinates>`) and matches CSV **BH_ID** to ExtendedData **BH_ID** or placemark **&lt;name&gt;** (e.g. B6A), including common spelling variants (B-6A, B06A, BH-6A). Use **Save copy** to write changes |
 | Edit KML externally | Desktop app only: **Edit KML externally…** opens the document in Sublime Text (if installed) or another editor you choose. Saving in the editor reloads the map. Set a custom launcher under **Editor command**, or use the `KMZ_GIS_EDITOR` environment variable |
 
-The status bar shows cursor lat/lon, the active tool, and the last measurement in metric and imperial units. A scale bar stays on the map.
+The status bar shows the active tool and the last measurement in metric and imperial units. Enable **Coordinates** in the toolbar to show cursor lat/lon in the bottom-left of the map. A scale bar stays on the map.
 
 Driving directions work on point placemarks. The app draws a road route (OSRM) from your location or a clicked start point, shows distance and time, and can open the same trip in Google Maps. Serve the app over `http://localhost` so the browser can use geolocation and the routing API.
 

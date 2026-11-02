@@ -554,6 +554,44 @@
     };
   }
 
+  function captureNeedsPostComposite(map, chromeOpts) {
+    if (
+      map
+      && global.PointChain
+      && typeof PointChain.getExportRenderState === "function"
+    ) {
+      var chainState = PointChain.getExportRenderState();
+      if (chainState && chainState.segments && chainState.segments.length) {
+        return true;
+      }
+    }
+    if (!chromeOpts) {
+      return false;
+    }
+    var opts = normalizeMapChromeOptions(chromeOpts);
+    return !!(
+      opts.showScale
+      || opts.showNorthArrow
+      || opts.showCoordinates
+      || opts.showCaptureDate
+    );
+  }
+
+  function duplicateCaptureCanvas(source) {
+    if (!source || !source.width || !source.height) {
+      return source;
+    }
+    var copy = document.createElement("canvas");
+    copy.width = source.width;
+    copy.height = source.height;
+    var ctx = copy.getContext("2d");
+    if (!ctx) {
+      return source;
+    }
+    ctx.drawImage(source, 0, 0);
+    return copy;
+  }
+
   function applyMapChromeForCapture(mapEl, chromeOpts) {
     var saved = [];
     function hideElements(selector) {
@@ -596,6 +634,9 @@
         return global.html2canvas(mapEl, options);
       })
       .then(function (canvas) {
+        if (captureNeedsPostComposite(map, chromeOpts)) {
+          canvas = duplicateCaptureCanvas(canvas);
+        }
         if (map) {
           compositePointChainOntoCanvas(canvas, map, crop);
         }
@@ -1155,6 +1196,50 @@
     });
   }
 
+  function prepareBlobForSave(blob, metadata) {
+    if (!metadata || !global.PngMetadata || typeof PngMetadata.embedScreenshotMetadata !== "function") {
+      return Promise.resolve(blob);
+    }
+    return PngMetadata.embedScreenshotMetadata(blob, metadata).then(function (embedded) {
+      if (embedded.size > MAX_PNG_BYTES) {
+        throw new Error("Screenshot is too large to save.");
+      }
+      return embedded;
+    });
+  }
+
+  function currentCaptureDimensions() {
+    if (isCaptureFrameVisible() && frameEl) {
+      return targetDimensions();
+    }
+    var mapEl = document.getElementById("map");
+    var w = mapEl ? mapEl.clientWidth : 0;
+    var h = mapEl ? mapEl.clientHeight : 0;
+    if (w > 0 && h > 0) {
+      return { width: Math.round(w), height: Math.round(h) };
+    }
+    return targetDimensions();
+  }
+
+  function buildMapFrameMetadata(extra) {
+    if (!global.ScreenshotMetadata || typeof ScreenshotMetadata.buildForMapFrame !== "function") {
+      return null;
+    }
+    var dims = currentCaptureDimensions();
+    return ScreenshotMetadata.buildForMapFrame(
+      Object.assign(
+        {
+          captureKind: "map_frame",
+          widthPx: dims.width,
+          heightPx: dims.height,
+          dpi: SCREENSHOT_DPI,
+          includeLiveBounds: true,
+        },
+        extra || {}
+      )
+    );
+  }
+
   function persistBlob(blob, baseNameStem, nameOpts) {
     nameOpts = nameOpts || {};
     var directory = dirInput ? String(dirInput.value || "").trim() : "";
@@ -1170,7 +1255,8 @@
       sequenceNumber: sequenceNumber,
       when: new Date(),
     });
-    return (ensureDesktopFn ? ensureDesktopFn() : Promise.resolve(null)).then(function (desktop) {
+    return prepareBlobForSave(blob, nameOpts.metadata).then(function (preparedBlob) {
+      return (ensureDesktopFn ? ensureDesktopFn() : Promise.resolve(null)).then(function (desktop) {
       if (desktop) {
         if (!directory) {
           throw new Error("Enter a save directory.");
@@ -1184,7 +1270,7 @@
             "X-Preferred-Filename": encodeURIComponent(downloadName),
             "X-Base-Filename": encodeURIComponent(sanitizeBaseName(baseNameStem)),
           },
-          body: blob,
+          body: preparedBlob,
         }).then(function (response) {
           return (readJsonResponseFn || defaultReadJson)(response).then(function (result) {
             if (!result.ok) {
@@ -1197,8 +1283,9 @@
           });
         });
       }
-      downloadBlob(blob, downloadName);
+      downloadBlob(preparedBlob, downloadName);
       return { name: downloadName, downloaded: true };
+    });
     });
   }
 
@@ -1242,9 +1329,12 @@
     }
     writeSettings();
     var savedResults = [];
+    var frameMeta = buildMapFrameMetadata({
+      captureNotes: takeTwo ? { takeTwo: true, shotIndex: 1 } : null,
+    });
     captureMapPng()
       .then(function (blob) {
-        return persistBlob(blob, baseStem).then(function (result) {
+        return persistBlob(blob, baseStem, { metadata: frameMeta }).then(function (result) {
           savedResults.push(result);
           if (!takeTwo) {
             return;
@@ -1279,8 +1369,18 @@
         if (hideNames) {
           suffix = hideIds.length ? suffix + "-no-names" : "-no-names";
         }
+        var secondMeta = buildMapFrameMetadata({
+          captureKind: "map_frame_second",
+          captureNotes: {
+            takeTwo: true,
+            shotIndex: 2,
+            filenameSuffix: suffix,
+            hiddenSourceIds: hideIds.slice(),
+            hidePointNameLabels: hideNames,
+          },
+        });
         return captureMapPng().then(function (blob) {
-          return persistBlob(blob, baseStem, { suffix: suffix }).then(function (result) {
+          return persistBlob(blob, baseStem, { suffix: suffix, metadata: secondMeta }).then(function (result) {
             savedResults.push(result);
           });
         });
@@ -1682,6 +1782,8 @@
     persistSettings: writeSettings,
     captureFixedViewPng: captureFixedViewPng,
     savePngBlob: savePngBlob,
+    buildMapFrameMetadata: buildMapFrameMetadata,
+    prepareBlobForSave: prepareBlobForSave,
     readOutputDimensions: readOutputDimensions,
     dimensionInputToPx: dimensionInputToPx,
     parseDimensionInput: parseDimensionInput,

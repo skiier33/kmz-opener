@@ -8,6 +8,7 @@
   var PARENT_FIELD = "bh_alignment_parent";
 
   var iconPickerEl = null;
+  var selectIconCheckbox = null;
   var createBtn = null;
   var statusEl = null;
   var createInFlight = false;
@@ -37,11 +38,41 @@
   var readJsonResponseFn = null;
 
   var iconState = {
-    selection: "crosshair",
+    selection: "dot-4",
     color: null,
     scale: 1,
     customUrl: "",
   };
+
+  function defaultAlignmentIconState() {
+    return {
+      selection: "dot-4",
+      color: global.PointIcons ? PointIcons.DEFAULT_COLOR : "#ff0000",
+      scale: 1,
+      customUrl: "",
+    };
+  }
+
+  function isAlignmentIconPickerEnabled() {
+    return !!(selectIconCheckbox && selectIconCheckbox.checked);
+  }
+
+  function syncAlignmentIconPickerVisibility() {
+    if (!iconPickerEl) {
+      return;
+    }
+    var show = isAlignmentIconPickerEnabled();
+    iconPickerEl.classList.toggle("hidden", !show);
+    iconPickerEl.hidden = !show;
+    iconPickerEl.setAttribute("aria-hidden", show ? "false" : "true");
+  }
+
+  function effectiveIconStateForSpec() {
+    if (isAlignmentIconPickerEnabled()) {
+      return iconState;
+    }
+    return defaultAlignmentIconState();
+  }
 
   function readStoredSettings() {
     try {
@@ -59,6 +90,7 @@
     try {
       var stored = readStoredSettings() || {};
       stored.alignmentIcon = {
+        pickCustom: isAlignmentIconPickerEnabled(),
         selection: iconState.selection,
         color: iconState.color,
         scale: iconState.scale,
@@ -73,16 +105,22 @@
   function applyStoredIconSettings() {
     var stored = readStoredSettings();
     var icon = stored && stored.alignmentIcon;
+    var defaults = defaultAlignmentIconState();
+    if (selectIconCheckbox) {
+      selectIconCheckbox.checked = !!(icon && icon.pickCustom);
+    }
+    syncAlignmentIconPickerVisibility();
     if (!icon) {
-      if (global.PointIcons) {
-        iconState.color = PointIcons.DEFAULT_COLOR;
-      }
+      iconState.selection = defaults.selection;
+      iconState.color = defaults.color;
+      iconState.scale = defaults.scale;
+      iconState.customUrl = defaults.customUrl;
       return;
     }
-    iconState.selection = icon.selection || "crosshair";
-    iconState.color = icon.color || (global.PointIcons ? PointIcons.DEFAULT_COLOR : "#e8710a");
-    iconState.scale = icon.scale != null ? icon.scale : 1;
-    iconState.customUrl = icon.customUrl || "";
+    iconState.selection = icon.selection || defaults.selection;
+    iconState.color = icon.color || defaults.color;
+    iconState.scale = icon.scale != null ? icon.scale : defaults.scale;
+    iconState.customUrl = icon.customUrl || defaults.customUrl;
   }
 
   function normalizePathKey(path) {
@@ -323,7 +361,7 @@
     }
     writeAlignmentIconSettings();
 
-    var spec = specFromPickerStateFn ? specFromPickerStateFn(iconState) : null;
+    var spec = specFromPickerStateFn ? specFromPickerStateFn(effectiveIconStateForSpec()) : null;
     if (!spec) {
       createInFlight = false;
       if (createBtn) {
@@ -426,8 +464,9 @@
       return;
     }
     if (!overlay) {
-      statusEl.textContent =
-        "No BH_Alignments layer for this file — pick an icon and create the overlay.";
+      statusEl.textContent = isAlignmentIconPickerEnabled()
+        ? "No BH_Alignments layer for this file — pick an icon and create the overlay."
+        : "No BH_Alignments layer for this file — create the overlay (default 4px red dot).";
       return;
     }
     var gis = getGisMapFn ? getGisMapFn() : null;
@@ -506,6 +545,7 @@
     readJsonResponseFn = options.readJsonResponse || null;
 
     iconPickerEl = document.getElementById("bh-alignments-icon-picker");
+    selectIconCheckbox = document.getElementById("bh-alignments-select-icon");
     createBtn = document.getElementById("bh-alignments-create");
     statusEl = document.getElementById("bh-alignments-status");
 
@@ -516,6 +556,14 @@
       refreshIconPickerPanel();
     }
     updateStatus();
+
+    if (selectIconCheckbox) {
+      selectIconCheckbox.addEventListener("change", function () {
+        syncAlignmentIconPickerVisibility();
+        writeAlignmentIconSettings();
+        updateStatus();
+      });
+    }
 
     if (createBtn) {
       createBtn.addEventListener("click", createOrUpdateAlignment);

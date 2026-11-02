@@ -23,15 +23,6 @@
             "Transportation &copy; Esri, HERE, Garmin, (c) OpenStreetMap contributors, and the GIS user community",
         },
         {
-          id: "street_names",
-          label: "Streets",
-          title: "Street and road name labels (OpenStreetMap via CARTO)",
-          url:
-            "https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png",
-          attribution: "&copy; OpenStreetMap &copy; CARTO",
-          subdomains: "abcd",
-        },
-        {
           id: "places",
           label: "Places",
           title: "Cities, boundaries, and geographic names (Esri)",
@@ -44,7 +35,7 @@
         {
           id: "all",
           label: "All map detail",
-          layerIds: ["transport", "street_names", "places"],
+          layerIds: ["transport", "places"],
         },
         {
           id: "roads_places",
@@ -53,7 +44,6 @@
         },
         { id: "places", label: "Places only", layerIds: ["places"] },
         { id: "roads", label: "Roads only", layerIds: ["transport"] },
-        { id: "streets", label: "Street names only", layerIds: ["street_names"] },
       ],
       defaultGranularity: "roads_places",
     },
@@ -2082,8 +2072,9 @@
   /** Feet on ground per inch on map (engineering scales); denominator = feet × 12. */
   var MAP_SCALE_FEET_PER_INCH = [10, 20, 30, 40, 50, 100, 200, 300, 400, 500, 1000];
 
-  /** Common map scale denominators (1:N) for site plans, USGS, and regional mapping. */
-  var MAP_SCALE_PRESETS = (function () {
+  var MAP_SCALE_PRESETS_STORAGE_KEY = "kmz-map-scale-presets";
+
+  function buildDefaultMapScalePresets() {
     var seen = {};
     var list = [];
     function add(n) {
@@ -2118,7 +2109,173 @@
       return a - b;
     });
     return list;
-  })();
+  }
+
+  var MAP_SCALE_PRESETS_DEFAULT = buildDefaultMapScalePresets();
+
+  /** Active map scale denominators shown in scale dropdowns (mutable; user-customizable). */
+  var MAP_SCALE_PRESETS = MAP_SCALE_PRESETS_DEFAULT.slice();
+
+  function normalizeMapScalePresetList(values) {
+    if (!values || !values.length) {
+      return [];
+    }
+    var seen = {};
+    var list = [];
+    values.forEach(function (raw) {
+      var n = Math.round(Number(raw));
+      if (!Number.isFinite(n) || n <= 0) {
+        return;
+      }
+      var key = String(n);
+      if (seen[key]) {
+        return;
+      }
+      seen[key] = true;
+      list.push(n);
+    });
+    list.sort(function (a, b) {
+      return a - b;
+    });
+    return list;
+  }
+
+  function mapScalePresetListsEqual(a, b) {
+    if (!a || !b || a.length !== b.length) {
+      return false;
+    }
+    for (var i = 0; i < a.length; i += 1) {
+      if (a[i] !== b[i]) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function readStoredMapScalePresets() {
+    try {
+      var raw = global.localStorage.getItem(MAP_SCALE_PRESETS_STORAGE_KEY);
+      if (!raw) {
+        return null;
+      }
+      var parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) {
+        return null;
+      }
+      var list = normalizeMapScalePresetList(parsed);
+      return list.length ? list : null;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function writeStoredMapScalePresets(list) {
+    try {
+      if (!list || !list.length || mapScalePresetListsEqual(list, MAP_SCALE_PRESETS_DEFAULT)) {
+        global.localStorage.removeItem(MAP_SCALE_PRESETS_STORAGE_KEY);
+        return;
+      }
+      global.localStorage.setItem(MAP_SCALE_PRESETS_STORAGE_KEY, JSON.stringify(list));
+    } catch (err) {
+      /* ignore quota / private mode */
+    }
+  }
+
+  function replaceMapScalePresets(list) {
+    MAP_SCALE_PRESETS.length = 0;
+    list.forEach(function (n) {
+      MAP_SCALE_PRESETS.push(n);
+    });
+  }
+
+  function notifyMapScalePresetsChanged() {
+    try {
+      global.dispatchEvent(new CustomEvent("kmz-map-scale-presets-changed"));
+    } catch (err) {
+      /* ignore */
+    }
+  }
+
+  function loadMapScalePresetsFromStorage() {
+    var stored = readStoredMapScalePresets();
+    replaceMapScalePresets(stored || MAP_SCALE_PRESETS_DEFAULT);
+  }
+
+  function getMapScalePresets() {
+    return MAP_SCALE_PRESETS.slice();
+  }
+
+  function parseMapScalePresetInput(text) {
+    var s = String(text || "").trim();
+    if (!s) {
+      return null;
+    }
+    var engineering = /1\s*["″]?\s*=\s*([\d,.]+)\s*['′]?/i.exec(s);
+    if (engineering) {
+      var feet = parseFloat(String(engineering[1]).replace(/,/g, ""));
+      if (Number.isFinite(feet) && feet > 0) {
+        return Math.round(feet * 12);
+      }
+    }
+    var ratio = /1\s*:\s*([\d,.]+)/i.exec(s);
+    if (ratio) {
+      var denom = parseFloat(String(ratio[1]).replace(/,/g, ""));
+      if (Number.isFinite(denom) && denom > 0) {
+        return Math.round(denom);
+      }
+    }
+    var plain = parseFloat(s.replace(/,/g, ""));
+    if (Number.isFinite(plain) && plain > 0) {
+      return Math.round(plain);
+    }
+    return null;
+  }
+
+  function setMapScalePresets(list) {
+    var normalized = normalizeMapScalePresetList(list);
+    if (!normalized.length) {
+      return { ok: false, message: "Keep at least one map scale in the list." };
+    }
+    replaceMapScalePresets(normalized);
+    writeStoredMapScalePresets(normalized);
+    notifyMapScalePresetsChanged();
+    return { ok: true };
+  }
+
+  function addMapScalePreset(denominator) {
+    var n = Math.round(Number(denominator));
+    if (!Number.isFinite(n) || n <= 0) {
+      return { ok: false, message: "Enter a valid scale (e.g. 2400, 1:5000, or 1″ = 200′)." };
+    }
+    if (MAP_SCALE_PRESETS.indexOf(n) >= 0) {
+      return { ok: false, message: "That scale is already in the list." };
+    }
+    var next = MAP_SCALE_PRESETS.concat([n]);
+    return setMapScalePresets(next);
+  }
+
+  function removeMapScalePreset(denominator) {
+    var n = Math.round(Number(denominator));
+    if (!Number.isFinite(n) || n <= 0) {
+      return { ok: false, message: "Could not remove that scale." };
+    }
+    if (MAP_SCALE_PRESETS.length <= 1) {
+      return { ok: false, message: "Keep at least one map scale in the list." };
+    }
+    var next = MAP_SCALE_PRESETS.filter(function (preset) {
+      return preset !== n;
+    });
+    if (next.length === MAP_SCALE_PRESETS.length) {
+      return { ok: false, message: "That scale is not in the list." };
+    }
+    return setMapScalePresets(next);
+  }
+
+  function resetMapScalePresets() {
+    return setMapScalePresets(MAP_SCALE_PRESETS_DEFAULT.slice());
+  }
+
+  loadMapScalePresetsFromStorage();
 
   function feetPerInchForDenominator(denominator) {
     if (!denominator || denominator <= 0 || denominator % 12 !== 0) {
@@ -2262,6 +2419,12 @@
     closePopup: closePopup,
     firstPoint: firstPoint,
     MAP_SCALE_PRESETS: MAP_SCALE_PRESETS,
+    MAP_SCALE_PRESETS_DEFAULT: MAP_SCALE_PRESETS_DEFAULT,
+    getMapScalePresets: getMapScalePresets,
+    parseMapScalePresetInput: parseMapScalePresetInput,
+    addMapScalePreset: addMapScalePreset,
+    removeMapScalePreset: removeMapScalePreset,
+    resetMapScalePresets: resetMapScalePresets,
     formatMapScaleLabel: formatMapScaleLabel,
     getMapScaleDenominator: getMapScaleDenominator,
     setMapScaleDenominator: setMapScaleDenominator,

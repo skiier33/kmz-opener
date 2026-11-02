@@ -15,6 +15,11 @@
     "bottom-center",
   ];
 
+  var VECTOR_NORTH_STYLES = ["classic", "simple", "compass", "minimal"];
+  var NORTH_IMAGE_CATALOG_PREFIX = "NorthArrowsPNG128/";
+  var northImageCache = Object.create(null);
+  var northImageLoadPromises = Object.create(null);
+
   var DEFAULTS = {
     showScale: false,
     showNorthArrow: false,
@@ -27,6 +32,14 @@
     showCoordinates: false,
     showCaptureDate: false,
     marginPx: 14,
+    scaleInsetPx: 14,
+    northInsetPx: 14,
+    scaleWidthPx: null,
+    scaleHeightPx: null,
+    northWidthPx: null,
+    northHeightPx: null,
+    scalePreserveAspectRatio: true,
+    northPreserveAspectRatio: true,
     foreground: "#e8eaed",
     accent: "#e8710a",
     plateFill: "rgba(18, 20, 23, 0.92)",
@@ -66,15 +79,149 @@
     return ANCHORS.indexOf(anchor) >= 0 ? anchor : fallback || "bottom-right";
   }
 
+  function isNorthImageStyle(style) {
+    return String(style || "").indexOf(NORTH_IMAGE_CATALOG_PREFIX) === 0;
+  }
+
+  function normalizeNorthStyle(value) {
+    var style = String(value || DEFAULTS.northStyle);
+    if (VECTOR_NORTH_STYLES.indexOf(style) >= 0 || isNorthImageStyle(style)) {
+      return style;
+    }
+    return DEFAULTS.northStyle;
+  }
+
+  function northIconUrl(catalogName) {
+    var normalized = String(catalogName || "").replace(/\\/g, "/");
+    var slash = normalized.indexOf("/");
+    if (slash < 0) {
+      return "custom-icons/" + encodeURIComponent(normalized);
+    }
+    return (
+      "custom-icons/"
+      + encodeURIComponent(normalized.slice(0, slash))
+      + "/"
+      + encodeURIComponent(normalized.slice(slash + 1))
+    );
+  }
+
+  function loadNorthImage(catalogName) {
+    var key = String(catalogName || "");
+    if (!isNorthImageStyle(key)) {
+      return Promise.reject(new Error("Not a north arrow icon catalog name."));
+    }
+    var cached = northImageCache[key];
+    if (cached && cached.complete && cached.naturalWidth > 0) {
+      return Promise.resolve(cached);
+    }
+    if (northImageLoadPromises[key]) {
+      return northImageLoadPromises[key];
+    }
+    northImageLoadPromises[key] = new Promise(function (resolve, reject) {
+      var img = new Image();
+      img.onload = function () {
+        northImageCache[key] = img;
+        delete northImageLoadPromises[key];
+        resolve(img);
+      };
+      img.onerror = function () {
+        delete northImageCache[key];
+        delete northImageLoadPromises[key];
+        reject(new Error("Failed to load north arrow icon: " + key));
+      };
+      img.src = northIconUrl(key);
+    });
+    return northImageLoadPromises[key];
+  }
+
+  function preloadForOptions(rawOpts) {
+    var opts = normalizeOptions(rawOpts);
+    if (!opts.showNorthArrow || !isNorthImageStyle(opts.northStyle)) {
+      return Promise.resolve();
+    }
+    return loadNorthImage(opts.northStyle).then(
+      function () {
+        return undefined;
+      },
+      function () {
+        return undefined;
+      }
+    );
+  }
+
+  function normalizeInsetPx(raw, fallback) {
+    var n = parseInt(raw, 10);
+    if (!isFinite(n) || n < 0) {
+      return fallback != null ? fallback : DEFAULTS.scaleInsetPx;
+    }
+    return Math.min(512, n);
+  }
+
+  function normalizeLegendDimensionPx(raw) {
+    if (raw == null || raw === "") {
+      return null;
+    }
+    var n = parseInt(raw, 10);
+    if (!isFinite(n) || n <= 0) {
+      return null;
+    }
+    return Math.min(4096, n);
+  }
+
+  function computeLegendBox(naturalW, naturalH, widthPx, heightPx, preserveAspect, sf) {
+    var nw = Math.max(1, naturalW);
+    var nh = Math.max(1, naturalH);
+    var tw = widthPx != null ? Math.round(widthPx * sf) : null;
+    var th = heightPx != null ? Math.round(heightPx * sf) : null;
+    if (tw == null && th == null) {
+      return { w: nw, h: nh, scaleX: 1, scaleY: 1 };
+    }
+    if (preserveAspect !== false) {
+      if (tw != null && th != null) {
+        var fit = Math.min(tw / nw, th / nh);
+        return {
+          w: Math.max(1, Math.round(nw * fit)),
+          h: Math.max(1, Math.round(nh * fit)),
+          scaleX: fit,
+          scaleY: fit,
+        };
+      }
+      if (tw != null) {
+        var sx = tw / nw;
+        return { w: tw, h: Math.max(1, Math.round(nh * sx)), scaleX: sx, scaleY: sx };
+      }
+      var sy = th / nh;
+      return { w: Math.max(1, Math.round(nw * sy)), h: th, scaleX: sy, scaleY: sy };
+    }
+    return {
+      w: tw != null ? tw : nw,
+      h: th != null ? th : nh,
+      scaleX: (tw != null ? tw : nw) / nw,
+      scaleY: (th != null ? th : nh) / nh,
+    };
+  }
+
+  function drawLegendWithScale(ctx, rect, naturalW, naturalH, scaleX, scaleY, drawFn) {
+    if (Math.abs(scaleX - 1) < 0.0001 && Math.abs(scaleY - 1) < 0.0001) {
+      drawFn(rect);
+      return;
+    }
+    ctx.save();
+    ctx.translate(rect.x, rect.y);
+    ctx.scale(scaleX, scaleY);
+    drawFn({ x: 0, y: 0, w: naturalW, h: naturalH });
+    ctx.restore();
+  }
+
   function normalizeOptions(raw) {
     raw = raw || {};
     var scaleStyles = ["bar", "bar-dual", "ratio", "engineering"];
-    var northStyles = ["classic", "simple", "compass", "minimal"];
+    var legacyMargin = normalizeInsetPx(raw.marginPx, DEFAULTS.marginPx);
     return {
       showScale: !!raw.showScale,
       showNorthArrow: !!raw.showNorthArrow,
       scaleStyle: scaleStyles.indexOf(raw.scaleStyle) >= 0 ? raw.scaleStyle : DEFAULTS.scaleStyle,
-      northStyle: northStyles.indexOf(raw.northStyle) >= 0 ? raw.northStyle : DEFAULTS.northStyle,
+      northStyle: normalizeNorthStyle(raw.northStyle),
       scalePosition: normalizeAnchor(raw.scalePosition, DEFAULTS.scalePosition),
       northPosition: normalizeAnchor(raw.northPosition, DEFAULTS.northPosition),
       plateBackground: raw.plateBackground !== false,
@@ -82,6 +229,20 @@
       showCoordinates: !!raw.showCoordinates,
       showCaptureDate: !!raw.showCaptureDate,
       marginPx: Math.max(6, Math.min(48, parseInt(raw.marginPx, 10) || DEFAULTS.marginPx)),
+      scaleInsetPx: normalizeInsetPx(
+        raw.scaleInsetPx != null ? raw.scaleInsetPx : raw.marginPx,
+        legacyMargin
+      ),
+      northInsetPx: normalizeInsetPx(
+        raw.northInsetPx != null ? raw.northInsetPx : raw.marginPx,
+        legacyMargin
+      ),
+      scaleWidthPx: normalizeLegendDimensionPx(raw.scaleWidthPx),
+      scaleHeightPx: normalizeLegendDimensionPx(raw.scaleHeightPx),
+      northWidthPx: normalizeLegendDimensionPx(raw.northWidthPx),
+      northHeightPx: normalizeLegendDimensionPx(raw.northHeightPx),
+      scalePreserveAspectRatio: raw.scalePreserveAspectRatio !== false,
+      northPreserveAspectRatio: raw.northPreserveAspectRatio !== false,
       foreground: raw.foreground || DEFAULTS.foreground,
       accent: raw.accent || DEFAULTS.accent,
       plateFill: raw.plateFill || DEFAULTS.plateFill,
@@ -357,6 +518,10 @@
 
   function measureNorthLayout(opts, sf, style) {
     var pad = Math.round(8 * sf);
+    if (isNorthImageStyle(style)) {
+      var imageSize = Math.round(56 * sf);
+      return { w: imageSize + pad * 2, h: imageSize + pad * 2, pad: pad, size: imageSize };
+    }
     if (style === "minimal") {
       var w = Math.round(28 * sf) + pad * 2;
       var h = Math.round(36 * sf) + pad * 2;
@@ -387,7 +552,17 @@
     ctx.translate(cx, cy);
     ctx.rotate((bearing * Math.PI) / 180);
     var size = layout.size;
-    if (opts.northStyle === "minimal") {
+    if (isNorthImageStyle(opts.northStyle)) {
+      var northImg = northImageCache[opts.northStyle];
+      if (northImg && northImg.complete && northImg.naturalWidth > 0) {
+        var iw = northImg.naturalWidth;
+        var ih = northImg.naturalHeight;
+        var imageScale = size / Math.max(iw, ih);
+        var drawW = iw * imageScale;
+        var drawH = ih * imageScale;
+        ctx.drawImage(northImg, -drawW / 2, -drawH / 2, drawW, drawH);
+      }
+    } else if (opts.northStyle === "minimal") {
       ctx.strokeStyle = opts.accent;
       ctx.lineWidth = Math.max(1.5, size / 14);
       ctx.lineCap = "round";
@@ -523,23 +698,30 @@
     if (!canvas || !canvas.getContext) {
       return;
     }
-    var opts = previewOptions(
-      Object.assign({}, rawOverrides || {}, { northStyle: northStyle, showNorthArrow: true })
-    );
-    var sf = 1;
-    var layout = measureNorthLayout(opts, sf, northStyle);
-    canvas.width = layout.w;
-    canvas.height = layout.h;
-    var ctx = canvas.getContext("2d");
-    ctx.clearRect(0, 0, layout.w, layout.h);
-    drawNorthLegend(
-      ctx,
-      { x: 0, y: 0, w: layout.w, h: layout.h },
-      layout,
-      opts,
-      0,
-      sf
-    );
+    function paintPreview() {
+      var opts = previewOptions(
+        Object.assign({}, rawOverrides || {}, { northStyle: northStyle, showNorthArrow: true })
+      );
+      var sf = 1;
+      var layout = measureNorthLayout(opts, sf, northStyle);
+      canvas.width = layout.w;
+      canvas.height = layout.h;
+      var ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, layout.w, layout.h);
+      drawNorthLegend(
+        ctx,
+        { x: 0, y: 0, w: layout.w, h: layout.h },
+        layout,
+        opts,
+        0,
+        sf
+      );
+    }
+    if (isNorthImageStyle(northStyle)) {
+      loadNorthImage(northStyle).then(paintPreview, paintPreview);
+      return;
+    }
+    paintPreview();
   }
 
   function compositeOntoCanvas(canvas, map, rawOpts) {
@@ -570,55 +752,80 @@
 
     if (opts.showNorthArrow) {
       var northLayout = measureNorthLayout(opts, sf, opts.northStyle);
+      var northBox = computeLegendBox(
+        northLayout.w,
+        northLayout.h,
+        opts.northWidthPx,
+        opts.northHeightPx,
+        opts.northPreserveAspectRatio,
+        sf
+      );
+      var northInset = Math.round(opts.northInsetPx * sf);
       var northPos = anchorTopLeft(
         opts.northPosition,
         canvas.width,
         canvas.height,
-        margin,
-        northLayout.w,
-        northLayout.h
+        northInset,
+        northBox.w,
+        northBox.h
       );
       var northRect = nudgeRect(
-        { x: northPos.x, y: northPos.y, w: northLayout.w, h: northLayout.h },
+        { x: northPos.x, y: northPos.y, w: northBox.w, h: northBox.h },
         canvas.width,
         canvas.height,
         occupied,
         Math.round(6 * sf)
       );
-      drawNorthLegend(
+      drawLegendWithScale(
         ctx,
-        { x: northRect.x, y: northRect.y, w: northRect.w, h: northRect.h },
-        northLayout,
-        opts,
-        bearing,
-        sf
+        northRect,
+        northLayout.w,
+        northLayout.h,
+        northBox.scaleX,
+        northBox.scaleY,
+        function (drawRect) {
+          drawNorthLegend(ctx, drawRect, northLayout, opts, bearing, sf);
+        }
       );
       occupied.push(northRect);
     }
 
     if (opts.showScale) {
       var scaleLayout = measureScaleLayout(ctx, opts, sf, map, lat, metersPerPixel);
+      var scaleBox = computeLegendBox(
+        scaleLayout.w,
+        scaleLayout.h,
+        opts.scaleWidthPx,
+        opts.scaleHeightPx,
+        opts.scalePreserveAspectRatio,
+        sf
+      );
+      var scaleInset = Math.round(opts.scaleInsetPx * sf);
       var scalePos = anchorTopLeft(
         opts.scalePosition,
         canvas.width,
         canvas.height,
-        margin,
-        scaleLayout.w,
-        scaleLayout.h
+        scaleInset,
+        scaleBox.w,
+        scaleBox.h
       );
       var scaleRect = nudgeRect(
-        { x: scalePos.x, y: scalePos.y, w: scaleLayout.w, h: scaleLayout.h },
+        { x: scalePos.x, y: scalePos.y, w: scaleBox.w, h: scaleBox.h },
         canvas.width,
         canvas.height,
         occupied,
         Math.round(6 * sf)
       );
-      drawScaleLegend(
+      drawLegendWithScale(
         ctx,
-        { x: scaleRect.x, y: scaleRect.y, w: scaleRect.w, h: scaleRect.h },
-        scaleLayout,
-        opts,
-        sf
+        scaleRect,
+        scaleLayout.w,
+        scaleLayout.h,
+        scaleBox.scaleX,
+        scaleBox.scaleY,
+        function (drawRect) {
+          drawScaleLegend(ctx, drawRect, scaleLayout, opts, sf);
+        }
       );
       occupied.push(scaleRect);
     }
@@ -646,10 +853,15 @@
   global.MapExportChrome = {
     STORAGE_KEY: STORAGE_KEY,
     ANCHORS: ANCHORS.slice(),
+    VECTOR_NORTH_STYLES: VECTOR_NORTH_STYLES.slice(),
+    NORTH_IMAGE_CATALOG_PREFIX: NORTH_IMAGE_CATALOG_PREFIX,
     DEFAULTS: Object.assign({}, DEFAULTS),
+    isNorthImageStyle: isNorthImageStyle,
     normalizeOptions: normalizeOptions,
     readStoredSettings: readStoredSettings,
     writeStoredSettings: writeStoredSettings,
+    loadNorthImage: loadNorthImage,
+    preloadForOptions: preloadForOptions,
     compositeOntoCanvas: compositeOntoCanvas,
     renderScaleStylePreview: renderScaleStylePreview,
     renderNorthStylePreview: renderNorthStylePreview,

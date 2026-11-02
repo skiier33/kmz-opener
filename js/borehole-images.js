@@ -17,6 +17,7 @@
   var placemarkSubtitle = null;
   var selectAllToggle = null;
   var saveBtn = null;
+  var generatePreviewsBtn = null;
   var fullPreviewDialog = null;
   var fullPreviewTitle = null;
   var fullPreviewSubtitle = null;
@@ -30,9 +31,17 @@
   var chromePanel = null;
   var scaleStyleSelect = null;
   var scalePositionSelect = null;
+  var scaleInsetInput = null;
+  var scaleWidthInput = null;
+  var scaleHeightInput = null;
+  var scalePreserveAspectToggle = null;
   var scaleColorInput = null;
   var northStyleSelect = null;
   var northPositionSelect = null;
+  var northInsetInput = null;
+  var northWidthInput = null;
+  var northHeightInput = null;
+  var northPreserveAspectToggle = null;
   var northColorInput = null;
   var showScaleRatioToggle = null;
   var chromePlateToggle = null;
@@ -53,11 +62,20 @@
   var previewInFlight = false;
   var saveInFlight = false;
   var batchStopRequested = false;
+  var batchProgressMode = "save";
   var fullPreviewObjectUrl = null;
+  var setCenterPickIndex = null;
+  var setCenterPickListenersBound = false;
 
   var BATCH_STOP_CODE = "BATCH_STOPPED";
+  var PICK_CENTER_MAP_CLASS = "borehole-images-pick-center";
   var FALLBACK_SCALE_COLOR = "#e8eaed";
   var FALLBACK_NORTH_COLOR = "#e8710a";
+  var NORTH_ARROW_MANIFEST_URL = "custom-icons/NorthArrowsPNG128/manifest.json";
+  var DEFAULT_LEGEND_INSET_PX = 14;
+  var scaleLegendAspect = null;
+  var northLegendAspect = null;
+  var legendSizeSyncLock = false;
 
   function defaultChromeColors() {
     if (global.MapExportChrome && MapExportChrome.DEFAULTS) {
@@ -114,8 +132,20 @@
           showNorthArrow: showNorthToggle ? showNorthToggle.checked : false,
           scaleStyle: scaleStyleSelect ? scaleStyleSelect.value : "",
           scalePosition: scalePositionSelect ? scalePositionSelect.value : "",
+          scaleInsetPx: readInsetInput(scaleInsetInput, DEFAULT_LEGEND_INSET_PX),
+          scaleWidthPx: dimensionInputRaw(scaleWidthInput),
+          scaleHeightPx: dimensionInputRaw(scaleHeightInput),
+          scalePreserveAspectRatio: scalePreserveAspectToggle
+            ? scalePreserveAspectToggle.checked
+            : true,
           northStyle: northStyleSelect ? northStyleSelect.value : "",
           northPosition: northPositionSelect ? northPositionSelect.value : "",
+          northInsetPx: readInsetInput(northInsetInput, DEFAULT_LEGEND_INSET_PX),
+          northWidthPx: dimensionInputRaw(northWidthInput),
+          northHeightPx: dimensionInputRaw(northHeightInput),
+          northPreserveAspectRatio: northPreserveAspectToggle
+            ? northPreserveAspectToggle.checked
+            : true,
           foreground: scaleColorInput ? scaleColorInput.value : "",
           accent: northColorInput ? northColorInput.value : "",
           showScaleRatio: showScaleRatioToggle ? showScaleRatioToggle.checked : true,
@@ -194,14 +224,25 @@
     return "";
   }
 
+  function mapScalePresetList() {
+    if (!global.GisMap) {
+      return [];
+    }
+    if (typeof GisMap.getMapScalePresets === "function") {
+      return GisMap.getMapScalePresets();
+    }
+    return GisMap.MAP_SCALE_PRESETS || [];
+  }
+
   function populateScaleSelect() {
-    if (!scaleSelect || !global.GisMap || !GisMap.MAP_SCALE_PRESETS) {
+    var presets = mapScalePresetList();
+    if (!scaleSelect || !presets.length) {
       return;
     }
     var stored = readSettings();
     var previous = (stored && stored.scale) || scaleSelect.value || "";
     scaleSelect.innerHTML = "";
-    GisMap.MAP_SCALE_PRESETS.forEach(function (denom) {
+    presets.forEach(function (denom) {
       var opt = document.createElement("option");
       opt.value = String(denom);
       opt.textContent = GisMap.formatMapScaleLabel(denom);
@@ -209,10 +250,10 @@
     });
     if (previous && scaleSelect.querySelector('option[value="' + previous + '"]')) {
       scaleSelect.value = previous;
-    } else if (GisMap.MAP_SCALE_PRESETS.indexOf(2400) >= 0) {
+    } else if (presets.indexOf(2400) >= 0) {
       scaleSelect.value = "2400";
-    } else if (GisMap.MAP_SCALE_PRESETS.length) {
-      scaleSelect.value = String(GisMap.MAP_SCALE_PRESETS[0]);
+    } else if (presets.length) {
+      scaleSelect.value = String(presets[0]);
     }
   }
 
@@ -252,6 +293,99 @@
     return sourceSelect ? String(sourceSelect.value || "").trim() : "";
   }
 
+  function readInsetInput(input, fallback) {
+    if (!input) {
+      return fallback;
+    }
+    var n = parseInt(String(input.value || "").trim(), 10);
+    if (!isFinite(n) || n < 0) {
+      return fallback;
+    }
+    return n;
+  }
+
+  function dimensionInputRaw(input) {
+    if (!input) {
+      return "";
+    }
+    return String(input.value || "").trim();
+  }
+
+  function updateLegendAspectFromPreviews() {
+    if (
+      scaleStylePreviewCanvas
+      && scaleStylePreviewCanvas.width > 0
+      && scaleStylePreviewCanvas.height > 0
+    ) {
+      scaleLegendAspect = scaleStylePreviewCanvas.width / scaleStylePreviewCanvas.height;
+    }
+    if (
+      northStylePreviewCanvas
+      && northStylePreviewCanvas.width > 0
+      && northStylePreviewCanvas.height > 0
+    ) {
+      northLegendAspect = northStylePreviewCanvas.width / northStylePreviewCanvas.height;
+    }
+  }
+
+  function syncLegendHeightFromWidth(widthInput, heightInput, preserveToggle, aspect) {
+    if (
+      legendSizeSyncLock
+      || !preserveToggle
+      || !preserveToggle.checked
+      || !aspect
+      || !widthInput
+      || !heightInput
+    ) {
+      return;
+    }
+    var w = parseInt(String(widthInput.value || "").trim(), 10);
+    if (!isFinite(w) || w <= 0) {
+      return;
+    }
+    legendSizeSyncLock = true;
+    heightInput.value = String(Math.max(1, Math.round(w / aspect)));
+    legendSizeSyncLock = false;
+  }
+
+  function syncLegendWidthFromHeight(widthInput, heightInput, preserveToggle, aspect) {
+    if (
+      legendSizeSyncLock
+      || !preserveToggle
+      || !preserveToggle.checked
+      || !aspect
+      || !widthInput
+      || !heightInput
+    ) {
+      return;
+    }
+    var h = parseInt(String(heightInput.value || "").trim(), 10);
+    if (!isFinite(h) || h <= 0) {
+      return;
+    }
+    legendSizeSyncLock = true;
+    widthInput.value = String(Math.max(1, Math.round(h * aspect)));
+    legendSizeSyncLock = false;
+  }
+
+  function bindLegendSizeInputs(widthInput, heightInput, preserveToggle, aspectGetter) {
+    if (widthInput) {
+      widthInput.addEventListener("change", function () {
+        syncLegendHeightFromWidth(widthInput, heightInput, preserveToggle, aspectGetter());
+        onChromeDetailChange();
+      });
+    }
+    if (heightInput) {
+      heightInput.addEventListener("change", function () {
+        syncLegendWidthFromHeight(widthInput, heightInput, preserveToggle, aspectGetter());
+        onChromeDetailChange();
+      });
+    }
+    if (preserveToggle) {
+      preserveToggle.addEventListener("change", onChromeDetailChange);
+    }
+  }
+
   function selectedScaleDenominator() {
     var scaleRaw = scaleSelect ? scaleSelect.value : "";
     var scaleDenom = Number(scaleRaw);
@@ -267,8 +401,16 @@
       showNorthArrow: !!(showNorthToggle && showNorthToggle.checked),
       scaleStyle: scaleStyleSelect ? scaleStyleSelect.value : "bar-dual",
       scalePosition: scalePositionSelect ? scalePositionSelect.value : "bottom-right",
+      scaleInsetPx: readInsetInput(scaleInsetInput, DEFAULT_LEGEND_INSET_PX),
+      scaleWidthPx: dimensionInputRaw(scaleWidthInput),
+      scaleHeightPx: dimensionInputRaw(scaleHeightInput),
+      scalePreserveAspectRatio: !(scalePreserveAspectToggle && !scalePreserveAspectToggle.checked),
       northStyle: northStyleSelect ? northStyleSelect.value : "classic",
       northPosition: northPositionSelect ? northPositionSelect.value : "bottom-right",
+      northInsetPx: readInsetInput(northInsetInput, DEFAULT_LEGEND_INSET_PX),
+      northWidthPx: dimensionInputRaw(northWidthInput),
+      northHeightPx: dimensionInputRaw(northHeightInput),
+      northPreserveAspectRatio: !(northPreserveAspectToggle && !northPreserveAspectToggle.checked),
       showScaleRatio: !(showScaleRatioToggle && !showScaleRatioToggle.checked),
       plateBackground: !(chromePlateToggle && !chromePlateToggle.checked),
       showCoordinates: false,
@@ -285,6 +427,69 @@
       return MapExportChrome.normalizeOptions(opts);
     }
     return opts;
+  }
+
+  function northIconSelectLabel(catalogName) {
+    var fileName = String(catalogName || "").split("/").pop() || catalogName;
+    return fileName.replace(/-01\.png$/i, "").replace(/_/g, " ");
+  }
+
+  function populateNorthStyleSelect() {
+    if (!northStyleSelect || northStyleSelect.querySelector('optgroup[data-north-icons="true"]')) {
+      return Promise.resolve();
+    }
+    return fetch(NORTH_ARROW_MANIFEST_URL)
+      .then(function (res) {
+        if (!res.ok) {
+          return null;
+        }
+        return res.json();
+      })
+      .then(function (data) {
+        var icons = data && Array.isArray(data.icons) ? data.icons : [];
+        if (!icons.length) {
+          return;
+        }
+        var group = document.createElement("optgroup");
+        group.label = "North arrow PNG icons";
+        group.setAttribute("data-north-icons", "true");
+        icons.forEach(function (catalogName) {
+          var option = document.createElement("option");
+          option.value = catalogName;
+          option.textContent = northIconSelectLabel(catalogName);
+          group.appendChild(option);
+        });
+        northStyleSelect.appendChild(group);
+        if (global.MapExportChrome && typeof MapExportChrome.loadNorthImage === "function") {
+          icons.forEach(function (catalogName) {
+            MapExportChrome.loadNorthImage(catalogName).catch(function () {
+              /* ignore preload errors */
+            });
+          });
+        }
+      })
+      .catch(function () {
+        /* manifest may be unavailable outside static hosting */
+      });
+  }
+
+  function syncNorthStyleUi() {
+    if (!northStyleSelect) {
+      return;
+    }
+    var isImage =
+      global.MapExportChrome
+      && typeof MapExportChrome.isNorthImageStyle === "function"
+      && MapExportChrome.isNorthImageStyle(northStyleSelect.value);
+    if (!northColorInput) {
+      return;
+    }
+    northColorInput.disabled = isImage;
+    var colorField = northColorInput.closest(".borehole-images-field-color");
+    if (colorField) {
+      colorField.classList.toggle("hidden", isImage);
+      colorField.setAttribute("aria-hidden", isImage ? "true" : "false");
+    }
   }
 
   function syncChromePanelVisibility() {
@@ -320,6 +525,7 @@
     ) {
       MapExportChrome.renderNorthStylePreview(northStylePreviewCanvas, northStyle, overrides);
     }
+    updateLegendAspectFromPreviews();
   }
 
   function zoomForPlacemark(lat, scaleDenom) {
@@ -340,6 +546,195 @@
     var scaleLabel = GisMap.formatMapScaleLabel(scaleDenom);
     var zoomText = Number.isFinite(zoom) ? zoom.toFixed(2) : "—";
     return scaleLabel + " · zoom " + zoomText;
+  }
+
+  function hasCustomCenter(item) {
+    if (!item) {
+      return false;
+    }
+    return Number.isFinite(item.centerLat) && Number.isFinite(item.centerLng);
+  }
+
+  function imageCenterForItem(item) {
+    if (hasCustomCenter(item)) {
+      return { lat: item.centerLat, lng: item.centerLng };
+    }
+    return { lat: item.lat, lng: item.lng };
+  }
+
+  function formatCenterCoordLabel(lat, lng) {
+    return Number(lat).toFixed(5) + ", " + Number(lng).toFixed(5);
+  }
+
+  function snapshotCustomCentersByNodeId() {
+    var byNodeId = {};
+    previewItems.forEach(function (item) {
+      if (item.nodeId && hasCustomCenter(item)) {
+        byNodeId[item.nodeId] = {
+          centerLat: item.centerLat,
+          centerLng: item.centerLng,
+        };
+      }
+    });
+    return byNodeId;
+  }
+
+  function applyStoredCenterToItem(item, centersByNodeId) {
+    if (!item || !item.nodeId || !centersByNodeId[item.nodeId]) {
+      return;
+    }
+    var stored = centersByNodeId[item.nodeId];
+    item.centerLat = stored.centerLat;
+    item.centerLng = stored.centerLng;
+  }
+
+  function mapElForPick() {
+    return document.getElementById("map");
+  }
+
+  function applySetCenterPickUi(active) {
+    var mapEl = mapElForPick();
+    if (mapEl) {
+      mapEl.classList.toggle(PICK_CENTER_MAP_CLASS, active);
+    }
+    var map = global.GisMap && typeof GisMap.getMap === "function" ? GisMap.getMap() : null;
+    if (map && typeof map.getContainer === "function") {
+      map.getContainer().style.cursor = active ? "crosshair" : "";
+    }
+    if (global.GisMap && typeof GisMap.setFeatureClicksEnabled === "function") {
+      GisMap.setFeatureClicksEnabled(!active);
+    }
+  }
+
+  function cancelSetCenterPick(silent) {
+    if (setCenterPickIndex == null) {
+      return;
+    }
+    setCenterPickIndex = null;
+    applySetCenterPickUi(false);
+    renderPlacemarkList();
+    if (!silent && setMessageFn) {
+      setMessageFn("Set center cancelled.");
+    }
+  }
+
+  function finishSetCenterPickAt(latlng) {
+    var index = setCenterPickIndex;
+    if (index == null || !previewItems[index] || !latlng) {
+      cancelSetCenterPick(true);
+      return;
+    }
+    var item = previewItems[index];
+    var name = item.name || "Placemark";
+    item.centerLat = latlng.lat;
+    item.centerLng = latlng.lng;
+    clearItemCapture(item);
+    setCenterPickIndex = null;
+    applySetCenterPickUi(false);
+    renderPlacemarkList();
+    if (setMessageFn) {
+      setMessageFn(
+        "Image center set for "
+          + name
+          + " ("
+          + formatCenterCoordLabel(latlng.lat, latlng.lng)
+          + ")."
+      );
+    }
+  }
+
+  function toggleSetCenterPick(index) {
+    if (previewInFlight || saveInFlight) {
+      return;
+    }
+    ensureSetCenterMapListener();
+    if (setCenterPickIndex === index) {
+      cancelSetCenterPick(true);
+      return;
+    }
+    if (setCenterPickIndex != null) {
+      cancelSetCenterPick(true);
+    }
+    setCenterPickIndex = index;
+    var item = previewItems[index];
+    applySetCenterPickUi(true);
+    renderPlacemarkList();
+    if (setMessageFn && item) {
+      setMessageFn("Click the map to set image center for " + (item.name || "Placemark") + ".");
+    }
+  }
+
+  function resetCustomCenter(index) {
+    var item = previewItems[index];
+    if (!item || !hasCustomCenter(item)) {
+      return;
+    }
+    delete item.centerLat;
+    delete item.centerLng;
+    clearItemCapture(item);
+    renderPlacemarkList();
+    if (setMessageFn) {
+      setMessageFn("Image center reset to borehole for " + (item.name || "Placemark") + ".");
+    }
+  }
+
+  function onSetCenterMapClick(event) {
+    if (setCenterPickIndex == null) {
+      return;
+    }
+    if (global.L && global.L.DomEvent) {
+      global.L.DomEvent.stop(event);
+    }
+    finishSetCenterPickAt(event.latlng);
+  }
+
+  function ensureSetCenterMapListener() {
+    if (!global.GisMap || typeof GisMap.getMap !== "function") {
+      return;
+    }
+    var map = GisMap.getMap();
+    if (!map || map._boreholeImagesSetCenterClick) {
+      return;
+    }
+    map._boreholeImagesSetCenterClick = true;
+    map.on("click", onSetCenterMapClick);
+  }
+
+  function bindSetCenterPickListeners() {
+    if (setCenterPickListenersBound) {
+      return;
+    }
+    setCenterPickListenersBound = true;
+    document.addEventListener("keydown", function (event) {
+      if (event.key !== "Escape" || setCenterPickIndex == null) {
+        return;
+      }
+      if (fullPreviewDialog && !fullPreviewDialog.classList.contains("hidden")) {
+        return;
+      }
+      event.preventDefault();
+      cancelSetCenterPick(true);
+    });
+  }
+
+  function buildSaveMetadataForItem(item, outDims) {
+    if (!global.ScreenshotMetadata || typeof ScreenshotMetadata.buildForFixedView !== "function") {
+      return null;
+    }
+    var widthPx = item.captureWidth || (outDims && outDims.width) || outputDimensions().width;
+    var heightPx = item.captureHeight || (outDims && outDims.height) || outputDimensions().height;
+    return ScreenshotMetadata.buildForFixedView({
+      captureKind: "borehole_placemark",
+      nodeId: item.nodeId,
+      lat: item.lat,
+      lng: item.lng,
+      zoom: item.zoom,
+      widthPx: widthPx,
+      heightPx: heightPx,
+      scaleDenom: item.scaleDenom,
+      sourceId: selectedSourceId(),
+      chromeOpts: captureChromeOptions(),
+    });
   }
 
   function blobToThumbUrl(blob, dims) {
@@ -534,6 +929,8 @@
   }
 
   function buildPlacemarkListFromSource() {
+    cancelSetCenterPick(true);
+    var centersByNodeId = snapshotCustomCentersByNodeId();
     clearPreviewItems();
     var sourceId = selectedSourceId();
     if (!sourceId || !global.GisMap) {
@@ -554,13 +951,15 @@
       return;
     }
     points.forEach(function (entry) {
-      previewItems.push({
+      var item = {
         nodeId: entry.nodeId,
         name: entry.name || "Placemark",
         lat: entry.lat,
         lng: entry.lng,
         include: true,
-      });
+      };
+      applyStoredCenterToItem(item, centersByNodeId);
+      previewItems.push(item);
     });
     setPlacemarkPanelVisible(true);
     var scaleRaw = scaleSelect ? scaleSelect.value : "";
@@ -593,6 +992,17 @@
     if (checked === 0 && savable === 0) {
       saveBtn.textContent = "Save selected";
     }
+    syncGeneratePreviewsButton();
+  }
+
+  function syncGeneratePreviewsButton() {
+    if (!generatePreviewsBtn) {
+      return;
+    }
+    var checked = previewItems.filter(function (item) {
+      return item.include !== false;
+    }).length;
+    generatePreviewsBtn.disabled = saveInFlight || previewInFlight || checked === 0;
   }
 
   function syncSelectAllToggle() {
@@ -647,6 +1057,13 @@
         metaEl.textContent = item.meta;
         nameCol.appendChild(metaEl);
       }
+      if (hasCustomCenter(item)) {
+        var centerHintEl = document.createElement("div");
+        centerHintEl.className = "borehole-images-placemark-center-hint";
+        centerHintEl.textContent =
+          "Center: " + formatCenterCoordLabel(item.centerLat, item.centerLng);
+        nameCol.appendChild(centerHintEl);
+      }
 
       var thumbWrap = document.createElement("div");
       thumbWrap.className = "borehole-images-placemark-thumb-wrap";
@@ -682,6 +1099,17 @@
         thumbWrap.appendChild(placeholder);
       }
 
+      var setCenterBtn = document.createElement("button");
+      setCenterBtn.type = "button";
+      setCenterBtn.className = "btn btn-subtle borehole-images-row-set-center-btn";
+      setCenterBtn.textContent = "Set Center";
+      setCenterBtn.title = "Pick a map point to use as the screenshot center";
+      setCenterBtn.setAttribute("aria-pressed", setCenterPickIndex === index ? "true" : "false");
+      setCenterBtn.disabled = previewInFlight || saveInFlight;
+      setCenterBtn.addEventListener("click", function () {
+        toggleSetCenterPick(index);
+      });
+
       var previewRowBtn = document.createElement("button");
       previewRowBtn.type = "button";
       previewRowBtn.className = "btn btn-subtle borehole-images-row-preview-btn";
@@ -705,6 +1133,19 @@
 
       var rowActions = document.createElement("div");
       rowActions.className = "borehole-images-row-actions";
+      rowActions.appendChild(setCenterBtn);
+      if (hasCustomCenter(item)) {
+        var resetCenterBtn = document.createElement("button");
+        resetCenterBtn.type = "button";
+        resetCenterBtn.className = "btn btn-subtle borehole-images-row-reset-center-btn";
+        resetCenterBtn.textContent = "Reset center";
+        resetCenterBtn.title = "Use borehole coordinates as the screenshot center";
+        resetCenterBtn.disabled = previewInFlight || saveInFlight;
+        resetCenterBtn.addEventListener("click", function () {
+          resetCustomCenter(index);
+        });
+        rowActions.appendChild(resetCenterBtn);
+      }
       rowActions.appendChild(previewRowBtn);
       rowActions.appendChild(saveRowBtn);
 
@@ -722,17 +1163,29 @@
     if (!global.MapScreenshot || typeof MapScreenshot.captureFixedViewPng !== "function") {
       return Promise.reject(new Error("Screenshot capture is not available."));
     }
-    var zoom = zoomForPlacemark(entry.lat, scaleDenom);
+    var center = imageCenterForItem(entry);
+    var zoom = zoomForPlacemark(center.lat, scaleDenom);
     var thumbDims = thumbDimensions(outDims.width, outDims.height);
+    var metaText = formatPlacemarkMeta(center.lat, zoom, scaleDenom);
+    if (hasCustomCenter(entry)) {
+      metaText += " · custom center";
+    }
     function runCapture() {
-      return MapScreenshot.captureFixedViewPng(
-        entry.lat,
-        entry.lng,
-        zoom,
-        outDims.width,
-        outDims.height,
-        captureChromeOptions()
-      );
+      var chromeOpts = captureChromeOptions();
+      var preload =
+        global.MapExportChrome && typeof MapExportChrome.preloadForOptions === "function"
+          ? MapExportChrome.preloadForOptions(chromeOpts)
+          : Promise.resolve();
+      return preload.then(function () {
+        return MapScreenshot.captureFixedViewPng(
+          center.lat,
+          center.lng,
+          zoom,
+          outDims.width,
+          outDims.height,
+          chromeOpts
+        );
+      });
     }
     var capturePromise =
       global.BhAlignments && typeof BhAlignments.withCaptureVisibility === "function"
@@ -747,7 +1200,9 @@
           lng: entry.lng,
           zoom: zoom,
           scaleDenom: scaleDenom,
-          meta: formatPlacemarkMeta(entry.lat, zoom, scaleDenom),
+          captureWidth: outDims.width,
+          captureHeight: outDims.height,
+          meta: metaText,
           thumbUrl: thumbUrl,
           fullBlob: fullBlob,
           include: includeFlag !== false,
@@ -800,6 +1255,110 @@
       .then(function () {
         previewInFlight = false;
         renderPlacemarkList();
+        syncGeneratePreviewsButton();
+      });
+  }
+
+  function generateSelectedPreviews() {
+    if (saveInFlight || previewInFlight || !previewItems.length) {
+      return;
+    }
+    var validation = validateCaptureSettings();
+    if (!validation.ok) {
+      if (setMessageFn && validation.message) {
+        setMessageFn(validation.message);
+      }
+      return;
+    }
+    var selected = [];
+    previewItems.forEach(function (item, index) {
+      if (item.include !== false) {
+        selected.push({ item: item, index: index });
+      }
+    });
+    if (!selected.length) {
+      if (setMessageFn) {
+        setMessageFn("Select at least one placemark to preview.");
+      }
+      return;
+    }
+
+    var scaleDenom = validation.scaleDenom;
+    var outDims = validation.outDims;
+    previewInFlight = true;
+    batchStopRequested = false;
+    setBatchProgressMode("preview");
+    syncSaveButton();
+    renderPlacemarkList();
+    writeSettings();
+    setBatchProgressVisible(true);
+    updateBatchProgress(0, selected.length, "Starting…");
+
+    var completed = 0;
+    var chain = Promise.resolve();
+    selected.forEach(function (entry, idx) {
+      chain = chain.then(function () {
+        assertBatchNotStopped();
+        updateBatchProgress(idx, selected.length, entry.item.name || "Placemark");
+        if (setMessageFn) {
+          setMessageFn(
+            "Capturing preview " +
+              (idx + 1) +
+              " of " +
+              selected.length +
+              ": " +
+              (entry.item.name || "Placemark") +
+              "…"
+          );
+        }
+        var includeFlag = entry.item.include !== false;
+        return capturePreviewForPlacemark(entry.item, scaleDenom, outDims, includeFlag).then(function (captured) {
+          revokeItemThumb(previewItems[entry.index]);
+          previewItems[entry.index] = Object.assign({}, previewItems[entry.index], captured, {
+            include: includeFlag,
+          });
+          completed += 1;
+          updateBatchProgress(completed, selected.length, entry.item.name || "Placemark");
+          renderPlacemarkList();
+        });
+      });
+    });
+
+    chain
+      .then(function () {
+        updatePlacemarkSubtitle(scaleDenom, outDims, previewItems.length);
+        if (setMessageFn) {
+          setMessageFn("Generated " + completed + " preview(s).");
+        }
+      })
+      .catch(function (err) {
+        updatePlacemarkSubtitle(scaleDenom, outDims, previewItems.length);
+        if (err && err.code === BATCH_STOP_CODE) {
+          if (setMessageFn) {
+            if (completed) {
+              setMessageFn(
+                "Stopped. Generated " + completed + " of " + selected.length + " preview(s)."
+              );
+            } else {
+              setMessageFn("Preview generation stopped.");
+            }
+          }
+          return;
+        }
+        if (setMessageFn) {
+          var partial =
+            completed > 0 ? " Generated " + completed + " preview(s) before the error." : "";
+          setMessageFn(((err && err.message) || "Could not generate previews.") + partial);
+        }
+      })
+      .then(function () {
+        previewInFlight = false;
+        batchStopRequested = false;
+        setBatchProgressMode("save");
+        setBatchProgressVisible(false);
+        updateBatchProgress(0, 0, "");
+        syncSaveButton();
+        renderPlacemarkList();
       });
   }
 
@@ -849,6 +1408,23 @@
     }
   }
 
+  function setBatchProgressMode(mode) {
+    batchProgressMode = mode === "preview" ? "preview" : "save";
+  }
+
+  function batchProgressHeading(total, done) {
+    if (batchProgressMode === "preview") {
+      if (total > 0) {
+        return "Generating previews (" + done + " of " + total + ")";
+      }
+      return "Generating previews…";
+    }
+    if (total > 0) {
+      return "Saving placemarks (" + done + " of " + total + ")";
+    }
+    return "Saving placemarks…";
+  }
+
   function updateBatchProgress(completed, total, detailText) {
     var safeTotal = total > 0 ? total : 1;
     var safeDone = Math.max(0, Math.min(completed, safeTotal));
@@ -857,11 +1433,7 @@
       batchProgressBar.value = safeDone;
     }
     if (batchProgressLabel) {
-      if (total > 0) {
-        batchProgressLabel.textContent = "Saving placemarks (" + safeDone + " of " + total + ")";
-      } else {
-        batchProgressLabel.textContent = "Saving placemarks…";
-      }
+      batchProgressLabel.textContent = batchProgressHeading(total, safeDone);
     }
     if (batchProgressDetail) {
       batchProgressDetail.textContent = detailText || "";
@@ -969,7 +1541,12 @@
     ensurePreviewBlobForIndex(index)
       .then(function (blob) {
         var stem = sanitizeFileStem(placemarkName);
-        return MapScreenshot.savePngBlob(blob, stem, { mode: "counter", directory: directory }).then(function (result) {
+        var outDims = outputDimensions();
+        return MapScreenshot.savePngBlob(blob, stem, {
+          mode: "counter",
+          directory: directory,
+          metadata: buildSaveMetadataForItem(item, outDims),
+        }).then(function (result) {
           return {
             fileName: result && result.name ? result.name : stem + ".png",
           };
@@ -1034,6 +1611,7 @@
 
     saveInFlight = true;
     batchStopRequested = false;
+    setBatchProgressMode("save");
     syncSaveButton();
     renderPlacemarkList();
     setBatchProgressVisible(true);
@@ -1050,7 +1628,12 @@
           setMessageFn("Saving " + (idx + 1) + " of " + selected.length + ": " + item.name + "…");
         }
         var stem = sanitizeFileStem(item.name || "placemark");
-        return MapScreenshot.savePngBlob(item.fullBlob, stem, { mode: "counter", directory: directory }).then(
+        var outDims = outputDimensions();
+        return MapScreenshot.savePngBlob(item.fullBlob, stem, {
+          mode: "counter",
+          directory: directory,
+          metadata: buildSaveMetadataForItem(item, outDims),
+        }).then(
           function (result) {
             savedNames.push(result && result.name ? result.name : stem + ".png");
             savedItems.push(item);
@@ -1163,6 +1746,9 @@
   }
 
   function bindPlacemarkPanel() {
+    if (generatePreviewsBtn) {
+      generatePreviewsBtn.addEventListener("click", generateSelectedPreviews);
+    }
     if (saveBtn) {
       saveBtn.addEventListener("click", saveSelectedPreviews);
     }
@@ -1202,6 +1788,7 @@
   }
 
   function onChromeDetailChange() {
+    syncNorthStyleUi();
     syncChromePanelVisibility();
     refreshChromeStylePreviews();
     writeSettings();
@@ -1244,11 +1831,57 @@
     if (scalePositionSelect && stored.scalePosition) {
       scalePositionSelect.value = stored.scalePosition;
     }
+    if (scaleInsetInput) {
+      var scaleInset =
+        stored.scaleInsetPx != null
+          ? stored.scaleInsetPx
+          : stored.marginPx != null
+            ? stored.marginPx
+            : DEFAULT_LEGEND_INSET_PX;
+      scaleInsetInput.value = String(scaleInset);
+    }
+    if (scaleWidthInput && stored.scaleWidthPx) {
+      scaleWidthInput.value = String(stored.scaleWidthPx);
+    }
+    if (scaleHeightInput && stored.scaleHeightPx) {
+      scaleHeightInput.value = String(stored.scaleHeightPx);
+    }
+    if (scalePreserveAspectToggle) {
+      scalePreserveAspectToggle.checked = stored.scalePreserveAspectRatio !== false;
+    }
     if (northStyleSelect && stored.northStyle) {
+      var hasNorthStyleOption = Array.prototype.some.call(northStyleSelect.options, function (opt) {
+        return opt.value === stored.northStyle;
+      });
+      if (!hasNorthStyleOption) {
+        var storedOption = document.createElement("option");
+        storedOption.value = stored.northStyle;
+        storedOption.textContent = northIconSelectLabel(stored.northStyle);
+        northStyleSelect.appendChild(storedOption);
+      }
       northStyleSelect.value = stored.northStyle;
     }
+    syncNorthStyleUi();
     if (northPositionSelect && stored.northPosition) {
       northPositionSelect.value = stored.northPosition;
+    }
+    if (northInsetInput) {
+      var northInset =
+        stored.northInsetPx != null
+          ? stored.northInsetPx
+          : stored.marginPx != null
+            ? stored.marginPx
+            : DEFAULT_LEGEND_INSET_PX;
+      northInsetInput.value = String(northInset);
+    }
+    if (northWidthInput && stored.northWidthPx) {
+      northWidthInput.value = String(stored.northWidthPx);
+    }
+    if (northHeightInput && stored.northHeightPx) {
+      northHeightInput.value = String(stored.northHeightPx);
+    }
+    if (northPreserveAspectToggle) {
+      northPreserveAspectToggle.checked = stored.northPreserveAspectRatio !== false;
     }
     var chromeColors = defaultChromeColors();
     if (scaleColorInput) {
@@ -1290,6 +1923,7 @@
     placemarkSubtitle = document.getElementById("borehole-images-placemark-subtitle");
     selectAllToggle = document.getElementById("borehole-images-select-all");
     saveBtn = document.getElementById("borehole-images-save");
+    generatePreviewsBtn = document.getElementById("borehole-images-generate-previews");
     batchProgressPanel = document.getElementById("borehole-images-batch-progress");
     batchProgressLabel = document.getElementById("borehole-images-batch-progress-label");
     batchProgressBar = document.getElementById("borehole-images-batch-progress-bar");
@@ -1307,9 +1941,17 @@
     chromePanel = document.getElementById("borehole-images-chrome-panel");
     scaleStyleSelect = document.getElementById("borehole-images-scale-style");
     scalePositionSelect = document.getElementById("borehole-images-scale-position");
+    scaleInsetInput = document.getElementById("borehole-images-scale-inset");
+    scaleWidthInput = document.getElementById("borehole-images-scale-width");
+    scaleHeightInput = document.getElementById("borehole-images-scale-height");
+    scalePreserveAspectToggle = document.getElementById("borehole-images-scale-preserve-aspect");
     scaleColorInput = document.getElementById("borehole-images-scale-color");
     northStyleSelect = document.getElementById("borehole-images-north-style");
     northPositionSelect = document.getElementById("borehole-images-north-position");
+    northInsetInput = document.getElementById("borehole-images-north-inset");
+    northWidthInput = document.getElementById("borehole-images-north-width");
+    northHeightInput = document.getElementById("borehole-images-north-height");
+    northPreserveAspectToggle = document.getElementById("borehole-images-north-preserve-aspect");
     northColorInput = document.getElementById("borehole-images-north-color");
     showScaleRatioToggle = document.getElementById("borehole-images-show-scale-ratio");
     chromePlateToggle = document.getElementById("borehole-images-chrome-plate");
@@ -1320,9 +1962,11 @@
       return;
     }
 
-    applyStoredSettings();
-    syncChromePanelVisibility();
-    refreshChromeStylePreviews();
+    populateNorthStyleSelect().then(function () {
+      applyStoredSettings();
+      syncChromePanelVisibility();
+      refreshChromeStylePreviews();
+    });
 
     if (sourceSelect) {
       sourceSelect.addEventListener("change", function () {
@@ -1352,6 +1996,28 @@
     if (showNorthToggle) {
       showNorthToggle.addEventListener("change", onOverlayToggleChange);
     }
+    [scaleInsetInput, northInsetInput].forEach(function (el) {
+      if (!el) {
+        return;
+      }
+      el.addEventListener("change", onChromeDetailChange);
+    });
+    bindLegendSizeInputs(
+      scaleWidthInput,
+      scaleHeightInput,
+      scalePreserveAspectToggle,
+      function () {
+        return scaleLegendAspect;
+      }
+    );
+    bindLegendSizeInputs(
+      northWidthInput,
+      northHeightInput,
+      northPreserveAspectToggle,
+      function () {
+        return northLegendAspect;
+      }
+    );
     [
       scaleStyleSelect,
       scalePositionSelect,
@@ -1376,6 +2042,8 @@
     bindBrowseDirectory();
     bindPlacemarkPanel();
     bindFullPreviewDialog();
+    bindSetCenterPickListeners();
+    ensureSetCenterMapListener();
 
     (ensureDesktopFn ? ensureDesktopFn() : Promise.resolve(null)).then(function (desktop) {
       if (browseBtn) {
@@ -1399,6 +2067,7 @@
   global.BoreholeImages = {
     init: init,
     refreshSources: refreshSources,
+    refreshScalePresets: populateScaleSelect,
     getSelectedSourceId: getSelectedSourceId,
   };
 })(window);

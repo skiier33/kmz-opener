@@ -303,8 +303,145 @@ select:focus-visible {
   white-space: nowrap;
 }
 
+.toolbar-scale-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.toolbar-scale-edit-btn {
+  padding: 2px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 #map-scale-select {
   min-width: 9.5rem;
+}
+
+.map-scale-presets-dialog {
+  position: absolute;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(8, 10, 12, 0.55);
+}
+
+.map-scale-presets-dialog.hidden {
+  display: none;
+}
+
+.map-scale-presets-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(420px, 100%);
+  max-height: min(72vh, 480px);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.map-scale-presets-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.map-scale-presets-header h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.map-scale-presets-subtitle {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.map-scale-presets-mono {
+  font-family: ui-monospace, "Cascadia Mono", "Segoe UI Mono", monospace;
+  font-size: 11px;
+}
+
+.map-scale-presets-close {
+  min-width: 32px;
+  padding: 0;
+  font-size: 20px;
+  line-height: 28px;
+}
+
+.map-scale-presets-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px 0;
+}
+
+.map-scale-presets-add-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+}
+
+.map-scale-presets-message {
+  margin: 8px 14px 0;
+  font-size: 12px;
+}
+
+.map-scale-presets-message.is-error {
+  color: #f0a8a8;
+}
+
+.map-scale-presets-list {
+  flex: 1;
+  min-height: 120px;
+  margin: 10px 0 0;
+  padding: 0 8px 8px 14px;
+  overflow: auto;
+  list-style: none;
+}
+
+.map-scale-presets-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.map-scale-presets-item-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.map-scale-presets-remove {
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+.map-scale-presets-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--border);
 }
 
 .imagery-label-detail {
@@ -997,10 +1134,10 @@ body.sidebar-panel-resizing * {
 
 .borehole-images-chrome-panel {
   grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px 10px;
-  padding: 10px 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--panel-2);
@@ -1011,25 +1148,110 @@ body.sidebar-panel-resizing * {
 }
 
 .borehole-images-chrome-hint {
-  grid-column: 1 / -1;
-  margin: 0 0 2px;
+  margin: 0;
   font-size: 11px;
-  line-height: 1.35;
+  line-height: 1.3;
 }
 
-.borehole-images-field-legend-preview {
-  align-self: start;
+.borehole-images-chrome-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.borehole-images-chrome-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--input-bg);
+}
+
+.borehole-images-chrome-block-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--text);
+  letter-spacing: 0.02em;
+}
+
+.borehole-images-chrome-style-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 76px;
+  gap: 6px;
+  align-items: end;
+}
+
+.borehole-images-chrome-meta-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: end;
+}
+
+.borehole-images-chrome-meta-row .borehole-images-field-color {
+  align-items: flex-start;
+}
+
+.borehole-images-chrome-layout-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  align-items: end;
+}
+
+.borehole-images-chrome-size-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  align-items: end;
+}
+
+.borehole-images-chrome-block input[type="number"] {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 28px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.borehole-images-chrome-aspect-toggle {
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.borehole-images-chrome-options {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 2px;
+  border-top: 1px solid var(--border);
+}
+
+.borehole-images-chrome-options .borehole-images-toggle {
+  font-size: 11px;
+  line-height: 1.3;
 }
 
 .borehole-images-legend-preview-wrap {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 52px;
-  margin-top: 2px;
-  padding: 6px 8px;
+  box-sizing: border-box;
+  width: 76px;
+  min-height: 36px;
+  padding: 4px 5px;
   border: 1px dashed var(--border);
-  border-radius: 6px;
+  border-radius: 4px;
   background: #0d0f11;
 }
 
@@ -1043,6 +1265,10 @@ body.sidebar-panel-resizing * {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.borehole-images-chrome-block .borehole-images-field {
+  gap: 3px;
 }
 
 .borehole-images-field-color input[type="color"] {
@@ -1117,8 +1343,16 @@ body.sidebar-panel-resizing * {
   font-size: 12px;
 }
 
+.bh-alignments-select-icon {
+  margin-bottom: 8px;
+}
+
 .bh-alignments-icon-picker {
   margin-bottom: 10px;
+}
+
+.bh-alignments-icon-picker.hidden {
+  display: none;
 }
 
 .bh-alignments-create-btn {
@@ -1239,6 +1473,8 @@ body.sidebar-panel-resizing * {
   justify-content: flex-end;
 }
 
+.borehole-images-row-set-center-btn,
+.borehole-images-row-reset-center-btn,
 .borehole-images-row-preview-btn,
 .borehole-images-row-save-btn {
   white-space: nowrap;
@@ -1246,6 +1482,30 @@ body.sidebar-panel-resizing * {
   font-size: 12px;
 }
 
+.borehole-images-row-set-center-btn[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: rgba(232, 113, 10, 0.15);
+}
+
+.borehole-images-placemark-center-hint {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.3;
+}
+
+#map.borehole-images-pick-center,
+#map.borehole-images-pick-center .leaflet-container {
+  cursor: crosshair !important;
+}
+
+.borehole-images-panel-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.borehole-images-generate-previews-btn,
 .borehole-images-save-btn {
   width: 100%;
 }
@@ -2407,21 +2667,26 @@ body.icon-picker-scroll-resizing * {
   margin-top: 8px;
 }
 
-.toolbar-coords {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 1px;
-  min-width: 148px;
-  padding: 2px 10px;
+.map-cursor-coords {
+  position: absolute;
+  left: 12px;
+  bottom: 8px;
+  z-index: 1000;
+  padding: 4px 10px;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--panel-2);
+  border-radius: 6px;
+  background: rgba(18, 20, 23, 0.92);
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.45);
   font-variant-numeric: tabular-nums;
+  pointer-events: none;
 }
 
-.toolbar-coords-value {
-  font-size: 16px;
+.map-cursor-coords.hidden {
+  display: none;
+}
+
+.map-cursor-coords-value {
+  font-size: 13px;
   font-weight: 600;
   color: var(--text);
   line-height: 1.3;

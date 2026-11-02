@@ -1000,7 +1000,9 @@
   var inspectEditing = false;
   var lastInspectInfo = null;
   var dropOverlay = document.getElementById("drop-overlay");
-  var toolbarCoords = document.getElementById("toolbar-coords");
+  var cursorCoordsInput = document.getElementById("cursor-coords");
+  var mapCursorCoordsWrap = document.getElementById("map-cursor-coords");
+  var mapCursorCoordsValue = document.getElementById("map-cursor-coords-value");
   var statusTool = document.getElementById("status-tool");
   var statusMeasure = document.getElementById("status-measure");
   var statusMessage = document.getElementById("status-message");
@@ -1075,6 +1077,22 @@
       return "—";
     }
     return latlng.lat.toFixed(6) + ", " + latlng.lng.toFixed(6);
+  }
+
+  function cursorCoordsOverlayEnabled() {
+    return !!(cursorCoordsInput && cursorCoordsInput.checked);
+  }
+
+  function syncCursorCoordsOverlay() {
+    if (!mapCursorCoordsWrap) {
+      return;
+    }
+    var show = cursorCoordsOverlayEnabled();
+    mapCursorCoordsWrap.hidden = !show;
+    mapCursorCoordsWrap.classList.toggle("hidden", !show);
+    if (!show && mapCursorCoordsValue) {
+      mapCursorCoordsValue.textContent = "—";
+    }
   }
 
   function toolLabel(tool) {
@@ -5427,6 +5445,8 @@
       map: map,
       basemapSelect: document.getElementById("basemap-select"),
       mapScaleSelect: mapScaleSelect,
+      cursorCoordsInput: cursorCoordsInput,
+      syncCursorCoordsOverlay: syncCursorCoordsOverlay,
       chooseTool: chooseTool,
     });
     syncImageryLabelsControl();
@@ -7485,6 +7505,7 @@
       measure: Measure,
       map: map,
       mapScaleSelect: mapScaleSelect,
+      cursorCoordsInput: cursorCoordsInput,
     });
   }
 
@@ -7662,14 +7683,16 @@
   });
 
   map.on("mousemove", function (event) {
-    if (toolbarCoords) {
-      toolbarCoords.textContent = formatLatLng(event.latlng);
+    if (!cursorCoordsOverlayEnabled() || !mapCursorCoordsValue) {
+      return;
     }
+    mapCursorCoordsValue.textContent = formatLatLng(event.latlng);
   });
   map.on("mouseout", function () {
-    if (toolbarCoords) {
-      toolbarCoords.textContent = "—";
+    if (!cursorCoordsOverlayEnabled() || !mapCursorCoordsValue) {
+      return;
     }
+    mapCursorCoordsValue.textContent = "—";
   });
   map.on("movestart", function () {
     if (balloonSource === "map") {
@@ -8097,6 +8120,15 @@
           });
           return;
         }
+        if (item.id === "btn-edit-map-scale-presets") {
+          event.preventDefault();
+          event.stopPropagation();
+          closeAllMenus();
+          if (typeof window.openMapScalePresetsDialog === "function") {
+            window.openMapScalePresetsDialog();
+          }
+          return;
+        }
         closeAllMenus();
       });
     });
@@ -8221,11 +8253,185 @@
 
   var mapScaleSelect = document.getElementById("map-scale-select");
   var mapScaleSyncLock = false;
+  var mapScalePresetsDialog = document.getElementById("map-scale-presets-dialog");
+  var mapScalePresetsListEl = document.getElementById("map-scale-presets-list");
+  var mapScalePresetsAddInput = document.getElementById("map-scale-presets-add-input");
+  var mapScalePresetsMessageEl = document.getElementById("map-scale-presets-message");
+
+  function mapScalePresetValues() {
+    if (typeof GisMap.getMapScalePresets === "function") {
+      return GisMap.getMapScalePresets();
+    }
+    return GisMap.MAP_SCALE_PRESETS || [];
+  }
+
+  function refreshMapScaleDropdowns() {
+    populateMapScaleSelect();
+    syncMapScaleSelect();
+    if (window.BoreholeImages && typeof BoreholeImages.refreshScalePresets === "function") {
+      BoreholeImages.refreshScalePresets();
+    }
+  }
+
+  function setMapScalePresetsDialogMessage(text, isError) {
+    if (!mapScalePresetsMessageEl) {
+      return;
+    }
+    var message = String(text || "").trim();
+    if (!message) {
+      mapScalePresetsMessageEl.hidden = true;
+      mapScalePresetsMessageEl.textContent = "";
+      mapScalePresetsMessageEl.classList.remove("is-error");
+      return;
+    }
+    mapScalePresetsMessageEl.hidden = false;
+    mapScalePresetsMessageEl.textContent = message;
+    mapScalePresetsMessageEl.classList.toggle("is-error", !!isError);
+  }
+
+  function renderMapScalePresetsDialogList() {
+    if (!mapScalePresetsListEl) {
+      return;
+    }
+    mapScalePresetsListEl.innerHTML = "";
+    mapScalePresetValues().forEach(function (denom) {
+      var item = document.createElement("li");
+      item.className = "map-scale-presets-item";
+
+      var label = document.createElement("span");
+      label.className = "map-scale-presets-item-label";
+      label.textContent = GisMap.formatMapScaleLabel(denom);
+
+      var removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "btn btn-subtle map-scale-presets-remove";
+      removeBtn.textContent = "Remove";
+      removeBtn.setAttribute("aria-label", "Remove " + label.textContent);
+      removeBtn.addEventListener("click", function () {
+        var result = GisMap.removeMapScalePreset(denom);
+        if (!result || !result.ok) {
+          setMapScalePresetsDialogMessage((result && result.message) || "Could not remove scale.", true);
+          return;
+        }
+        setMapScalePresetsDialogMessage("");
+      });
+
+      item.appendChild(label);
+      item.appendChild(removeBtn);
+      mapScalePresetsListEl.appendChild(item);
+    });
+  }
+
+  function closeMapScalePresetsDialog() {
+    if (!mapScalePresetsDialog) {
+      return;
+    }
+    mapScalePresetsDialog.classList.add("hidden");
+    mapScalePresetsDialog.setAttribute("aria-hidden", "true");
+    setMapScalePresetsDialogMessage("");
+    if (mapScalePresetsAddInput) {
+      mapScalePresetsAddInput.value = "";
+    }
+  }
+
+  function openMapScalePresetsDialog() {
+    if (!mapScalePresetsDialog) {
+      return;
+    }
+    renderMapScalePresetsDialogList();
+    setMapScalePresetsDialogMessage("");
+    mapScalePresetsDialog.classList.remove("hidden");
+    mapScalePresetsDialog.setAttribute("aria-hidden", "false");
+    if (mapScalePresetsAddInput) {
+      mapScalePresetsAddInput.focus();
+    }
+  }
+
+  window.openMapScalePresetsDialog = openMapScalePresetsDialog;
+
+  function submitMapScalePresetAdd() {
+    if (!mapScalePresetsAddInput) {
+      return;
+    }
+    var parsed =
+      typeof GisMap.parseMapScalePresetInput === "function"
+        ? GisMap.parseMapScalePresetInput(mapScalePresetsAddInput.value)
+        : null;
+    var result = parsed != null ? GisMap.addMapScalePreset(parsed) : { ok: false, message: "Enter a valid scale." };
+    if (!result || !result.ok) {
+      setMapScalePresetsDialogMessage((result && result.message) || "Could not add scale.", true);
+      return;
+    }
+    mapScalePresetsAddInput.value = "";
+    setMapScalePresetsDialogMessage("");
+  }
+
+  if (mapScalePresetsDialog) {
+    var mapScalePresetsCloseBtn = document.getElementById("map-scale-presets-close");
+    var mapScalePresetsDoneBtn = document.getElementById("map-scale-presets-done");
+    var mapScalePresetsAddBtn = document.getElementById("map-scale-presets-add-btn");
+    var mapScalePresetsResetBtn = document.getElementById("map-scale-presets-reset");
+    var mapScaleEditBtn = document.getElementById("map-scale-edit-btn");
+
+    if (mapScaleEditBtn) {
+      mapScaleEditBtn.addEventListener("click", openMapScalePresetsDialog);
+    }
+    if (mapScalePresetsCloseBtn) {
+      mapScalePresetsCloseBtn.addEventListener("click", closeMapScalePresetsDialog);
+    }
+    if (mapScalePresetsDoneBtn) {
+      mapScalePresetsDoneBtn.addEventListener("click", closeMapScalePresetsDialog);
+    }
+    if (mapScalePresetsAddBtn) {
+      mapScalePresetsAddBtn.addEventListener("click", submitMapScalePresetAdd);
+    }
+    if (mapScalePresetsAddInput) {
+      mapScalePresetsAddInput.addEventListener("keydown", function (event) {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          submitMapScalePresetAdd();
+        }
+      });
+    }
+    if (mapScalePresetsResetBtn) {
+      mapScalePresetsResetBtn.addEventListener("click", function () {
+        var result = GisMap.resetMapScalePresets();
+        if (!result || !result.ok) {
+          setMapScalePresetsDialogMessage((result && result.message) || "Could not restore defaults.", true);
+          return;
+        }
+        setMapScalePresetsDialogMessage("");
+        setMessage("Restored default map scale list.");
+      });
+    }
+    mapScalePresetsDialog.addEventListener("click", function (event) {
+      if (event.target === mapScalePresetsDialog) {
+        closeMapScalePresetsDialog();
+      }
+    });
+    document.addEventListener("keydown", function (event) {
+      if (
+        event.key === "Escape"
+        && mapScalePresetsDialog
+        && !mapScalePresetsDialog.classList.contains("hidden")
+      ) {
+        closeMapScalePresetsDialog();
+      }
+    });
+  }
+
+  window.addEventListener("kmz-map-scale-presets-changed", function () {
+    refreshMapScaleDropdowns();
+    if (mapScalePresetsDialog && !mapScalePresetsDialog.classList.contains("hidden")) {
+      renderMapScalePresetsDialogList();
+    }
+  });
 
   function populateMapScaleSelect() {
     if (!mapScaleSelect) {
       return;
     }
+    var previous = mapScaleSelect.value;
     var custom = mapScaleSelect.querySelector('option[value=""]');
     mapScaleSelect.innerHTML = "";
     if (custom) {
@@ -8236,12 +8442,15 @@
       customOpt.textContent = "Custom";
       mapScaleSelect.appendChild(customOpt);
     }
-    GisMap.MAP_SCALE_PRESETS.forEach(function (denom) {
+    mapScalePresetValues().forEach(function (denom) {
       var opt = document.createElement("option");
       opt.value = String(denom);
       opt.textContent = GisMap.formatMapScaleLabel(denom);
       mapScaleSelect.appendChild(opt);
     });
+    if (previous && mapScaleSelect.querySelector('option[value="' + previous + '"]')) {
+      mapScaleSelect.value = previous;
+    }
   }
 
   function syncMapScaleSelect() {
@@ -8391,16 +8600,26 @@
     });
   }
 
+  if (cursorCoordsInput) {
+    cursorCoordsInput.addEventListener("change", function () {
+      syncCursorCoordsOverlay();
+      persistViewerGuiPrefs();
+    });
+  }
+
   if (!launchWindowParams && window.ViewerGuiPrefs) {
     ViewerGuiPrefs.apply({
       gisMap: GisMap,
       map: map,
       basemapSelect: document.getElementById("basemap-select"),
       mapScaleSelect: mapScaleSelect,
+      cursorCoordsInput: cursorCoordsInput,
+      syncCursorCoordsOverlay: syncCursorCoordsOverlay,
       chooseTool: chooseTool,
     });
   }
 
+  syncCursorCoordsOverlay();
   syncImageryLabelsControl();
   if (!launchWindowParams) {
     syncMapScaleSelect();
