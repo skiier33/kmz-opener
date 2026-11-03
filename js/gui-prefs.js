@@ -82,6 +82,11 @@
       }
       partial.imageryLabels = options.gisMap.getImageryLabelsEnabled();
       partial.imageryLabelGranularity = options.gisMap.getImageryLabelGranularity();
+      if (typeof options.gisMap.getImageryLabelLayerState === "function") {
+        partial.imageryLabelLayers = options.gisMap.getImageryLabelLayerState(
+          options.gisMap.getActiveBasemapKey()
+        );
+      }
     }
     if (options.measure && validTool(options.measure.getTool())) {
       partial.tool = options.measure.getTool();
@@ -129,8 +134,22 @@
     if (typeof stored.imageryLabels === "boolean" && options.gisMap) {
       options.gisMap.setImageryLabelsEnabled(stored.imageryLabels);
     }
-    if (typeof stored.imageryLabelGranularity === "string" && options.gisMap) {
-      options.gisMap.setImageryLabelGranularity(stored.imageryLabelGranularity);
+    if (
+      stored.imageryLabelLayers
+      && typeof stored.imageryLabelLayers === "object"
+      && options.gisMap
+      && typeof options.gisMap.setImageryLabelLayerState === "function"
+    ) {
+      options.gisMap.setImageryLabelLayerState(
+        options.gisMap.getActiveBasemapKey(),
+        stored.imageryLabelLayers
+      );
+    } else if (typeof stored.imageryLabelGranularity === "string" && options.gisMap) {
+      var granularity = stored.imageryLabelGranularity;
+      if (granularity === "all" && !stored.imageryLabelLayers) {
+        granularity = "roads_places";
+      }
+      options.gisMap.setImageryLabelGranularity(granularity);
     }
     applyMapView(options.map, stored.mapView);
     if (

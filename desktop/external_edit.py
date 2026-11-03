@@ -30,6 +30,11 @@ _SUBLIME_CANDIDATES = (
     r"%LocalAppData%\Programs\Sublime Text\subl.exe",
 )
 
+_ZED_CANDIDATES = (
+    r"%LocalAppData%\Programs\Zed\bin\zed.exe",
+    r"%LocalAppData%\Programs\Zed\zed.exe",
+)
+
 _GOTO_PATH = os.path.join(_SETTINGS_DIR, "editor-goto.json")
 
 _SUBLIME_GOTO_PLUGIN = '''\
@@ -235,6 +240,19 @@ def _find_vscode() -> Optional[str]:
     return None
 
 
+def _find_zed() -> Optional[str]:
+    """Return the Zed CLI or app launcher, if installed."""
+    for name in ("zed", "zed.exe"):
+        path = shutil.which(name)
+        if path:
+            return path
+    for pattern in _ZED_CANDIDATES:
+        path = _expand(pattern)
+        if path and os.path.isfile(path):
+            return path
+    return None
+
+
 def _launch_editor(edit_path: str, goto: Optional[EditorGoto] = None) -> None:
     """Open the KML file in the user's configured or default editor."""
     if goto:
@@ -245,6 +263,13 @@ def _launch_editor(edit_path: str, goto: Optional[EditorGoto] = None) -> None:
         if parts:
             subprocess.Popen(parts, close_fds=True)
             return
+    zed = _find_zed()
+    if zed:
+        target = edit_path
+        if goto:
+            target = f"{edit_path}:{goto.start_line}:{goto.start_column}"
+        subprocess.Popen([zed, target], close_fds=True)
+        return
     sublime = _find_sublime()
     if sublime:
         _ensure_sublime_goto_plugin()

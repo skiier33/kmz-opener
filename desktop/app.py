@@ -10,6 +10,38 @@ from typing import Dict, List, Optional
 from urllib.parse import urlencode
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _load_project_env() -> None:
+    """Load KEY=VALUE pairs from ``.env`` in the project root."""
+    path = os.path.join(_ROOT, ".env")
+    if not os.path.isfile(path):
+        return
+    try:
+        with open(path, encoding="utf-8") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                key = key.strip()
+                value = value.strip()
+                if (
+                    len(value) >= 2
+                    and value[0] == value[-1]
+                    and value[0] in ("\"", "'")
+                ):
+                    value = value[1:-1]
+                if key and key not in os.environ:
+                    os.environ[key] = value
+    except OSError:
+        pass
+
+
+_load_project_env()
+
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 

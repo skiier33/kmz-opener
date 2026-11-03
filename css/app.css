@@ -285,8 +285,39 @@ select:focus-visible {
   min-width: 9.5rem;
 }
 
-#imagery-label-granularity {
-  min-width: 7.5rem;
+.imagery-label-detail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  max-width: min(52vw, 420px);
+}
+
+.imagery-label-layer-toggles {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.imagery-label-layer-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.imagery-label-layer-toggle input {
+  margin: 0;
+}
+
+.imagery-label-layer-toggle.is-disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 select {
@@ -2104,6 +2135,18 @@ body.point-chain-order-resizing * {
   gap: 8px;
   padding: 10px 14px 12px;
   border-top: 1px solid var(--border);
+}
+
+.source-overwrite-panel {
+  width: min(440px, 100%);
+  max-height: none;
+}
+
+.source-overwrite-message {
+  margin: 0;
+  padding: 4px 14px 14px;
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .map-context-menu {

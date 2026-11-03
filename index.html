@@ -221,15 +221,16 @@
             <input id="imagery-labels" type="checkbox" checked aria-label="Labels on satellite" />
             <span class="toolbar-select-caption">Labels</span>
           </label>
-          <label
-            class="basemap-label"
-            id="imagery-label-granularity-wrap"
+          <div
+            class="imagery-label-detail"
+            id="imagery-label-detail-wrap"
             hidden
-            title="Which reference labels to show over satellite imagery"
+            role="group"
+            aria-label="Satellite map detail layers"
           >
-            <span class="toolbar-select-caption">Label detail</span>
-            <select id="imagery-label-granularity" aria-label="Imagery label detail"></select>
-          </label>
+            <span class="toolbar-select-caption">Map detail</span>
+            <div id="imagery-label-layer-toggles" class="imagery-label-layer-toggles"></div>
+          </div>
         </div>
 
         <div class="toolbar-sep"></div>
@@ -638,6 +639,29 @@
               <footer class="feature-properties-footer">
                 <button type="button" class="btn btn-subtle" id="feature-properties-cancel">Cancel</button>
                 <button type="button" class="btn" id="feature-properties-save" disabled>Save to KML</button>
+              </footer>
+            </div>
+          </div>
+          <div
+            id="source-overwrite-dialog"
+            class="feature-properties-dialog hidden"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="source-overwrite-title"
+            aria-describedby="source-overwrite-message"
+            aria-hidden="true"
+          >
+            <div class="feature-properties-panel source-overwrite-panel">
+              <header class="feature-properties-header">
+                <div>
+                  <h2 id="source-overwrite-title">Overwrite file?</h2>
+                  <p id="source-overwrite-subtitle" class="muted feature-properties-subtitle"></p>
+                </div>
+              </header>
+              <p id="source-overwrite-message" class="source-overwrite-message"></p>
+              <footer class="feature-properties-footer">
+                <button type="button" class="btn btn-subtle" id="source-overwrite-cancel">Cancel</button>
+                <button type="button" class="btn" id="source-overwrite-confirm">Overwrite</button>
               </footer>
             </div>
           </div>

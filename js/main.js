@@ -688,7 +688,14 @@
   var mapContextMenuNodeId = null;
   var layerTreeContextMenu = null;
   var layerTreeContextMenuSourceId = null;
+  var layerTreeContextMenuSaveBtn = null;
   var layerTreeContextMenuExportBtn = null;
+  var sourceOverwriteDialog = document.getElementById("source-overwrite-dialog");
+  var sourceOverwriteSubtitle = document.getElementById("source-overwrite-subtitle");
+  var sourceOverwriteMessage = document.getElementById("source-overwrite-message");
+  var sourceOverwriteConfirmBtn = document.getElementById("source-overwrite-confirm");
+  var sourceOverwriteCancelBtn = document.getElementById("source-overwrite-cancel");
+  var sourceOverwriteResolve = null;
   var featurePropertiesDialog = document.getElementById("feature-properties-dialog");
   var featurePropertiesBody = document.getElementById("feature-properties-body");
   var featurePropertiesSubtitle = document.getElementById("feature-properties-subtitle");
@@ -5254,8 +5261,11 @@
       saveAllBtn.disabled = saveInFlight || !hasDirtySources;
     }
     refreshDuplicateWindowButton();
+    var activeForEdit = activeLoadedSource();
     var editKmlDisabled =
-      !canWrite || !desktopExternalEditAvailable || !(currentDoc && currentDoc.sourcePath);
+      !canWrite ||
+      !desktopExternalEditAvailable ||
+      !(activeForEdit && activeForEdit.doc && activeForEdit.doc.sourcePath);
     if (fileEditKmlBtn) {
       fileEditKmlBtn.disabled = editKmlDisabled;
     }
@@ -5481,11 +5491,129 @@
     }
   }
 
+  function closeSourceOverwriteDialog(confirmed) {
+    if (!sourceOverwriteDialog) {
+      if (sourceOverwriteResolve) {
+        sourceOverwriteResolve(!!confirmed);
+        sourceOverwriteResolve = null;
+      }
+      return;
+    }
+    sourceOverwriteDialog.classList.add("hidden");
+    sourceOverwriteDialog.setAttribute("aria-hidden", "true");
+    if (sourceOverwriteResolve) {
+      sourceOverwriteResolve(!!confirmed);
+      sourceOverwriteResolve = null;
+    }
+  }
+
+  function confirmOverwriteSource(source) {
+    if (!source || !sourceCanPersistToOriginal(source)) {
+      return Promise.resolve(false);
+    }
+    if (!sourceOverwriteDialog) {
+      return Promise.resolve(true);
+    }
+    var doc = source.doc;
+    var fileLabel = doc.fileName || "file";
+    var pathHint = doc.sourcePath || fileLabel;
+    if (sourceOverwriteSubtitle) {
+      sourceOverwriteSubtitle.textContent = pathHint;
+    }
+    if (sourceOverwriteMessage) {
+      sourceOverwriteMessage.textContent =
+        "Save your edits by replacing " +
+        fileLabel +
+        " on disk. This cannot be undone.";
+    }
+    return new Promise(function (resolve) {
+      sourceOverwriteResolve = resolve;
+      sourceOverwriteDialog.classList.remove("hidden");
+      sourceOverwriteDialog.setAttribute("aria-hidden", "false");
+      if (sourceOverwriteConfirmBtn) {
+        sourceOverwriteConfirmBtn.focus();
+      }
+    });
+  }
+
+  function initSourceOverwriteDialog() {
+    if (!sourceOverwriteDialog) {
+      return;
+    }
+    if (sourceOverwriteCancelBtn) {
+      sourceOverwriteCancelBtn.addEventListener("click", function () {
+        closeSourceOverwriteDialog(false);
+      });
+    }
+    if (sourceOverwriteConfirmBtn) {
+      sourceOverwriteConfirmBtn.addEventListener("click", function () {
+        closeSourceOverwriteDialog(true);
+      });
+    }
+    sourceOverwriteDialog.addEventListener("click", function (event) {
+      if (event.target === sourceOverwriteDialog) {
+        closeSourceOverwriteDialog(false);
+      }
+    });
+    document.addEventListener("keydown", function (event) {
+      if (
+        event.key === "Escape" &&
+        sourceOverwriteDialog &&
+        !sourceOverwriteDialog.classList.contains("hidden")
+      ) {
+        event.preventDefault();
+        closeSourceOverwriteDialog(false);
+      }
+    });
+  }
+
+  function saveSourceFromLayerTree(sourceId) {
+    persistActiveSourceState();
+    var source = findLoadedSource(sourceId);
+    if (!source || !source.doc || !source.doc.xmlDoc) {
+      setMessage("Open a KMZ or KML file first.");
+      return;
+    }
+    if (!sourceCanPersistToOriginal(source)) {
+      setMessage("This file has no disk path — use Export….");
+      return;
+    }
+    if (!source.docDirty) {
+      setMessage("No changes to save.");
+      return;
+    }
+    if (saveInFlight) {
+      return;
+    }
+    confirmOverwriteSource(source).then(function (confirmed) {
+      if (!confirmed) {
+        setMessage("Save cancelled.");
+        return;
+      }
+      return persistSourceToDisk(source);
+    });
+  }
+
   function createLayerTreeContextMenu() {
     layerTreeContextMenu = document.createElement("div");
     layerTreeContextMenu.id = "layer-tree-context-menu";
     layerTreeContextMenu.className = "map-context-menu hidden";
     layerTreeContextMenu.setAttribute("role", "menu");
+
+    layerTreeContextMenuSaveBtn = document.createElement("button");
+    layerTreeContextMenuSaveBtn.type = "button";
+    layerTreeContextMenuSaveBtn.className = "map-context-menu-item";
+    layerTreeContextMenuSaveBtn.setAttribute("role", "menuitem");
+    layerTreeContextMenuSaveBtn.textContent = "Save";
+    layerTreeContextMenuSaveBtn.addEventListener("click", function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      var sourceId = layerTreeContextMenuSourceId;
+      hideLayerTreeContextMenu();
+      if (sourceId) {
+        saveSourceFromLayerTree(sourceId);
+      }
+    });
 
     layerTreeContextMenuExportBtn = document.createElement("button");
     layerTreeContextMenuExportBtn.type = "button";
@@ -5502,6 +5630,7 @@
       }
     });
 
+    layerTreeContextMenu.appendChild(layerTreeContextMenuSaveBtn);
     layerTreeContextMenu.appendChild(layerTreeContextMenuExportBtn);
     document.body.appendChild(layerTreeContextMenu);
 
@@ -5534,8 +5663,18 @@
     hideNodeBalloon();
     layerTreeContextMenuSourceId = sourceId;
     var source = findLoadedSource(sourceId);
-    var canExport =
-      !saveInFlight && !!(source && source.doc && source.doc.xmlDoc);
+    var hasDoc = !!(source && source.doc && source.doc.xmlDoc);
+    var canSave =
+      !saveInFlight && hasDoc && sourceCanPersistToOriginal(source) && source.docDirty;
+    var canExport = !saveInFlight && hasDoc;
+    if (layerTreeContextMenuSaveBtn) {
+      layerTreeContextMenuSaveBtn.disabled = !canSave;
+      layerTreeContextMenuSaveBtn.title = canSave
+        ? "Save edits to the original file on disk"
+        : hasDoc && sourceCanPersistToOriginal(source)
+          ? "No unsaved changes for this file"
+          : "Use Export… when the file has no disk path";
+    }
     if (layerTreeContextMenuExportBtn) {
       layerTreeContextMenuExportBtn.disabled = !canExport;
     }
@@ -5871,11 +6010,11 @@
   }
 
   function openExternalKmlEdit() {
-    if (!currentDoc || !currentDoc.sourcePath || !currentDoc.xmlDoc) {
+    var source = activeLoadedSource();
+    if (!source || !source.doc || !source.doc.sourcePath || !source.doc.xmlDoc) {
       setMessage("Open a KMZ or KML from disk to edit its KML externally.");
       return;
     }
-    var source = activeLoadedSource();
     beginExternalKmlEditSession(source, null, null);
   }
 
@@ -7021,6 +7160,7 @@
   createNodeHoverBalloon();
   createMapContextMenu();
   createLayerTreeContextMenu();
+  initSourceOverwriteDialog();
   initFeaturePropertiesDialog();
   initSidebarSectionFolding();
   initSidebarPanelResize();
@@ -7731,28 +7871,63 @@
 
   var imageryLabelsInput = document.getElementById("imagery-labels");
   var imageryLabelsWrap = document.getElementById("imagery-labels-wrap");
-  var imageryLabelGranularityWrap = document.getElementById("imagery-label-granularity-wrap");
-  var imageryLabelGranularitySelect = document.getElementById("imagery-label-granularity");
+  var imageryLabelDetailWrap = document.getElementById("imagery-label-detail-wrap");
+  var imageryLabelLayerToggles = document.getElementById("imagery-label-layer-toggles");
+  var imageryLabelLayerToggleInputs = {};
 
-  function populateImageryLabelGranularitySelect(key) {
-    if (!imageryLabelGranularitySelect) {
+  function ensureImageryLabelLayerToggleInputs(key) {
+    if (!imageryLabelLayerToggles) {
       return;
     }
-    var options = GisMap.getImageryLabelGranularityOptions(key);
-    var current = GisMap.normalizeImageryLabelGranularity(key, GisMap.getImageryLabelGranularity());
-    imageryLabelGranularitySelect.innerHTML = "";
-    options.forEach(function (entry) {
-      var opt = document.createElement("option");
-      opt.value = entry.id;
-      opt.textContent = entry.label;
-      imageryLabelGranularitySelect.appendChild(opt);
+    var catalog = GisMap.getImageryLabelLayerCatalog(key);
+    if (!catalog.length) {
+      imageryLabelLayerToggles.innerHTML = "";
+      imageryLabelLayerToggleInputs = {};
+      return;
+    }
+    var existingIds = Object.keys(imageryLabelLayerToggleInputs);
+    var catalogIds = catalog.map(function (entry) {
+      return entry.id;
     });
-    if (current) {
-      imageryLabelGranularitySelect.value = current;
+    var same =
+      existingIds.length === catalogIds.length
+      && existingIds.every(function (id, index) {
+        return id === catalogIds[index];
+      });
+    if (same) {
+      return;
     }
-    if (current && imageryLabelGranularitySelect.value !== GisMap.getImageryLabelGranularity()) {
-      GisMap.setImageryLabelGranularity(imageryLabelGranularitySelect.value);
-    }
+    imageryLabelLayerToggles.innerHTML = "";
+    imageryLabelLayerToggleInputs = {};
+    catalog.forEach(function (entry) {
+      var label = document.createElement("label");
+      label.className = "imagery-label-layer-toggle";
+      label.title = entry.title || entry.label;
+      var input = document.createElement("input");
+      input.type = "checkbox";
+      input.dataset.layerId = entry.id;
+      input.setAttribute("aria-label", entry.label);
+      label.appendChild(input);
+      label.appendChild(document.createTextNode(entry.label));
+      input.addEventListener("change", function (event) {
+        GisMap.setImageryLabelLayerEnabled(entry.id, event.target.checked);
+        syncImageryLabelLayerToggleInputs(key);
+        persistViewerGuiPrefs();
+      });
+      imageryLabelLayerToggles.appendChild(label);
+      imageryLabelLayerToggleInputs[entry.id] = input;
+    });
+  }
+
+  function syncImageryLabelLayerToggleInputs(key) {
+    ensureImageryLabelLayerToggleInputs(key);
+    Object.keys(imageryLabelLayerToggleInputs).forEach(function (layerId) {
+      var input = imageryLabelLayerToggleInputs[layerId];
+      if (!input) {
+        return;
+      }
+      input.checked = GisMap.getImageryLabelLayerEnabled(layerId);
+    });
   }
 
   function syncImageryLabelsControl() {
@@ -7761,20 +7936,26 @@
     }
     var key = GisMap.getActiveBasemapKey();
     var supported = GisMap.basemapSupportsImageryLabels(key);
-    var granularityOptions = GisMap.getImageryLabelGranularityOptions(key);
+    var layerCatalog = GisMap.getImageryLabelLayerCatalog(key);
     var labelsOn = supported && GisMap.getImageryLabelsEnabled();
     imageryLabelsInput.disabled = !supported;
     imageryLabelsWrap.classList.toggle("is-disabled", !supported);
     if (supported) {
       imageryLabelsInput.checked = GisMap.getImageryLabelsEnabled();
     }
-    if (imageryLabelGranularityWrap && imageryLabelGranularitySelect) {
-      var showGranularity = supported && granularityOptions.length > 1 && labelsOn;
-      imageryLabelGranularityWrap.hidden = !showGranularity;
-      if (showGranularity) {
-        populateImageryLabelGranularitySelect(key);
+    if (imageryLabelDetailWrap) {
+      var showDetail = supported && layerCatalog.length > 0 && labelsOn;
+      imageryLabelDetailWrap.hidden = !showDetail;
+      if (showDetail) {
+        syncImageryLabelLayerToggleInputs(key);
+        Object.keys(imageryLabelLayerToggleInputs).forEach(function (layerId) {
+          var input = imageryLabelLayerToggleInputs[layerId];
+          if (input) {
+            input.disabled = false;
+            input.parentElement.classList.remove("is-disabled");
+          }
+        });
       }
-      imageryLabelGranularitySelect.disabled = !showGranularity;
     }
   }
 
@@ -7788,13 +7969,6 @@
     imageryLabelsInput.addEventListener("change", function (event) {
       GisMap.setImageryLabelsEnabled(event.target.checked);
       syncImageryLabelsControl();
-      persistViewerGuiPrefs();
-    });
-  }
-
-  if (imageryLabelGranularitySelect) {
-    imageryLabelGranularitySelect.addEventListener("change", function (event) {
-      GisMap.setImageryLabelGranularity(event.target.value);
       persistViewerGuiPrefs();
     });
   }
