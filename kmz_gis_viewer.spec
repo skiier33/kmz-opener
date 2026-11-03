@@ -8,6 +8,7 @@ datas = [
     ("js", "js"),
     ("custom-icons", "custom-icons"),
     ("examples", "examples"),
+    ("desktop/vba", "desktop/vba"),
 ]
 binaries = []
 hiddenimports = []
@@ -18,6 +19,7 @@ binaries += webview_binaries
 hiddenimports += webview_hidden
 
 hiddenimports.append("desktop.server")
+hiddenimports.append("desktop.geg_appendix_excel")
 
 a = Analysis(
     ["desktop/app.py"],

@@ -399,7 +399,29 @@
 
       <div class="workspace">
         <div class="sidebar-shell" id="sidebar-shell">
-        <aside class="sidebar sidebar-left">
+          <div class="sidebar-mode-tabs" role="tablist" aria-label="Sidebar mode">
+            <button
+              type="button"
+              id="sidebar-mode-map"
+              class="sidebar-mode-tab is-active"
+              role="tab"
+              aria-selected="true"
+              aria-controls="sidebar-left"
+            >
+              Map
+            </button>
+            <button
+              type="button"
+              id="sidebar-mode-appx-pdf"
+              class="sidebar-mode-tab"
+              role="tab"
+              aria-selected="false"
+              aria-controls="sidebar-left"
+            >
+              Appx PDF
+            </button>
+          </div>
+        <aside class="sidebar sidebar-left" id="sidebar-left" data-sidebar-mode="map">
           <div class="sidebar-scroll">
           <section class="sidebar-section sidebar-recent">
             <h2>Recent</h2>
@@ -984,6 +1006,39 @@
               </div>
             </div>
           </section>
+
+          <section class="sidebar-section sidebar-appx-pdf">
+            <h2>Appx PDF</h2>
+            <p class="muted appx-pdf-hint">
+              Compile every PNG in the screenshot save folder into a GEG boring-location diagram workbook
+              (one figure sheet per image) and export a landscape PDF appendix—one page per sheet.
+              Requires the desktop app and Microsoft Excel with macros enabled.
+            </p>
+            <div class="appx-pdf-fields">
+              <label class="appx-pdf-field appx-pdf-field-wide">
+                <span class="appx-pdf-label">Screenshot folder</span>
+                <input
+                  id="appx-pdf-directory"
+                  type="text"
+                  readonly
+                  spellcheck="false"
+                  placeholder="Set under Options or Screenshot panel"
+                />
+              </label>
+              <label class="appx-pdf-field appx-pdf-field-wide">
+                <span class="appx-pdf-label">Excel template</span>
+                <input id="appx-pdf-template" type="text" readonly spellcheck="false" />
+              </label>
+              <div class="appx-pdf-preview">
+                <span id="appx-pdf-count" class="appx-pdf-count">0 PNG files</span>
+                <ul id="appx-pdf-file-list" class="appx-pdf-file-list" aria-label="Screenshot files to include"></ul>
+              </div>
+              <button id="appx-pdf-build" class="btn appx-pdf-build-btn" type="button" disabled>
+                Build appendix PDF
+              </button>
+              <p id="appx-pdf-status" class="appx-pdf-status muted" aria-live="polite"></p>
+            </div>
+          </section>
           </div>
         </aside>
         </div>
@@ -1384,6 +1439,7 @@
     <script src="js/screenshot.js"></script>
     <script src="js/bh-alignments.js"></script>
     <script src="js/borehole-images.js"></script>
+    <script src="js/appx-pdf.js"></script>
     <script src="js/gui-prefs.js"></script>
     <script src="js/viewer-path-prefs.js"></script>
     <script src="js/viewer-defaults.js"></script>

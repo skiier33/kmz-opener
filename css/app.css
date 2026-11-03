@@ -509,6 +509,122 @@ select {
   width: var(--sidebar-w);
 }
 
+.sidebar-mode-tabs {
+  display: flex;
+  flex-shrink: 0;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.sidebar-mode-tab {
+  flex: 1;
+  margin: 0;
+  padding: 8px 10px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sidebar-mode-tab:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.sidebar-mode-tab.is-active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.sidebar-left[data-sidebar-mode="map"] .sidebar-appx-pdf {
+  display: none;
+}
+
+.sidebar-left[data-sidebar-mode="appx"] .sidebar-section:not(.sidebar-appx-pdf) {
+  display: none;
+}
+
+.sidebar-appx-pdf {
+  flex-shrink: 0;
+}
+
+.appx-pdf-hint {
+  margin: 0 0 10px;
+  line-height: 1.35;
+}
+
+.appx-pdf-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.appx-pdf-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.appx-pdf-field-wide {
+  grid-column: 1 / -1;
+}
+
+.appx-pdf-label {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.appx-pdf-field input[type="text"] {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8125rem;
+}
+
+.appx-pdf-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.appx-pdf-count {
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.appx-pdf-file-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  max-height: 160px;
+  overflow: auto;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.appx-pdf-build-btn {
+  width: 100%;
+}
+
+.appx-pdf-status {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.35;
+}
+
+.appx-pdf-status-error {
+  color: var(--danger, #e57373);
+}
+
 .right-pane-shell {
   width: var(--right-pane-w);
 }

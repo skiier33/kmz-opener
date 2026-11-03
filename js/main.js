@@ -8907,6 +8907,12 @@
     });
   }
 
+  if (window.AppxPdf) {
+    window.AppxPdf.init({
+      setMessage: setMessage,
+    });
+  }
+
   if (window.BhAlignments) {
     window.BhAlignments.init({
       findLoadedSource: findLoadedSource,
