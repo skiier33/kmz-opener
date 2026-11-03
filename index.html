@@ -87,6 +87,59 @@
               </button>
             </div>
           </div>
+          <div class="menubar-menu" id="menubar-view">
+            <button
+              type="button"
+              class="menubar-top-item"
+              id="menubar-view-trigger"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="menubar-view-popup"
+            >
+              View
+            </button>
+            <div
+              class="menubar-popup hidden"
+              id="menubar-view-popup"
+              role="menu"
+              aria-labelledby="menubar-view-trigger"
+            >
+              <button
+                type="button"
+                class="menubar-menu-item"
+                id="menubar-view-all-sections"
+                role="menuitem"
+                title="Show every sidebar section listed below"
+              >
+                All
+              </button>
+              <button
+                type="button"
+                class="menubar-menu-item"
+                id="menubar-view-none-sections"
+                role="menuitem"
+                title="Hide every sidebar section listed below"
+              >
+                None
+              </button>
+              <div class="menubar-sep" role="separator"></div>
+              <div
+                id="menubar-view-sidebar-sections"
+                role="group"
+                aria-label="Left sidebar sections"
+              ></div>
+              <div class="menubar-sep" role="separator"></div>
+              <button
+                type="button"
+                class="menubar-menu-item"
+                id="menubar-view-save-as-default"
+                role="menuitem"
+                title="Remember which sidebar sections are shown for the next launch"
+              >
+                Save as default
+              </button>
+            </div>
+          </div>
           <div class="menubar-menu" id="menubar-options">
             <button
               type="button"
@@ -121,6 +174,15 @@
                 title="Choose the default folder for opening and saving KMZ/KML files (desktop app)"
               >
                 Set project root…
+              </button>
+              <button
+                type="button"
+                class="menubar-menu-item"
+                id="btn-edit-map-scale-presets"
+                role="menuitem"
+                title="Add or remove scales in the map scale dropdown"
+              >
+                Edit map scale list…
               </button>
               <div class="menubar-sep" role="separator"></div>
               <button
@@ -192,19 +254,27 @@
         </div>
 
         <div class="toolbar-basemap-group">
-          <div class="toolbar-coords" aria-live="polite" title="Cursor position on the map (WGS84)">
-            <span id="toolbar-coords" class="toolbar-coords-value">—</span>
-          </div>
-          <label class="basemap-label">
-            <span class="toolbar-select-caption">Scale</span>
-            <select
-              id="map-scale-select"
-              title="Map scale (1″ = feet or 1:N at 96 DPI)"
-              aria-label="Map scale"
+          <div class="toolbar-scale-group">
+            <label class="basemap-label">
+              <span class="toolbar-select-caption">Scale</span>
+              <select
+                id="map-scale-select"
+                title="Map scale (1″ = feet or 1:N at 96 DPI)"
+                aria-label="Map scale"
+              >
+                <option value="">Custom</option>
+              </select>
+            </label>
+            <button
+              type="button"
+              class="btn btn-subtle toolbar-scale-edit-btn"
+              id="map-scale-edit-btn"
+              title="Add or remove map scale presets"
+              aria-label="Edit map scale list"
             >
-              <option value="">Custom</option>
-            </select>
-          </label>
+              Edit…
+            </button>
+          </div>
           <label class="basemap-label">
             <span class="toolbar-select-caption">Basemap</span>
             <select id="basemap-select" title="Basemap" aria-label="Basemap">
@@ -220,6 +290,14 @@
           >
             <input id="imagery-labels" type="checkbox" checked aria-label="Labels on satellite" />
             <span class="toolbar-select-caption">Labels</span>
+          </label>
+          <label
+            class="basemap-label basemap-label-toggle"
+            id="cursor-coords-wrap"
+            title="Show cursor latitude and longitude on the map (WGS84)"
+          >
+            <input id="cursor-coords" type="checkbox" aria-label="Coordinates on map" />
+            <span class="toolbar-select-caption">Coordinates</span>
           </label>
           <div
             class="imagery-label-detail"
@@ -321,7 +399,29 @@
 
       <div class="workspace">
         <div class="sidebar-shell" id="sidebar-shell">
-        <aside class="sidebar sidebar-left">
+          <div class="sidebar-mode-tabs" role="tablist" aria-label="Sidebar mode">
+            <button
+              type="button"
+              id="sidebar-mode-map"
+              class="sidebar-mode-tab is-active"
+              role="tab"
+              aria-selected="true"
+              aria-controls="sidebar-left"
+            >
+              Map
+            </button>
+            <button
+              type="button"
+              id="sidebar-mode-appx-pdf"
+              class="sidebar-mode-tab"
+              role="tab"
+              aria-selected="false"
+              aria-controls="sidebar-left"
+            >
+              Appx PDF
+            </button>
+          </div>
+        <aside class="sidebar sidebar-left" id="sidebar-left" data-sidebar-mode="map">
           <div class="sidebar-scroll">
           <section class="sidebar-section sidebar-recent">
             <h2>Recent</h2>
@@ -332,6 +432,17 @@
 
           <section class="sidebar-section sidebar-sources">
             <h2>Data files</h2>
+            <div class="data-files-actions">
+              <button
+                type="button"
+                class="btn btn-subtle hidden"
+                id="btn-open-google-earth"
+                disabled
+                title="Open all loaded KMZ and KML files in Google Earth"
+              >
+                Open KMZ in Google Earth
+              </button>
+            </div>
             <div id="loaded-sources" class="loaded-sources" aria-label="Loaded KMZ and KML files">
               <p class="muted empty-hint">No files loaded — use Open or drag files onto the map.</p>
             </div>
@@ -422,27 +533,377 @@
             </div>
           </section>
 
+          <section class="sidebar-section sidebar-borehole-images">
+            <h2>Borehole Images</h2>
+            <p class="muted borehole-images-hint">
+              Choose a KMZ with point placemarks, set map scale and image size, then use Preview on each
+              row before saving selected screenshots.
+            </p>
+            <div class="borehole-images-fields">
+              <label class="borehole-images-field borehole-images-field-wide">
+                <span class="borehole-images-label">KMZ / KML file</span>
+                <select id="borehole-images-source" aria-label="Loaded KMZ or KML with point placemarks">
+                  <option value="">Choose a loaded file…</option>
+                </select>
+              </label>
+              <label class="borehole-images-field borehole-images-field-wide">
+                <span class="borehole-images-label">Map scale</span>
+                <select id="borehole-images-scale" aria-label="Map scale for borehole screenshots"></select>
+              </label>
+              <label class="borehole-images-field">
+                <span class="borehole-images-label">Width (in)</span>
+                <input
+                  id="borehole-images-width"
+                  type="text"
+                  value="20"
+                  spellcheck="false"
+                  autocomplete="off"
+                  title="Optional px or in prefix (e.g. px800, in10). Without a prefix, values are inches."
+                />
+              </label>
+              <label class="borehole-images-field">
+                <span class="borehole-images-label">Height (in)</span>
+                <input
+                  id="borehole-images-height"
+                  type="text"
+                  value="11.25"
+                  spellcheck="false"
+                  autocomplete="off"
+                  title="Optional px or in prefix (e.g. px800, in10). Without a prefix, values are inches."
+                />
+              </label>
+              <label class="borehole-images-toggle borehole-images-field-wide">
+                <input id="borehole-images-show-scale" type="checkbox" />
+                Show scale legend on captures
+              </label>
+              <label class="borehole-images-toggle borehole-images-field-wide">
+                <input id="borehole-images-show-north" type="checkbox" />
+                Show north arrow on captures
+              </label>
+              <div
+                id="borehole-images-chrome-panel"
+                class="borehole-images-chrome-panel hidden"
+                aria-hidden="true"
+              >
+                <p class="muted borehole-images-chrome-hint">
+                  Drawn on preview and saved PNGs.
+                </p>
+                <div class="borehole-images-chrome-columns">
+                  <div class="borehole-images-chrome-block">
+                    <p class="borehole-images-chrome-block-title">Scale</p>
+                    <div class="borehole-images-chrome-style-row">
+                      <label class="borehole-images-field">
+                        <span class="borehole-images-label">Style</span>
+                        <select id="borehole-images-scale-style" aria-label="Scale legend style">
+                          <option value="bar-dual">Bar — ft / m</option>
+                          <option value="bar">Bar — ft</option>
+                          <option value="engineering">Engineering label</option>
+                          <option value="ratio">Ratio only (1:2400)</option>
+                        </select>
+                      </label>
+                      <div
+                        class="borehole-images-legend-preview-wrap"
+                        title="Preview of scale legend on captures"
+                      >
+                        <canvas
+                          id="borehole-images-scale-style-preview"
+                          class="borehole-images-legend-preview"
+                          aria-hidden="true"
+                        ></canvas>
+                      </div>
+                    </div>
+                    <div class="borehole-images-chrome-meta-row">
+                      <label class="borehole-images-field">
+                        <span class="borehole-images-label">Corner</span>
+                        <select id="borehole-images-scale-position" aria-label="Scale legend corner">
+                          <option value="bottom-right" selected>Bottom right</option>
+                          <option value="bottom-left">Bottom left</option>
+                          <option value="bottom-center">Bottom center</option>
+                          <option value="top-right">Top right</option>
+                          <option value="top-left">Top left</option>
+                          <option value="top-center">Top center</option>
+                        </select>
+                      </label>
+                      <label class="borehole-images-field borehole-images-field-color">
+                        <span class="borehole-images-label">Color</span>
+                        <input
+                          id="borehole-images-scale-color"
+                          type="color"
+                          value="#e8eaed"
+                          aria-label="Scale legend color"
+                        />
+                      </label>
+                    </div>
+                    <div class="borehole-images-chrome-layout-row">
+                      <label class="borehole-images-field">
+                        <span class="borehole-images-label">Inset from corner (px)</span>
+                        <input
+                          id="borehole-images-scale-inset"
+                          type="number"
+                          min="0"
+                          max="512"
+                          step="1"
+                          value="14"
+                          aria-label="Scale legend inset from corner in pixels"
+                        />
+                      </label>
+                    </div>
+                    <div class="borehole-images-chrome-size-row">
+                      <label class="borehole-images-field">
+                        <span class="borehole-images-label">Width (px)</span>
+                        <input
+                          id="borehole-images-scale-width"
+                          type="number"
+                          min="1"
+                          max="4096"
+                          step="1"
+                          placeholder="Auto"
+                          aria-label="Scale legend width in pixels"
+                        />
+                      </label>
+                      <label class="borehole-images-field">
+                        <span class="borehole-images-label">Height (px)</span>
+                        <input
+                          id="borehole-images-scale-height"
+                          type="number"
+                          min="1"
+                          max="4096"
+                          step="1"
+                          placeholder="Auto"
+                          aria-label="Scale legend height in pixels"
+                        />
+                      </label>
+                    </div>
+                    <label class="borehole-images-toggle borehole-images-chrome-aspect-toggle">
+                      <input id="borehole-images-scale-preserve-aspect" type="checkbox" checked />
+                      Preserve aspect ratio
+                    </label>
+                  </div>
+                  <div class="borehole-images-chrome-block">
+                    <p class="borehole-images-chrome-block-title">North</p>
+                    <div class="borehole-images-chrome-style-row">
+                      <label class="borehole-images-field">
+                        <span class="borehole-images-label">Style</span>
+                        <select id="borehole-images-north-style" aria-label="North arrow style">
+                          <option value="classic" selected>Classic arrow</option>
+                          <option value="simple">Filled triangle</option>
+                          <option value="compass">Compass ring</option>
+                          <option value="minimal">Minimal line</option>
+                        </select>
+                      </label>
+                      <div
+                        class="borehole-images-legend-preview-wrap"
+                        title="Preview of north arrow on captures"
+                      >
+                        <canvas
+                          id="borehole-images-north-style-preview"
+                          class="borehole-images-legend-preview"
+                          aria-hidden="true"
+                        ></canvas>
+                      </div>
+                    </div>
+                    <div class="borehole-images-chrome-meta-row">
+                      <label class="borehole-images-field">
+                        <span class="borehole-images-label">Corner</span>
+                        <select id="borehole-images-north-position" aria-label="North arrow corner">
+                          <option value="bottom-right" selected>Bottom right</option>
+                          <option value="bottom-left">Bottom left</option>
+                          <option value="bottom-center">Bottom center</option>
+                          <option value="top-right">Top right</option>
+                          <option value="top-left">Top left</option>
+                          <option value="top-center">Top center</option>
+                        </select>
+                      </label>
+                      <label class="borehole-images-field borehole-images-field-color">
+                        <span class="borehole-images-label">Color</span>
+                        <input
+                          id="borehole-images-north-color"
+                          type="color"
+                          value="#e8710a"
+                          aria-label="North arrow color"
+                        />
+                      </label>
+                    </div>
+                    <div class="borehole-images-chrome-layout-row">
+                      <label class="borehole-images-field">
+                        <span class="borehole-images-label">Inset from corner (px)</span>
+                        <input
+                          id="borehole-images-north-inset"
+                          type="number"
+                          min="0"
+                          max="512"
+                          step="1"
+                          value="14"
+                          aria-label="North arrow inset from corner in pixels"
+                        />
+                      </label>
+                    </div>
+                    <div class="borehole-images-chrome-size-row">
+                      <label class="borehole-images-field">
+                        <span class="borehole-images-label">Width (px)</span>
+                        <input
+                          id="borehole-images-north-width"
+                          type="number"
+                          min="1"
+                          max="4096"
+                          step="1"
+                          placeholder="Auto"
+                          aria-label="North arrow width in pixels"
+                        />
+                      </label>
+                      <label class="borehole-images-field">
+                        <span class="borehole-images-label">Height (px)</span>
+                        <input
+                          id="borehole-images-north-height"
+                          type="number"
+                          min="1"
+                          max="4096"
+                          step="1"
+                          placeholder="Auto"
+                          aria-label="North arrow height in pixels"
+                        />
+                      </label>
+                    </div>
+                    <label class="borehole-images-toggle borehole-images-chrome-aspect-toggle">
+                      <input id="borehole-images-north-preserve-aspect" type="checkbox" checked />
+                      Preserve aspect ratio
+                    </label>
+                  </div>
+                </div>
+                <div class="borehole-images-chrome-options">
+                  <label class="borehole-images-toggle">
+                    <input id="borehole-images-show-scale-ratio" type="checkbox" checked />
+                    Show map scale ratio on bar legends
+                  </label>
+                  <label class="borehole-images-toggle">
+                    <input id="borehole-images-chrome-plate" type="checkbox" checked />
+                    Dark plate behind legends
+                  </label>
+                </div>
+              </div>
+              <label class="borehole-images-field borehole-images-field-wide">
+                <span class="borehole-images-label">Save directory</span>
+                <div class="borehole-images-dir-row">
+                  <input
+                    id="borehole-images-directory"
+                    type="text"
+                    placeholder="Same as Screenshot panel"
+                    spellcheck="false"
+                    autocomplete="off"
+                  />
+                  <button id="borehole-images-browse-dir" class="btn" type="button" title="Choose folder">
+                    Browse…
+                  </button>
+                </div>
+              </label>
+            </div>
+            <div class="bh-alignments-block">
+              <h3 class="bh-alignments-title">Alignment Icon</h3>
+              <label class="borehole-images-select-all bh-alignments-select-icon">
+                <input id="bh-alignments-select-icon" type="checkbox" />
+                Select alignment icon
+              </label>
+              <div
+                id="bh-alignments-icon-picker"
+                class="bh-alignments-icon-picker hidden"
+                hidden
+                aria-hidden="true"
+              ></div>
+              <button id="bh-alignments-create" class="btn bh-alignments-create-btn" type="button">
+                Create / Update BH_Alignments
+              </button>
+              <p id="bh-alignments-status" class="muted bh-alignments-status"></p>
+            </div>
+            <div
+              id="borehole-images-placemark-panel"
+              class="borehole-images-placemark-panel hidden"
+              aria-hidden="true"
+            >
+              <p id="borehole-images-placemark-subtitle" class="muted borehole-images-placemark-subtitle"></p>
+              <label class="borehole-images-select-all">
+                <input id="borehole-images-select-all" type="checkbox" checked />
+                Save all listed
+              </label>
+              <div id="borehole-images-placemark-list" class="borehole-images-placemark-list" role="list"></div>
+              <div
+                id="borehole-images-batch-progress"
+                class="borehole-images-batch-progress hidden"
+                aria-hidden="true"
+                aria-live="polite"
+              >
+                <div class="borehole-images-batch-progress-row">
+                  <span id="borehole-images-batch-progress-label" class="borehole-images-batch-progress-label">
+                    Saving placemarks…
+                  </span>
+                  <button
+                    id="borehole-images-batch-stop"
+                    class="btn btn-subtle borehole-images-batch-stop-btn"
+                    type="button"
+                  >
+                    Stop
+                  </button>
+                </div>
+                <progress
+                  id="borehole-images-batch-progress-bar"
+                  class="borehole-images-batch-progress-bar"
+                  max="100"
+                  value="0"
+                ></progress>
+                <p id="borehole-images-batch-progress-detail" class="muted borehole-images-batch-progress-detail"></p>
+              </div>
+              <div class="borehole-images-panel-actions">
+                <button
+                  id="borehole-images-generate-previews"
+                  class="btn borehole-images-generate-previews-btn"
+                  type="button"
+                  disabled
+                >
+                  Generate Previews
+                </button>
+                <button id="borehole-images-save" class="btn borehole-images-save-btn" type="button" disabled>
+                  Save selected
+                </button>
+              </div>
+            </div>
+          </section>
+
           <section class="sidebar-section sidebar-screenshot">
             <h2>Screenshot</h2>
             <p class="muted screenshot-hint">
-              Set size, pan the map so the area you want sits inside the frame, then save. With
-              <strong>Sharper basemap</strong> on, export reloads tiles at the output size (up to zoom 19).
+              Set size in inches (or prefix with <strong>px</strong> / <strong>in</strong>, e.g.
+              <strong>px800</strong> or <strong>in8</strong>), pan the map so the area you want sits inside the
+              frame, then save. Exports on satellite use the default map detail (roads and places). With
+              <strong>Sharper basemap</strong> on, tiles reload at the output size (up to zoom 19) for every capture.
             </p>
             <div class="screenshot-fields">
               <label class="screenshot-field screenshot-field-wide">
                 <span class="screenshot-label">Box size units</span>
                 <select id="screenshot-dimension-unit" aria-label="Screenshot box size units">
-                  <option value="px" selected>Pixels (px)</option>
-                  <option value="in">Inches (in) at 96 DPI</option>
+                  <option value="px">Pixels (px)</option>
+                  <option value="in" selected>Inches (in) at 96 DPI</option>
                 </select>
               </label>
               <label class="screenshot-field">
-                <span id="screenshot-width-label" class="screenshot-label">Width (px)</span>
-                <input id="screenshot-width" type="number" min="64" max="8192" step="1" value="1920" />
+                <span id="screenshot-width-label" class="screenshot-label">Width (in)</span>
+                <input
+                  id="screenshot-width"
+                  type="text"
+                  value="20"
+                  spellcheck="false"
+                  autocomplete="off"
+                  title="Optional px or in prefix (e.g. px800, in10). Without a prefix, values use the box size unit."
+                />
               </label>
               <label class="screenshot-field">
-                <span id="screenshot-height-label" class="screenshot-label">Height (px)</span>
-                <input id="screenshot-height" type="number" min="64" max="8192" step="1" value="1080" />
+                <span id="screenshot-height-label" class="screenshot-label">Height (in)</span>
+                <input
+                  id="screenshot-height"
+                  type="text"
+                  value="11.25"
+                  spellcheck="false"
+                  autocomplete="off"
+                  title="Optional px or in prefix (e.g. px800, in10). Without a prefix, values use the box size unit."
+                />
               </label>
               <label class="screenshot-field screenshot-field-wide">
                 <span class="screenshot-label">Base filename</span>
@@ -478,7 +939,7 @@
                 </div>
               </label>
               <label class="screenshot-toggle">
-                <input id="screenshot-show-frame" type="checkbox" checked />
+                <input id="screenshot-show-frame" type="checkbox" />
                 Show capture frame on map
               </label>
               <label class="screenshot-toggle">
@@ -545,23 +1006,40 @@
               </div>
             </div>
           </section>
-          </div>
 
-          <div
-            class="sidebar-split-handle"
-            role="separator"
-            aria-orientation="horizontal"
-            aria-label="Resize Inspect panel height"
-            tabindex="0"
-            hidden
-          ></div>
-
-          <section class="sidebar-section sidebar-inspect">
-            <h2>Inspect</h2>
-            <div id="inspect-panel" class="inspect-panel">
-              <p class="muted">Click a feature on the map.</p>
+          <section class="sidebar-section sidebar-appx-pdf">
+            <h2>Appx PDF</h2>
+            <p class="muted appx-pdf-hint">
+              Compile every PNG in the screenshot save folder into a GEG boring-location diagram workbook
+              (one figure sheet per image) and export a landscape PDF appendix—one page per sheet.
+              Requires the desktop app and Microsoft Excel with macros enabled.
+            </p>
+            <div class="appx-pdf-fields">
+              <label class="appx-pdf-field appx-pdf-field-wide">
+                <span class="appx-pdf-label">Screenshot folder</span>
+                <input
+                  id="appx-pdf-directory"
+                  type="text"
+                  readonly
+                  spellcheck="false"
+                  placeholder="Set under Options or Screenshot panel"
+                />
+              </label>
+              <label class="appx-pdf-field appx-pdf-field-wide">
+                <span class="appx-pdf-label">Excel template</span>
+                <input id="appx-pdf-template" type="text" readonly spellcheck="false" />
+              </label>
+              <div class="appx-pdf-preview">
+                <span id="appx-pdf-count" class="appx-pdf-count">0 PNG files</span>
+                <ul id="appx-pdf-file-list" class="appx-pdf-file-list" aria-label="Screenshot files to include"></ul>
+              </div>
+              <button id="appx-pdf-build" class="btn appx-pdf-build-btn" type="button" disabled>
+                Build appendix PDF
+              </button>
+              <p id="appx-pdf-status" class="appx-pdf-status muted" aria-live="polite"></p>
             </div>
           </section>
+          </div>
         </aside>
         </div>
 
@@ -591,6 +1069,15 @@
             <div id="screenshot-frame" class="screenshot-frame"></div>
           </div>
           <div id="map"></div>
+          <div
+            id="map-cursor-coords"
+            class="map-cursor-coords hidden"
+            aria-live="polite"
+            title="Cursor position (WGS84)"
+            hidden
+          >
+            <span id="map-cursor-coords-value" class="map-cursor-coords-value">—</span>
+          </div>
           <div id="route-card" class="route-card hidden">
             <div id="route-card-title" class="route-card-title"></div>
             <div id="route-card-meta" class="route-card-meta"></div>
@@ -601,6 +1088,100 @@
           </div>
           <div id="drop-overlay" class="drop-overlay hidden" aria-hidden="true">
             <div class="drop-card">Drop KMZ or KML to open</div>
+          </div>
+          <div
+            id="borehole-images-full-preview-dialog"
+            class="borehole-images-full-preview-dialog hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="borehole-images-full-preview-title"
+            aria-hidden="true"
+          >
+            <div class="borehole-images-full-preview-panel">
+              <header class="borehole-images-full-preview-header">
+                <div>
+                  <h2 id="borehole-images-full-preview-title">Screenshot preview</h2>
+                  <p id="borehole-images-full-preview-subtitle" class="muted borehole-images-full-preview-subtitle"></p>
+                </div>
+                <button
+                  type="button"
+                  class="btn btn-subtle borehole-images-full-preview-close"
+                  id="borehole-images-full-preview-close"
+                  aria-label="Close preview"
+                >
+                  ×
+                </button>
+              </header>
+              <div class="borehole-images-full-preview-body">
+                <img
+                  id="borehole-images-full-preview-img"
+                  class="borehole-images-full-preview-img"
+                  alt=""
+                />
+              </div>
+              <footer class="borehole-images-full-preview-footer">
+                <button type="button" class="btn" id="borehole-images-full-preview-save">
+                  Save
+                </button>
+                <button type="button" class="btn btn-subtle" id="borehole-images-full-preview-dismiss">
+                  Close
+                </button>
+              </footer>
+            </div>
+          </div>
+          <div
+            id="map-scale-presets-dialog"
+            class="map-scale-presets-dialog hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="map-scale-presets-title"
+            aria-hidden="true"
+          >
+            <div class="map-scale-presets-panel">
+              <header class="map-scale-presets-header">
+                <div>
+                  <h2 id="map-scale-presets-title">Map scale list</h2>
+                  <p class="muted map-scale-presets-subtitle">
+                    Scales shown in the toolbar and borehole screenshot dropdowns. Enter
+                    <span class="map-scale-presets-mono">1″ = 200′</span>,
+                    <span class="map-scale-presets-mono">1:5000</span>, or a denominator such as
+                    <span class="map-scale-presets-mono">2400</span>.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  class="btn btn-subtle map-scale-presets-close"
+                  id="map-scale-presets-close"
+                  aria-label="Close map scale list"
+                >
+                  ×
+                </button>
+              </header>
+              <div class="map-scale-presets-add">
+                <input
+                  id="map-scale-presets-add-input"
+                  type="text"
+                  class="map-scale-presets-add-input"
+                  spellcheck="false"
+                  autocomplete="off"
+                  placeholder="Add scale…"
+                  aria-label="New map scale"
+                />
+                <button type="button" class="btn" id="map-scale-presets-add-btn">Add</button>
+              </div>
+              <p id="map-scale-presets-message" class="map-scale-presets-message muted" hidden></p>
+              <ul
+                id="map-scale-presets-list"
+                class="map-scale-presets-list"
+                aria-label="Map scale presets"
+              ></ul>
+              <footer class="map-scale-presets-footer">
+                <button type="button" class="btn btn-subtle" id="map-scale-presets-reset">
+                  Restore defaults
+                </button>
+                <button type="button" class="btn" id="map-scale-presets-done">Done</button>
+              </footer>
+            </div>
           </div>
           <div
             id="feature-properties-dialog"
@@ -804,6 +1385,45 @@
                 <p class="muted empty-hint">Open or add a KMZ or KML file (+) to see folders and features.</p>
               </div>
             </section>
+
+            <div
+              class="sidebar-split-handle"
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label="Resize Inspect panel height"
+              tabindex="0"
+              hidden
+            ></div>
+
+            <section class="sidebar-section sidebar-inspect">
+              <div class="inspect-section-head">
+                <h2>Inspect</h2>
+                <div class="inspect-section-actions">
+                  <button
+                    type="button"
+                    class="btn btn-subtle"
+                    id="inspect-edit-btn"
+                    disabled
+                    title="Enable editing KML tag values for the selected node"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    class="btn"
+                    id="inspect-save-kmz-btn"
+                    hidden
+                    disabled
+                    title="Write edited tag values back to the source KMZ or KML file"
+                  >
+                    Save to KMZ
+                  </button>
+                </div>
+              </div>
+              <div id="inspect-panel" class="inspect-panel">
+                <p class="muted">Click a feature on the map.</p>
+              </div>
+            </section>
           </aside>
         </div>
       </div>
@@ -832,11 +1452,18 @@
     <script src="js/kmz-save.js"></script>
     <script src="js/csv-coords.js"></script>
     <script src="js/map.js"></script>
+    <script src="js/activity-map.js"></script>
     <script src="js/measure.js"></script>
     <script src="js/directions.js"></script>
     <script src="js/point-chain.js"></script>
     <script src="js/point-chain-persist.js"></script>
+    <script src="js/map-export-chrome.js"></script>
+    <script src="js/png-metadata.js"></script>
+    <script src="js/screenshot-metadata.js"></script>
     <script src="js/screenshot.js"></script>
+    <script src="js/bh-alignments.js"></script>
+    <script src="js/borehole-images.js"></script>
+    <script src="js/appx-pdf.js"></script>
     <script src="js/gui-prefs.js"></script>
     <script src="js/viewer-path-prefs.js"></script>
     <script src="js/viewer-defaults.js"></script>

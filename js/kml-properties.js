@@ -66,13 +66,20 @@
     });
   }
 
+  function listElementProperties(elementEl) {
+    if (!elementEl || elementEl.nodeType !== 1) {
+      return [];
+    }
+    var rows = [];
+    collectPropertyRows(elementEl, "", rows);
+    return rows;
+  }
+
   function listPlacemarkProperties(placemarkEl) {
     if (!placemarkEl || localName(placemarkEl) !== "placemark") {
       return [];
     }
-    var rows = [];
-    collectPropertyRows(placemarkEl, "", rows);
-    return rows;
+    return listElementProperties(placemarkEl);
   }
 
   function applyPropertyValue(row, nextValue) {
@@ -85,6 +92,7 @@
   }
 
   global.KmlProperties = {
+    listElementProperties: listElementProperties,
     listPlacemarkProperties: listPlacemarkProperties,
     applyPropertyValue: applyPropertyValue,
   };

@@ -52,6 +52,13 @@ from desktop.external_edit import (  # noqa: E402
     set_editor_command,
     parse_editor_goto,
 )
+from desktop.geg_appendix_excel import (  # noqa: E402
+    build_appendix_from_screenshots,
+    default_template_path,
+    list_appendix_preview,
+    validate_screenshot_directory,
+)
+from desktop.google_earth import launch_google_earth  # noqa: E402
 from desktop.server import (  # noqa: E402
     DESKTOP_TOKEN,
     EXPORT_PATHS,
@@ -60,6 +67,7 @@ from desktop.server import (  # noqa: E402
     import_custom_icon_from_path,
     normalize_path,
     register_source,
+    resolve_session_kmz_paths,
     start_server,
     user_custom_icons_dir,
 )
@@ -572,6 +580,105 @@ class DesktopApi:
         """
         if session_id and isinstance(session_id, str):
             _EXTERNAL_EDIT.stop_session(session_id)
+
+    def open_google_earth(self, paths: object) -> dict:
+        """
+        Launch Google Earth with KMZ or KML files from this session.
+
+        Args:
+            paths: List of absolute paths already opened in the viewer.
+
+        Returns:
+            Result dict with ``ok`` and ``count``, or ``error`` when launch fails.
+        """
+        try:
+            allowed = resolve_session_kmz_paths(paths)
+        except ValueError as err:
+            return {"error": str(err)}
+        try:
+            launch_google_earth(allowed)
+        except FileNotFoundError as err:
+            return {"error": str(err)}
+        except OSError as err:
+            return {"error": err.strerror or "Could not start Google Earth."}
+        return {"ok": True, "count": len(allowed)}
+
+    def geg_appendix_template_path(self) -> dict:
+        """
+        Return the bundled GEG Excel template used for appendix PDF export.
+
+        Returns:
+            Dict with absolute ``path`` to the template .xlsm.
+        """
+        path = default_template_path(app_root())
+        return {"path": path}
+
+    def list_appendix_screenshots(self, screenshot_directory: str = "") -> dict:
+        """
+        List PNG screenshots available for appendix PDF compilation.
+
+        Args:
+            screenshot_directory: Folder to scan; must exist when non-empty.
+
+        Returns:
+            Preview dict or ``error`` when the folder is invalid.
+        """
+        directory = normalize_path(screenshot_directory) if screenshot_directory else ""
+        err = validate_screenshot_directory(directory)
+        if err:
+            return {"error": err}
+        preview = list_appendix_preview(directory)
+        preview["templatePath"] = default_template_path(app_root())
+        return preview
+
+    def build_geg_appendix_pdf(self, screenshot_directory: str = "") -> dict:
+        """
+        Build a GEG boring-location appendix PDF from PNGs via Excel macros.
+
+        Args:
+            screenshot_directory: Folder containing screenshot PNG files.
+
+        Returns:
+            Result paths and counts, or ``error`` on failure.
+        """
+        directory = normalize_path(screenshot_directory) if screenshot_directory else ""
+        err = validate_screenshot_directory(directory)
+        if err:
+            return {"error": err}
+        template = default_template_path(app_root())
+        if not os.path.isfile(template):
+            return {"error": f"Template workbook not found: {template}"}
+
+        windows = webview.windows
+        if not windows:
+            return {"error": "Desktop window is not available."}
+        window = windows[0]
+
+        def _build() -> dict:
+            try:
+                return build_appendix_from_screenshots(
+                    directory,
+                    template_path=template,
+                )
+            except ValueError as val_err:
+                return {"error": str(val_err)}
+            except OSError as os_err:
+                return {"error": str(os_err)}
+
+        result = _invoke_on_ui(window, _build)
+        if not isinstance(result, dict):
+            return {"error": "Appendix build did not return a result."}
+        if "error" in result:
+            return result
+        pdf_path = result.get("pdfPath")
+        xlsm_path = result.get("xlsmPath")
+        if pdf_path:
+            with STATE_LOCK:
+                EXPORT_PATHS.add(normalize_path(str(pdf_path)))
+        if xlsm_path:
+            with STATE_LOCK:
+                EXPORT_PATHS.add(normalize_path(str(xlsm_path)))
+        return result
 
     def duplicate_window(
         self,

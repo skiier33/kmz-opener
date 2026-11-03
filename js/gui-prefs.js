@@ -94,6 +94,9 @@
     if (options.mapScaleSelect) {
       partial.mapScalePreset = options.mapScaleSelect.value || "";
     }
+    if (options.cursorCoordsInput) {
+      partial.showCursorCoords = !!options.cursorCoordsInput.checked;
+    }
     if (options.map) {
       partial.mapView = collectMapView(options.map);
     }
@@ -146,7 +149,10 @@
       );
     } else if (typeof stored.imageryLabelGranularity === "string" && options.gisMap) {
       var granularity = stored.imageryLabelGranularity;
-      if (granularity === "all" && !stored.imageryLabelLayers) {
+      if (
+        (granularity === "all" || granularity === "streets")
+        && !stored.imageryLabelLayers
+      ) {
         granularity = "roads_places";
       }
       options.gisMap.setImageryLabelGranularity(granularity);
@@ -166,6 +172,15 @@
     }
     if (validTool(stored.tool) && typeof options.chooseTool === "function") {
       options.chooseTool(stored.tool);
+    }
+    if (
+      typeof stored.showCursorCoords === "boolean"
+      && options.cursorCoordsInput
+    ) {
+      options.cursorCoordsInput.checked = stored.showCursorCoords;
+    }
+    if (typeof options.syncCursorCoordsOverlay === "function") {
+      options.syncCursorCoordsOverlay();
     }
   }
 

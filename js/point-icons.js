@@ -381,6 +381,33 @@
 
   var catalogCache = null;
 
+  function catalogEntryFromRelativePath(relativePath, urlOverride) {
+    var rel = String(relativePath || "").replace(/\\/g, "/").trim();
+    if (!rel || !/\.png$/i.test(rel)) {
+      return null;
+    }
+    if (rel.indexOf("..") !== -1) {
+      return null;
+    }
+    var label = rel.split("/").pop();
+    var url =
+      urlOverride ||
+      rel
+        .split("/")
+        .map(function (part) {
+          return encodeURIComponent(part);
+        })
+        .join("/");
+    if (url.indexOf("custom-icons/") !== 0 && url.indexOf("/__desktop/") !== 0) {
+      url = "custom-icons/" + url;
+    }
+    return {
+      id: "custom:" + rel,
+      label: label,
+      url: url,
+    };
+  }
+
   function parseManifest(data) {
     var icons = [];
     if (!data || typeof data !== "object") {
@@ -392,15 +419,11 @@
     }
     list.forEach(function (entry) {
       var name = typeof entry === "string" ? entry : entry && entry.name;
-      if (!name || !/\.png$/i.test(name)) {
-        return;
+      var urlOverride = entry && entry.url ? String(entry.url) : "";
+      var item = catalogEntryFromRelativePath(name, urlOverride || "");
+      if (item) {
+        icons.push(item);
       }
-      var base = String(name).replace(/\\/g, "/").split("/").pop();
-      icons.push({
-        id: "custom:" + base,
-        label: base,
-        url: "custom-icons/" + encodeURIComponent(base),
-      });
     });
     return icons;
   }
@@ -423,11 +446,8 @@
     return merged;
   }
 
-  function loadCustomIconCatalog(desktopToken) {
-    if (catalogCache) {
-      return Promise.resolve(catalogCache.slice());
-    }
-    var manifestPromise = fetch("custom-icons/manifest.json", { cache: "no-store" })
+  function fetchIconManifest(relativePath) {
+    return fetch(relativePath, { cache: "no-store" })
       .then(function (response) {
         if (!response.ok) {
           return [];
@@ -439,6 +459,22 @@
       .catch(function () {
         return [];
       });
+  }
+
+  function loadStaticIconManifests() {
+    return Promise.all([
+      fetchIconManifest("custom-icons/manifest.json"),
+      fetchIconManifest("custom-icons/png128/manifest.json"),
+    ]).then(function (parts) {
+      return mergeCatalogEntries(parts[0], parts[1]);
+    });
+  }
+
+  function loadCustomIconCatalog(desktopToken) {
+    if (catalogCache) {
+      return Promise.resolve(catalogCache.slice());
+    }
+    var manifestPromise = loadStaticIconManifests();
 
     if (!desktopToken) {
       return manifestPromise.then(function (fromManifest) {
@@ -463,11 +499,7 @@
                 if (!row || !row.name) {
                   return null;
                 }
-                return {
-                  id: "custom:" + row.name,
-                  label: row.name,
-                  url: row.url || "custom-icons/" + encodeURIComponent(row.name),
-                };
+                return catalogEntryFromRelativePath(row.name, row.url || "");
               })
               .filter(Boolean);
           }

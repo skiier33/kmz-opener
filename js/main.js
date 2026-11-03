@@ -50,6 +50,8 @@
   var saveAsBtn = document.getElementById("btn-save-as");
   var saveAllBtn = document.getElementById("btn-save-all");
   var duplicateWindowBtn = document.getElementById("btn-duplicate-window");
+  var openGoogleEarthBtn = document.getElementById("btn-open-google-earth");
+  var openGoogleEarthInFlight = false;
   var fileLabel = document.getElementById("file-label");
   var toolbarFileName = document.getElementById("toolbar-file-name");
   var recentFilesEl = document.getElementById("recent-files");
@@ -89,6 +91,13 @@
   var TOGGLE_ICON =
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6z"/></svg>';
   var SIDEBAR_SECTION_STORAGE_KEY = "kmz-sidebar-sections-collapsed";
+  var SIDEBAR_SECTION_HIDDEN_STORAGE_KEY = "kmz-sidebar-sections-hidden";
+  var sidebarSectionRegistry = [];
+  var sidebarSectionHiddenState = {};
+  var sidebarSectionContextMenu = null;
+  var sidebarSectionContextMenuSlug = null;
+  var sidebarSectionContextMenuToggleBtn = null;
+  var syncSidebarInspectSplitHandle = function () {};
   var SIDEBAR_INSPECT_HEIGHT_KEY = "kmz-sidebar-inspect-height";
   var SIDEBAR_WIDTH_KEY = "kmz-sidebar-width";
   var SIDEBAR_COLLAPSED_KEY = "kmz-sidebar-collapsed";
@@ -99,7 +108,10 @@
   var POINT_CHAIN_ORDER_HEIGHT_KEY = "kmz-point-chain-order-height";
   var POINT_CHAIN_ORDER_MIN_H = 72;
   var POINT_CHAIN_ORDER_MAX_H = 520;
-  var POINT_CHAIN_ORDER_DEFAULT_H = 220;
+  var ICON_PICKER_SCROLL_HEIGHT_KEY = "kmz-icon-picker-scroll-height";
+  var ICON_PICKER_SCROLL_MIN_H = 72;
+  var ICON_PICKER_SCROLL_MAX_H = 520;
+  var ICON_PICKER_SCROLL_DEFAULT_MAX_H = 168;
   var SIDEBAR_WIDTH_MIN = 220;
   var SIDEBAR_WIDTH_MAX = 560;
   var sidebarWidthInvalidateTimer = null;
@@ -169,8 +181,262 @@
     return null;
   }
 
+  function readSidebarHiddenState() {
+    try {
+      var raw = localStorage.getItem(SIDEBAR_SECTION_HIDDEN_STORAGE_KEY);
+      if (!raw) {
+        return {};
+      }
+      var parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (err) {
+      return {};
+    }
+  }
+
+  function writeSidebarHiddenState(state) {
+    try {
+      localStorage.setItem(SIDEBAR_SECTION_HIDDEN_STORAGE_KEY, JSON.stringify(state));
+    } catch (err) {
+      /* ignore quota / private mode */
+    }
+  }
+
+  function findSidebarSectionEntry(slug) {
+    for (var i = 0; i < sidebarSectionRegistry.length; i += 1) {
+      if (sidebarSectionRegistry[i].slug === slug) {
+        return sidebarSectionRegistry[i];
+      }
+    }
+    return null;
+  }
+
+  function sidebarSectionDisplayTitle(section, head) {
+    if (head) {
+      var label = head.querySelector(".sidebar-section-title");
+      if (label && label.textContent) {
+        return label.textContent.trim();
+      }
+    }
+    var h2 = section.querySelector("h2");
+    return (h2 && h2.textContent.trim()) || "Section";
+  }
+
+  function isSidebarSectionUserHidden(slug) {
+    return sidebarSectionHiddenState[slug] === true;
+  }
+
+  function applySidebarSectionUserHidden(section, slug, hidden) {
+    section.classList.toggle("sidebar-section-user-hidden", hidden);
+    var entry = findSidebarSectionEntry(slug);
+    if (entry && entry.menuItem) {
+      entry.menuItem.setAttribute("aria-checked", hidden ? "false" : "true");
+    }
+    syncSidebarInspectSplitHandle();
+  }
+
+  function setSidebarSectionUserHidden(slug, hidden) {
+    var entry = findSidebarSectionEntry(slug);
+    if (!entry) {
+      return;
+    }
+    if (hidden) {
+      sidebarSectionHiddenState[slug] = true;
+    } else {
+      delete sidebarSectionHiddenState[slug];
+    }
+    writeSidebarHiddenState(sidebarSectionHiddenState);
+    applySidebarSectionUserHidden(entry.section, slug, hidden);
+  }
+
+  function toggleSidebarSectionUserHidden(slug) {
+    setSidebarSectionUserHidden(slug, !isSidebarSectionUserHidden(slug));
+  }
+
+  function showAllSidebarSections() {
+    sidebarSectionRegistry.forEach(function (entry) {
+      if (isSidebarSectionUserHidden(entry.slug)) {
+        setSidebarSectionUserHidden(entry.slug, false);
+      }
+    });
+  }
+
+  function hideAllSidebarSections() {
+    sidebarSectionRegistry.forEach(function (entry) {
+      if (!isSidebarSectionUserHidden(entry.slug)) {
+        setSidebarSectionUserHidden(entry.slug, true);
+      }
+    });
+  }
+
+  function hideSidebarSectionContextMenu() {
+    sidebarSectionContextMenuSlug = null;
+    if (sidebarSectionContextMenu) {
+      sidebarSectionContextMenu.classList.add("hidden");
+    }
+  }
+
+  function showSidebarSectionContextMenu(slug, clientX, clientY) {
+    if (!sidebarSectionContextMenu || !slug) {
+      return;
+    }
+    hideMapContextMenu();
+    hideLayerTreeContextMenu();
+    sidebarSectionContextMenuSlug = slug;
+    var hidden = isSidebarSectionUserHidden(slug);
+    if (sidebarSectionContextMenuToggleBtn) {
+      sidebarSectionContextMenuToggleBtn.textContent = hidden ? "Show section" : "Hide section";
+    }
+    sidebarSectionContextMenu.classList.remove("hidden");
+    sidebarSectionContextMenu.style.left = "0px";
+    sidebarSectionContextMenu.style.top = "0px";
+    var width = sidebarSectionContextMenu.offsetWidth;
+    var height = sidebarSectionContextMenu.offsetHeight;
+    var left = Math.max(8, Math.min(clientX, window.innerWidth - width - 8));
+    var top = Math.max(8, Math.min(clientY, window.innerHeight - height - 8));
+    sidebarSectionContextMenu.style.left = left + "px";
+    sidebarSectionContextMenu.style.top = top + "px";
+  }
+
+  function onSidebarSectionContextMenu(event) {
+    var head = event.target.closest(".sidebar-section-head");
+    if (!head) {
+      return;
+    }
+    var section = head.closest(".sidebar-section");
+    if (
+      !section
+      || (
+        !section.closest(".sidebar-left")
+        && !(section.classList.contains("sidebar-inspect") && section.closest(".sidebar-right"))
+      )
+    ) {
+      return;
+    }
+    var slug = section.dataset.sidebarSectionSlug;
+    if (!slug) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    showSidebarSectionContextMenu(slug, event.clientX, event.clientY);
+  }
+
+  function buildSidebarSectionRegistry() {
+    sidebarSectionRegistry = [];
+    var sections = document.querySelectorAll(
+      ".sidebar-left .sidebar-section, .sidebar-right .sidebar-section.sidebar-inspect"
+    );
+    sidebarSectionHiddenState = readSidebarHiddenState();
+    for (var i = 0; i < sections.length; i += 1) {
+      var section = sections[i];
+      var slug = section.dataset.sidebarSectionSlug || sidebarSectionSlug(section, i);
+      section.dataset.sidebarSectionSlug = slug;
+      var head = section.querySelector(":scope > .sidebar-section-head");
+      var title = sidebarSectionDisplayTitle(section, head);
+      sidebarSectionRegistry.push({
+        section: section,
+        slug: slug,
+        title: title,
+        menuItem: null,
+      });
+      applySidebarSectionUserHidden(
+        section,
+        slug,
+        sidebarSectionHiddenState[slug] === true
+      );
+    }
+  }
+
+  function populateViewMenuSidebarSections() {
+    var container = document.getElementById("menubar-view-sidebar-sections");
+    if (!container) {
+      return;
+    }
+    container.innerHTML = "";
+    sidebarSectionRegistry.forEach(function (entry) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "menubar-menu-item menubar-menu-item-check";
+      btn.setAttribute("role", "menuitemcheckbox");
+      btn.setAttribute("data-section-slug", entry.slug);
+      btn.setAttribute(
+        "aria-checked",
+        isSidebarSectionUserHidden(entry.slug) ? "false" : "true"
+      );
+      btn.innerHTML =
+        '<span class="menubar-checkmark" aria-hidden="true">✓</span>' +
+        '<span class="menubar-menu-item-label"></span>';
+      btn.querySelector(".menubar-menu-item-label").textContent = entry.title;
+      btn.title = "Show or hide the " + entry.title + " section in the sidebar";
+      entry.menuItem = btn;
+      container.appendChild(btn);
+    });
+  }
+
+  function createSidebarSectionContextMenu() {
+    sidebarSectionContextMenu = document.createElement("div");
+    sidebarSectionContextMenu.id = "sidebar-section-context-menu";
+    sidebarSectionContextMenu.className = "map-context-menu hidden";
+    sidebarSectionContextMenu.setAttribute("role", "menu");
+
+    sidebarSectionContextMenuToggleBtn = document.createElement("button");
+    sidebarSectionContextMenuToggleBtn.type = "button";
+    sidebarSectionContextMenuToggleBtn.className = "map-context-menu-item";
+    sidebarSectionContextMenuToggleBtn.setAttribute("role", "menuitem");
+    sidebarSectionContextMenuToggleBtn.textContent = "Hide section";
+    sidebarSectionContextMenuToggleBtn.addEventListener("click", function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      var slug = sidebarSectionContextMenuSlug;
+      hideSidebarSectionContextMenu();
+      if (slug) {
+        toggleSidebarSectionUserHidden(slug);
+      }
+    });
+
+    sidebarSectionContextMenu.appendChild(sidebarSectionContextMenuToggleBtn);
+    document.body.appendChild(sidebarSectionContextMenu);
+
+    document.addEventListener(
+      "mousedown",
+      function (event) {
+        if (
+          sidebarSectionContextMenu &&
+          !sidebarSectionContextMenu.classList.contains("hidden") &&
+          !sidebarSectionContextMenu.contains(event.target)
+        ) {
+          hideSidebarSectionContextMenu();
+        }
+      },
+      true
+    );
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape") {
+        hideSidebarSectionContextMenu();
+      }
+    });
+    window.addEventListener("blur", hideSidebarSectionContextMenu);
+  }
+
+  function initSidebarSectionVisibility() {
+    buildSidebarSectionRegistry();
+    populateViewMenuSidebarSections();
+    createSidebarSectionContextMenu();
+    var sidebarLeft = document.querySelector(".sidebar-left");
+    if (sidebarLeft) {
+      sidebarLeft.addEventListener("contextmenu", onSidebarSectionContextMenu);
+    }
+    var sidebarRight = document.querySelector(".sidebar-right");
+    if (sidebarRight) {
+      sidebarRight.addEventListener("contextmenu", onSidebarSectionContextMenu);
+    }
+  }
+
   function initSidebarSectionFolding() {
-    var sections = document.querySelectorAll(".sidebar-left .sidebar-scroll > .sidebar-section");
+    var sections = document.querySelectorAll(
+      ".sidebar-left .sidebar-section, .sidebar-right .sidebar-section.sidebar-inspect"
+    );
     if (!sections.length) {
       return;
     }
@@ -178,6 +444,9 @@
     for (var i = 0; i < sections.length; i += 1) {
       var section = sections[i];
       if (section.firstElementChild && section.firstElementChild.classList.contains("sidebar-section-head")) {
+        if (!section.dataset.sidebarSectionSlug) {
+          section.dataset.sidebarSectionSlug = sidebarSectionSlug(section, i);
+        }
         continue;
       }
       var heading = sidebarSectionDirectH2(section);
@@ -185,6 +454,7 @@
         continue;
       }
       var slug = sidebarSectionSlug(section, i);
+      section.dataset.sidebarSectionSlug = slug;
       var bodyId = "sidebar-body-" + slug;
       var title = heading.textContent.trim();
       var head = document.createElement("button");
@@ -240,6 +510,21 @@
     }
   }
 
+  function clearSidebarInspectHeightStorage() {
+    try {
+      localStorage.removeItem(SIDEBAR_INSPECT_HEIGHT_KEY);
+    } catch (err) {
+      /* ignore */
+    }
+  }
+
+  function setSidebarInspectHeightCustom(sidebar, custom) {
+    sidebar.classList.toggle("is-inspect-height-custom", custom);
+    if (!custom) {
+      sidebar.style.removeProperty("--sidebar-inspect-h");
+    }
+  }
+
   function clampSidebarInspectHeight(sidebar, inspectSection, desiredPx) {
     var sidebarH = sidebar.clientHeight;
     var handleH =
@@ -253,6 +538,7 @@
 
   function applySidebarInspectHeight(sidebar, inspectSection, px, persist) {
     var clamped = clampSidebarInspectHeight(sidebar, inspectSection, px);
+    setSidebarInspectHeightCustom(sidebar, true);
     sidebar.style.setProperty("--sidebar-inspect-h", clamped + "px");
     if (persist) {
       writeSidebarInspectHeight(clamped);
@@ -260,10 +546,14 @@
     return clamped;
   }
 
+  function resetSidebarInspectHeight(sidebar) {
+    setSidebarInspectHeightCustom(sidebar, false);
+  }
+
   function initSidebarPanelResize() {
-    var sidebar = document.querySelector(".sidebar-left");
-    var inspectSection = document.querySelector(".sidebar-left .sidebar-inspect");
-    var handle = document.querySelector(".sidebar-left .sidebar-split-handle");
+    var sidebar = document.querySelector(".sidebar-right");
+    var inspectSection = document.querySelector(".sidebar-right .sidebar-inspect");
+    var handle = document.querySelector(".sidebar-right .sidebar-split-handle");
     if (!sidebar || !inspectSection || !handle) {
       return;
     }
@@ -271,10 +561,15 @@
     var stored = readSidebarInspectHeight();
     if (stored !== null) {
       applySidebarInspectHeight(sidebar, inspectSection, stored, false);
+    } else {
+      resetSidebarInspectHeight(sidebar);
     }
 
     function splitResizeEnabled() {
-      return !inspectSection.classList.contains("collapsed");
+      return (
+        !inspectSection.classList.contains("collapsed") &&
+        !inspectSection.classList.contains("sidebar-section-user-hidden")
+      );
     }
 
     function syncSplitHandle() {
@@ -286,9 +581,10 @@
     syncSplitHandle();
     var collapseObserver = new MutationObserver(syncSplitHandle);
     collapseObserver.observe(inspectSection, { attributes: true, attributeFilter: ["class"] });
+    syncSidebarInspectSplitHandle = syncSplitHandle;
 
     window.addEventListener("resize", function () {
-      if (!splitResizeEnabled()) {
+      if (!splitResizeEnabled() || !sidebar.classList.contains("is-inspect-height-custom")) {
         return;
       }
       var current = parseFloat(
@@ -689,6 +985,9 @@
   var layerTreeContextMenu = null;
   var layerTreeContextMenuSourceId = null;
   var layerTreeContextMenuSaveBtn = null;
+  var layerTreeContextMenuDeleteBtn = null;
+  var layerTreeContextMenuHideBtn = null;
+  var layerTreeContextMenuRenameBtn = null;
   var layerTreeContextMenuExportBtn = null;
   var sourceOverwriteDialog = document.getElementById("source-overwrite-dialog");
   var sourceOverwriteSubtitle = document.getElementById("source-overwrite-subtitle");
@@ -702,8 +1001,15 @@
   var featurePropertiesSaveBtn = document.getElementById("feature-properties-save");
   var featurePropertiesSession = null;
   var inspectEl = document.getElementById("inspect-panel");
+  var inspectEditBtn = document.getElementById("inspect-edit-btn");
+  var inspectSaveKmzBtn = document.getElementById("inspect-save-kmz-btn");
+  var inspectTagSession = null;
+  var inspectEditing = false;
+  var lastInspectInfo = null;
   var dropOverlay = document.getElementById("drop-overlay");
-  var toolbarCoords = document.getElementById("toolbar-coords");
+  var cursorCoordsInput = document.getElementById("cursor-coords");
+  var mapCursorCoordsWrap = document.getElementById("map-cursor-coords");
+  var mapCursorCoordsValue = document.getElementById("map-cursor-coords-value");
   var statusTool = document.getElementById("status-tool");
   var statusMeasure = document.getElementById("status-measure");
   var statusMessage = document.getElementById("status-message");
@@ -778,6 +1084,22 @@
       return "—";
     }
     return latlng.lat.toFixed(6) + ", " + latlng.lng.toFixed(6);
+  }
+
+  function cursorCoordsOverlayEnabled() {
+    return !!(cursorCoordsInput && cursorCoordsInput.checked);
+  }
+
+  function syncCursorCoordsOverlay() {
+    if (!mapCursorCoordsWrap) {
+      return;
+    }
+    var show = cursorCoordsOverlayEnabled();
+    mapCursorCoordsWrap.hidden = !show;
+    mapCursorCoordsWrap.classList.toggle("hidden", !show);
+    if (!show && mapCursorCoordsValue) {
+      mapCursorCoordsValue.textContent = "—";
+    }
   }
 
   function toolLabel(tool) {
@@ -1322,6 +1644,7 @@
         ? '<p class="icon-picker-section-label">Saved PNGs</p>'
         : "";
     var html =
+      '<div class="icon-picker-viewport">' +
       '<div class="icon-picker-scroll">' +
       '<div class="icon-picker-grid" role="listbox" aria-label="Point icon">' +
       PointIcons.builtinCatalog()
@@ -1334,6 +1657,8 @@
             escapeText(item.id) +
             '" role="option" aria-selected="' +
             (selected ? "true" : "false") +
+            '" aria-label="' +
+            escapeText(item.label) +
             '" title="' +
             escapeText(item.label) +
             '">' +
@@ -1341,10 +1666,7 @@
             escapeText(item.id) +
             '" style="' +
             iconPickerThumbStyle(item.id, color) +
-            '"></span>' +
-            '<span class="icon-picker-label">' +
-            escapeText(item.label) +
-            "</span></button>"
+            '"></span></button>'
           );
         })
         .join("") +
@@ -1365,6 +1687,8 @@
             escapeText(catalogUrl) +
             '" role="option" aria-selected="' +
             (selected ? "true" : "false") +
+            '" aria-label="' +
+            escapeText(label) +
             '" title="' +
             escapeText(label) +
             '">' +
@@ -1376,14 +1700,13 @@
             '" src="' +
             escapeText(thumbUrl) +
             '" alt="" loading="lazy" />' +
-            "</span>" +
-            '<span class="icon-picker-label">' +
-            escapeText(label) +
             "</span></button>"
           );
         })
         .join("") +
       "</div></div>" +
+      '<div class="icon-picker-resize" role="separator" aria-orientation="horizontal" aria-label="Drag to resize icon list height" tabindex="0"></div>' +
+      "</div>" +
       '<div class="icon-picker-controls">' +
       '<label class="icon-picker-color-label">Color' +
       '<input type="color" id="' +
@@ -1438,12 +1761,179 @@
     };
   }
 
+  function readIconPickerScrollHeight() {
+    try {
+      var raw = localStorage.getItem(ICON_PICKER_SCROLL_HEIGHT_KEY);
+      if (!raw) {
+        return null;
+      }
+      var parsed = parseFloat(raw);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function writeIconPickerScrollHeight(px) {
+    try {
+      localStorage.setItem(ICON_PICKER_SCROLL_HEIGHT_KEY, String(px));
+    } catch (err) {
+      /* ignore quota / private mode */
+    }
+  }
+
+  function clearIconPickerScrollHeightStorage() {
+    try {
+      localStorage.removeItem(ICON_PICKER_SCROLL_HEIGHT_KEY);
+    } catch (err) {
+      /* ignore quota / private mode */
+    }
+  }
+
+  function clampIconPickerScrollHeight(px) {
+    return Math.min(
+      ICON_PICKER_SCROLL_MAX_H,
+      Math.max(ICON_PICKER_SCROLL_MIN_H, px)
+    );
+  }
+
+  function resetIconPickerScrollHeight(scroller) {
+    if (!scroller) {
+      return;
+    }
+    scroller.classList.remove("is-height-custom");
+    scroller.style.height = "";
+  }
+
+  function applyIconPickerScrollHeight(scroller, px, persist) {
+    if (!scroller) {
+      return null;
+    }
+    if (px == null || !Number.isFinite(px)) {
+      resetIconPickerScrollHeight(scroller);
+      if (persist) {
+        clearIconPickerScrollHeightStorage();
+      }
+      return null;
+    }
+    var clamped = clampIconPickerScrollHeight(px);
+    scroller.classList.add("is-height-custom");
+    scroller.style.height = clamped + "px";
+    if (persist) {
+      writeIconPickerScrollHeight(clamped);
+    }
+    return clamped;
+  }
+
+  function syncAllIconPickerScrollHeights(px, persist) {
+    document.querySelectorAll(".icon-picker-scroll").forEach(function (scroller) {
+      applyIconPickerScrollHeight(scroller, px, false);
+    });
+    if (persist && px != null && Number.isFinite(px)) {
+      writeIconPickerScrollHeight(clampIconPickerScrollHeight(px));
+    } else if (persist && (px == null || !Number.isFinite(px))) {
+      clearIconPickerScrollHeightStorage();
+    }
+  }
+
+  function bindIconPickerScrollResize(container) {
+    if (!container) {
+      return;
+    }
+    var scroller = container.querySelector(".icon-picker-scroll");
+    var handle = container.querySelector(".icon-picker-resize");
+    if (!scroller || !handle || handle.dataset.resizeBound === "1") {
+      return;
+    }
+    handle.dataset.resizeBound = "1";
+
+    var stored = readIconPickerScrollHeight();
+    if (stored !== null) {
+      syncAllIconPickerScrollHeights(stored, false);
+    }
+
+    var drag = null;
+
+    function finishDrag() {
+      if (!drag) {
+        return;
+      }
+      handle.classList.remove("is-dragging");
+      document.body.classList.remove("icon-picker-scroll-resizing");
+      drag = null;
+    }
+
+    function onPointerMove(event) {
+      if (!drag) {
+        return;
+      }
+      var delta = event.clientY - drag.startY;
+      syncAllIconPickerScrollHeights(drag.startHeight + delta, false);
+    }
+
+    function onPointerUp() {
+      if (!drag) {
+        return;
+      }
+      var current = scroller.offsetHeight;
+      if (Number.isFinite(current)) {
+        syncAllIconPickerScrollHeights(current, true);
+      }
+      finishDrag();
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
+    }
+
+    handle.addEventListener("pointerdown", function (event) {
+      if (event.button !== 0) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      var current = scroller.offsetHeight;
+      if (!scroller.classList.contains("is-height-custom")) {
+        current = Math.min(current, ICON_PICKER_SCROLL_DEFAULT_MAX_H);
+        applyIconPickerScrollHeight(scroller, current, false);
+      }
+      drag = { startY: event.clientY, startHeight: current };
+      handle.classList.add("is-dragging");
+      document.body.classList.add("icon-picker-scroll-resizing");
+      handle.setPointerCapture(event.pointerId);
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", onPointerUp);
+      window.addEventListener("pointercancel", onPointerUp);
+    });
+
+    handle.addEventListener("keydown", function (event) {
+      var step = event.shiftKey ? 24 : 8;
+      var dir = 0;
+      if (event.key === "ArrowDown") {
+        dir = 1;
+      } else if (event.key === "ArrowUp") {
+        dir = -1;
+      } else {
+        return;
+      }
+      event.preventDefault();
+      if (!scroller.classList.contains("is-height-custom")) {
+        applyIconPickerScrollHeight(
+          scroller,
+          Math.min(scroller.offsetHeight, ICON_PICKER_SCROLL_DEFAULT_MAX_H),
+          false
+        );
+      }
+      syncAllIconPickerScrollHeights(scroller.offsetHeight + dir * step, true);
+    });
+  }
+
   function bindIconPicker(containerId, prefix, state, onApply) {
     var container = document.getElementById(containerId);
     var grid = container && container.querySelector(".icon-picker-grid");
     if (!grid) {
       return;
     }
+    bindIconPickerScrollResize(container);
     grid.querySelectorAll(".icon-picker-btn").forEach(function (btn) {
       btn.addEventListener("click", function () {
         state.selection = btn.getAttribute("data-icon-id") || "crosshair";
@@ -2990,18 +3480,26 @@
     try {
       var raw = localStorage.getItem(POINT_CHAIN_ORDER_HEIGHT_KEY);
       if (!raw) {
-        return POINT_CHAIN_ORDER_DEFAULT_H;
+        return null;
       }
       var parsed = parseFloat(raw);
-      return Number.isFinite(parsed) ? parsed : POINT_CHAIN_ORDER_DEFAULT_H;
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
     } catch (err) {
-      return POINT_CHAIN_ORDER_DEFAULT_H;
+      return null;
     }
   }
 
   function writePointChainOrderHeight(px) {
     try {
       localStorage.setItem(POINT_CHAIN_ORDER_HEIGHT_KEY, String(px));
+    } catch (err) {
+      /* ignore quota / private mode */
+    }
+  }
+
+  function clearPointChainOrderHeightStorage() {
+    try {
+      localStorage.removeItem(POINT_CHAIN_ORDER_HEIGHT_KEY);
     } catch (err) {
       /* ignore quota / private mode */
     }
@@ -3014,12 +3512,29 @@
     );
   }
 
+  function resetPointChainOrderHeight() {
+    var scroller = document.getElementById("point-chain-order-scroller");
+    if (!scroller) {
+      return;
+    }
+    scroller.classList.remove("is-height-custom");
+    scroller.style.height = "";
+  }
+
   function applyPointChainOrderHeight(px, persist) {
     var scroller = document.getElementById("point-chain-order-scroller");
     if (!scroller) {
-      return POINT_CHAIN_ORDER_DEFAULT_H;
+      return null;
+    }
+    if (px == null || !Number.isFinite(px)) {
+      resetPointChainOrderHeight();
+      if (persist) {
+        clearPointChainOrderHeightStorage();
+      }
+      return null;
     }
     var clamped = clampPointChainOrderHeight(px);
+    scroller.classList.add("is-height-custom");
     scroller.style.height = clamped + "px";
     if (persist) {
       writePointChainOrderHeight(clamped);
@@ -3033,7 +3548,12 @@
     if (!handle || !scroller) {
       return;
     }
-    applyPointChainOrderHeight(readPointChainOrderHeight(), false);
+    var storedOrderHeight = readPointChainOrderHeight();
+    if (storedOrderHeight !== null) {
+      applyPointChainOrderHeight(storedOrderHeight, false);
+    } else {
+      applyPointChainOrderHeight(null, false);
+    }
 
     var drag = null;
 
@@ -3318,339 +3838,186 @@
     });
   }
 
-  function bindInspectIconChoose(info) {
-    var pickBtn = document.getElementById("inspect-icon-choose");
-    var fileInput = document.getElementById("inspect-icon-file");
-    var sharedToggle = document.getElementById("inspect-icon-shared");
-    if (!pickBtn || !fileInput || !info || !info.canChooseIcon) {
-      return;
-    }
-    pickBtn.addEventListener("click", function () {
-      fileInput.click();
-    });
-    fileInput.addEventListener("change", function () {
-      var file = fileInput.files && fileInput.files[0];
-      fileInput.value = "";
-      if (!file) {
-        return;
-      }
-      var applyShared = sharedToggle ? sharedToggle.checked : !!info.iconStyleKey;
-      applyIconPngFile(file, info, applyShared);
-    });
-  }
-
-  function bindInspectIconScale(info) {
-    var slider = document.getElementById("inspect-icon-scale");
-    var valueEl = document.getElementById("inspect-icon-scale-value");
-    if (!slider || !valueEl || !info || !info.canResizeIcon) {
-      return;
-    }
-    var percent = Math.round((info.iconScale || 1) * 100);
-    slider.value = String(Math.max(1, Math.min(400, percent)));
-    valueEl.textContent = formatIconScale(info.iconScale);
-
-    slider.addEventListener("input", function () {
-      var scale = parseInt(slider.value, 10) / 100;
-      var label = formatIconScale(scale);
-      valueEl.textContent = label;
-      slider.setAttribute("aria-valuetext", label);
-      GisMap.setFeatureIconScale(info.id, scale, { skipInspect: true });
-    });
-    slider.addEventListener("change", function () {
-      noteEdit();
-    });
-  }
-
-  function inspectFeatureEditable(info) {
-    if (!info || !info.id) {
+  function inspectNodeDiskEditable(nodeId) {
+    if (!nodeId) {
       return false;
     }
-    var node = GisMap.findNode(info.id);
+    var node = GisMap.findNode(nodeId);
     if (!node || !node.sourceEl) {
       return false;
     }
-    var source = findLoadedSource(sourceIdFromNodeId(info.id));
+    var source = findLoadedSource(sourceIdFromNodeId(nodeId));
     return !!(source && source.doc && source.doc.xmlDoc);
+  }
+
+  function updateInspectActionButtons(nodeId, rowCount) {
+    var canEdit = inspectNodeDiskEditable(nodeId) && rowCount > 0;
+    if (inspectEditBtn) {
+      inspectEditBtn.disabled = !canEdit || saveInFlight;
+      inspectEditBtn.textContent = inspectEditing ? "Cancel" : "Edit";
+      inspectEditBtn.title = inspectEditing
+        ? "Discard unsaved tag edits and return to read-only view"
+        : "Enable editing KML tag values for the selected node";
+    }
+    if (inspectSaveKmzBtn) {
+      inspectSaveKmzBtn.hidden = !inspectEditing;
+      inspectSaveKmzBtn.disabled = !inspectEditing || !canEdit || saveInFlight;
+    }
   }
 
   function appendInspectReadOnly(dl, label, value) {
     var dt = document.createElement("dt");
     dt.textContent = label;
+    dt.title = label;
     var dd = document.createElement("dd");
     dd.textContent = value || "—";
     dl.appendChild(dt);
     dl.appendChild(dd);
   }
 
-  function appendInspectEditableField(dl, label, value, fieldKey, extraAttrs) {
+  function appendInspectTagRow(dl, row, index, editing) {
+    var label = row.path || row.tag;
     var dt = document.createElement("dt");
     dt.textContent = label;
+    dt.title = label;
     var dd = document.createElement("dd");
-    var multiline = fieldKey === "description";
-    var input = document.createElement(multiline ? "textarea" : "input");
-    input.className = "inspect-field-input";
-    input.setAttribute("data-inspect-field", fieldKey);
-    if (extraAttrs) {
-      Object.keys(extraAttrs).forEach(function (key) {
-        input.setAttribute(key, extraAttrs[key]);
-      });
+    if (editing && row.editable) {
+      var multiline = (row.value || "").length > 48 || (row.value || "").indexOf("\n") >= 0;
+      var input = document.createElement(multiline ? "textarea" : "input");
+      input.className = "inspect-field-input";
+      input.setAttribute("data-inspect-tag-index", String(index));
+      input.value = row.value != null ? String(row.value) : "";
+      dd.appendChild(input);
+    } else {
+      dd.textContent = row.value || "—";
     }
-    input.value = value != null ? String(value) : "";
-    dd.appendChild(input);
     dl.appendChild(dt);
     dl.appendChild(dd);
   }
 
-  function saveInspectEdits(nodeId) {
-    var node = GisMap.findNode(nodeId);
-    var source = findLoadedSource(sourceIdFromNodeId(nodeId));
+  function saveInspectTagEdits() {
+    var session = inspectTagSession;
+    if (!session || !inspectEl || !window.KmlProperties) {
+      return;
+    }
+    var node = GisMap.findNode(session.nodeId);
+    var source = findLoadedSource(session.sourceId);
     if (!node || !node.sourceEl || !source || !source.doc || !source.doc.xmlDoc) {
-      setMessage("Could not save changes for this feature.");
+      setMessage("Could not save tag changes for this node.");
       return;
     }
-    if (!inspectEl) {
-      return;
-    }
+    var inputs = inspectEl.querySelectorAll("[data-inspect-tag-index]");
     var changed = false;
-    var nameInput = inspectEl.querySelector('[data-inspect-field="name"]');
-    if (nameInput) {
-      var nextName = nameInput.value.trim();
-      var prevName = String(node.feature.name || node.name || "").trim();
-      if (nextName && nextName !== prevName) {
-        GisMap.renameNode(nodeId, nextName);
-        changed = true;
-      }
-    }
-    var coordsInput = inspectEl.querySelector('[data-inspect-field="coordinates"]');
-    if (coordsInput && KmzSave.setPlacemarkPointCoordinates) {
-      var coordsText = coordsInput.value.trim();
-      if (coordsText) {
-        var parts = coordsText.split(",");
-        if (parts.length >= 2) {
-          var lng = parseFloat(parts[0].trim());
-          var lat = parseFloat(parts[1].trim());
-          if (Number.isFinite(lat) && Number.isFinite(lng)) {
-            if (KmzSave.setPlacemarkPointCoordinates(node.sourceEl, lat, lng)) {
-              changed = true;
-            }
-          }
-        }
-      }
-    }
-    inspectEl.querySelectorAll('[data-inspect-field="extended"]').forEach(function (input) {
-      var fieldName = input.getAttribute("data-ext-name");
-      if (!fieldName || !KmzSave.setExtendedDataValue) {
+    Array.prototype.forEach.call(inputs, function (input) {
+      var index = parseInt(input.getAttribute("data-inspect-tag-index"), 10);
+      if (Number.isNaN(index) || !session.rows[index]) {
         return;
       }
+      var row = session.rows[index];
       var nextValue = input.value;
-      var rows = (node.feature && node.feature.extendedData) || [];
-      var prevValue = "";
-      for (var i = 0; i < rows.length; i += 1) {
-        if ((rows[i].name || "") === fieldName) {
-          prevValue = String(rows[i].value || "");
-          break;
-        }
+      if (nextValue === row.value) {
+        return;
       }
-      if (nextValue !== prevValue) {
-        KmzSave.setExtendedDataValue(node.sourceEl, fieldName, nextValue);
+      if (KmlProperties.applyPropertyValue(row, nextValue)) {
         changed = true;
       }
     });
-    var descInput = inspectEl.querySelector('[data-inspect-field="description"]');
-    if (descInput && KmzSave.setPlacemarkDescription) {
-      var nextDesc = descInput.value;
-      var prevDesc = node.feature ? String(node.feature.description || "") : "";
-      if (nextDesc !== prevDesc) {
-        KmzSave.setPlacemarkDescription(node.sourceEl, nextDesc);
-        changed = true;
-      }
-    }
     if (!changed) {
-      setMessage("No inspect changes to save.");
+      setMessage("No tag changes to save.");
       return;
     }
-    GisMap.syncPlacemarkFromSource(node);
+    if (node.feature) {
+      GisMap.syncPlacemarkFromSource(node);
+    }
     markSourceEdited(source);
-    var saveBtn = document.getElementById("inspect-save-btn");
-    if (saveBtn) {
-      saveBtn.disabled = true;
+    if (inspectSaveKmzBtn) {
+      inspectSaveKmzBtn.disabled = true;
     }
     persistSourceToDisk(source)
       .then(function () {
-        GisMap.selectFeature(nodeId, false);
+        inspectEditing = false;
+        updateInspectActionButtons(session.nodeId, session.rows.length);
+        GisMap.selectFeature(session.nodeId, false);
       })
       .catch(function () {
-        if (saveBtn) {
-          saveBtn.disabled = false;
-        }
+        updateInspectActionButtons(session.nodeId, session.rows.length);
       });
+  }
+
+  function initInspectTagEditing() {
+    if (inspectEditBtn) {
+      inspectEditBtn.addEventListener("click", function () {
+        if (!inspectTagSession || !lastInspectInfo) {
+          return;
+        }
+        if (inspectEditing) {
+          inspectEditing = false;
+          renderInspect(lastInspectInfo);
+          return;
+        }
+        if (!inspectNodeDiskEditable(inspectTagSession.nodeId)) {
+          setMessage("Open a KMZ or KML from disk to edit tag values.");
+          return;
+        }
+        inspectEditing = true;
+        renderInspect(lastInspectInfo);
+      });
+    }
+    if (inspectSaveKmzBtn) {
+      inspectSaveKmzBtn.addEventListener("click", saveInspectTagEdits);
+    }
   }
 
   function renderInspect(info) {
-    if (!info) {
-      inspectEl.innerHTML = '<p class="muted">Click a feature on the map.</p>';
-      return;
-    }
     if (!inspectEl) {
       return;
     }
-    var editable = inspectFeatureEditable(info);
-    inspectEl.innerHTML = "";
-    var dl = document.createElement("dl");
-    if (editable) {
-      appendInspectEditableField(dl, "Name", info.name || "", "name");
-      appendInspectReadOnly(dl, "Type", info.geometryType || info.type || "—");
-      appendInspectEditableField(dl, "Coordinates", info.coordinatesText || "", "coordinates");
-      if (info.rotation) {
-        appendInspectReadOnly(dl, "Rotation", info.rotation + "°");
-      }
-      (info.extendedData || []).forEach(function (row) {
-        appendInspectEditableField(dl, row.name, row.value, "extended", {
-          "data-ext-name": row.name || "Data",
-        });
-      });
-      appendInspectEditableField(dl, "Description", info.description || "", "description");
-    } else {
-      appendInspectReadOnly(dl, "Name", info.name || "—");
-      appendInspectReadOnly(dl, "Type", info.geometryType || info.type || "—");
-      appendInspectReadOnly(dl, "Coordinates", info.coordinatesText || "—");
-      if (info.rotation) {
-        appendInspectReadOnly(dl, "Rotation", info.rotation + "°");
-      }
-      (info.extendedData || []).forEach(function (row) {
-        appendInspectReadOnly(dl, row.name, row.value);
-      });
+    lastInspectInfo = info && info.id ? info : null;
+    if (!info || !info.id) {
+      inspectEditing = false;
+      inspectTagSession = null;
+      inspectEl.innerHTML = '<p class="muted">Click a feature on the map.</p>';
+      updateInspectActionButtons(null, 0);
+      return;
     }
-    inspectEl.appendChild(dl);
-    if (editable) {
-      var saveActions = document.createElement("div");
-      saveActions.className = "inspect-save-actions";
-      var saveBtn = document.createElement("button");
-      saveBtn.type = "button";
-      saveBtn.className = "btn";
-      saveBtn.id = "inspect-save-btn";
-      saveBtn.textContent = "Save to KML";
-      saveBtn.disabled = saveInFlight;
-      saveBtn.addEventListener("click", function () {
-        saveInspectEdits(info.id);
-      });
-      saveActions.appendChild(saveBtn);
-      inspectEl.appendChild(saveActions);
-    } else if (info.description) {
-      var descWrap = document.createElement("div");
-      descWrap.className = "desc";
-      descWrap.innerHTML = sanitizeHtml(info.description);
-      inspectEl.appendChild(descWrap);
+    if (inspectTagSession && inspectTagSession.nodeId !== info.id) {
+      inspectEditing = false;
     }
-    var html = "";
-    var inspectIconState = null;
-    if (info.canChooseIcon) {
-      var inspectSelection = info.iconPreset || "crosshair";
-      if (inspectSelection === "png" && info.iconUrl) {
-        var base = iconBasename(info.iconUrl);
-        var matched = customIconsCatalog.find(function (item) {
-          return item.label === base || item.url === info.iconUrl;
-        });
-        inspectSelection = matched ? matched.id : "custom:" + base;
-      }
-      inspectIconState = {
-        selection: inspectSelection,
-        color: info.iconColor || PointIcons.DEFAULT_COLOR,
-        scale: info.iconScale || 1,
-      };
-      html +=
-        '<div class="inspect-icon-choose">' +
-        "<label>Point icon</label>" +
-        '<div id="inspect-icon-picker">' +
-        buildIconPickerHtml("inspect", inspectIconState) +
-        "</div>" +
-        '<div class="inspect-icon-choose-row">' +
-        '<button type="button" class="btn" id="inspect-icon-choose">Choose PNG…</button>' +
-        '<input id="inspect-icon-file" type="file" accept="image/png,.png" hidden />' +
-        "</div>";
-      if (info.iconStyleKey) {
-        html +=
-          '<label class="inspect-icon-shared">' +
-          '<input id="inspect-icon-shared" type="checkbox" checked />' +
-          "Apply to all placemarks using " +
-          escapeText(info.iconStyleKey) +
-          "</label>";
-      }
-      html += "</div>";
+    var node = GisMap.findNode(info.id);
+    if (!node || !node.sourceEl) {
+      inspectEditing = false;
+      inspectTagSession = null;
+      inspectEl.innerHTML =
+        '<p class="muted">This node has no linked KML element.</p>';
+      updateInspectActionButtons(null, 0);
+      return;
     }
-    if (info.destination) {
-      html +=
-        '<div class="inspect-actions">' +
-        '<button type="button" class="btn" id="btn-drive-here">Drive from my location</button>' +
-        '<button type="button" class="btn" id="btn-drive-click">Click map for start</button>' +
-        '<a class="btn" id="btn-drive-google" target="_blank" rel="noopener noreferrer" href="' +
-        Directions.googleMapsUrl(null, info.destination) +
-        '">Open in Google Maps</a>' +
-        "</div>";
+    if (!window.KmlProperties || !KmlProperties.listElementProperties) {
+      inspectEditing = false;
+      inspectTagSession = null;
+      inspectEl.innerHTML = '<p class="muted">KML tag listing is unavailable.</p>';
+      updateInspectActionButtons(null, 0);
+      return;
     }
-    if (html) {
-      var extra = document.createElement("div");
-      extra.innerHTML = html;
-      while (extra.firstChild) {
-        inspectEl.appendChild(extra.firstChild);
-      }
-    }
-    if (inspectIconState) {
-      bindIconPicker("inspect-icon-picker", "inspect", inspectIconState, {
-        live: function () {
-          var sharedToggle = document.getElementById("inspect-icon-shared");
-          var applyShared = sharedToggle ? sharedToggle.checked : !!info.iconStyleKey;
-          commitPointIconSpec(specFromPickerState(inspectIconState), {
-            mode: "feature",
-            sourceId: sourceIdFromNodeId(info.id),
-            featureId: info.id,
-            featureName: info.name,
-            iconStyleKey: info.iconStyleKey,
-            applyShared: applyShared,
-          });
-        },
-        commitScale: function () {
-          noteEdit();
-        },
-      });
-      ensureDesktop().then(function (desktop) {
-        hydrateCustomIconThumbnails(
-          document.getElementById("inspect-icon-picker"),
-          desktop ? desktop.token : ""
-        );
-      });
-      bindInspectIconChoose(info);
-    }
-    bindInspectDirections(info);
-  }
-
-  function destFromInfo(info) {
-    if (!info || !info.destination) {
-      return null;
-    }
-    return {
-      lat: info.destination.lat,
-      lng: info.destination.lng,
-      name: info.name || "Point",
+    var rows = KmlProperties.listElementProperties(node.sourceEl);
+    inspectTagSession = {
+      nodeId: info.id,
+      sourceId: sourceIdFromNodeId(info.id),
+      rows: rows,
     };
-  }
-
-  function bindInspectDirections(info) {
-    var dest = destFromInfo(info);
-    var driveHere = document.getElementById("btn-drive-here");
-    var driveClick = document.getElementById("btn-drive-click");
-    if (driveHere) {
-      driveHere.addEventListener("click", function () {
-        chooseTool("pan");
-        Directions.routeFromMyLocation(dest);
-      });
+    inspectEl.innerHTML = "";
+    if (!rows.length) {
+      inspectEditing = false;
+      inspectEl.innerHTML = '<p class="muted">No KML tags under this node.</p>';
+      updateInspectActionButtons(info.id, 0);
+      return;
     }
-    if (driveClick) {
-      driveClick.addEventListener("click", function () {
-        chooseTool("pan");
-        Directions.pickOriginOnMap(dest);
-      });
-    }
+    var dl = document.createElement("dl");
+    rows.forEach(function (row, index) {
+      appendInspectTagRow(dl, row, index, inspectEditing);
+    });
+    inspectEl.appendChild(dl);
+    updateInspectActionButtons(info.id, rows.length);
   }
 
   function showRouteCard(info) {
@@ -4268,15 +4635,23 @@
     var margin = 8;
     var width = hoverBalloon.offsetWidth;
     var height = hoverBalloon.offsetHeight;
-    var left = point.x + margin;
+    var left;
     var top = point.source === "map" ? point.y - height - 12 : point.y - height / 2;
     var flipped = false;
-    if (left + width > window.innerWidth - margin) {
-      left = point.x - width - margin;
-      flipped = true;
+    if (point.source === "tree") {
+      left = point.x + 50;
+    } else {
+      left = point.x + margin;
+      if (left + width > window.innerWidth - margin) {
+        left = point.x - width - margin;
+        flipped = true;
+      }
     }
     if (left < margin) {
       left = margin;
+    }
+    if (left + width > window.innerWidth - margin) {
+      left = window.innerWidth - width - margin;
     }
     if (top < margin) {
       top = point.source === "map" ? point.y + 16 : margin;
@@ -4290,7 +4665,7 @@
   }
 
   function showNodeBalloon(nodeId, point) {
-    if (!hoverBalloon || dragIds) {
+    if (!hoverBalloon || dragIds || point.source === "tree") {
       return;
     }
     var node = GisMap.findNode(nodeId);
@@ -4906,13 +5281,17 @@
   }
 
   function listLoadedSourcesForScreenshot() {
-    return loadedSources.map(function (source) {
-      return {
-        id: source.id,
-        label: source.doc.fileName || "Untitled",
-        visible: source.visible !== false,
-      };
-    });
+    return loadedSources
+      .filter(function (source) {
+        return !source.bhAlignmentOverlay;
+      })
+      .map(function (source) {
+        return {
+          id: source.id,
+          label: source.doc.fileName || "Untitled",
+          visible: source.visible !== false,
+        };
+      });
   }
 
   function applyLoadedSourceVisibility(sourceId, visible) {
@@ -5005,6 +5384,9 @@
     if (window.MapScreenshot && typeof window.MapScreenshot.refreshTakeTwoSources === "function") {
       window.MapScreenshot.refreshTakeTwoSources();
     }
+    if (window.BoreholeImages && typeof window.BoreholeImages.refreshSources === "function") {
+      window.BoreholeImages.refreshSources();
+    }
     refreshExternalEditSourceSelect();
   }
 
@@ -5070,6 +5452,8 @@
       map: map,
       basemapSelect: document.getElementById("basemap-select"),
       mapScaleSelect: mapScaleSelect,
+      cursorCoordsInput: cursorCoordsInput,
+      syncCursorCoordsOverlay: syncCursorCoordsOverlay,
       chooseTool: chooseTool,
     });
     syncImageryLabelsControl();
@@ -5261,6 +5645,7 @@
       saveAllBtn.disabled = saveInFlight || !hasDirtySources;
     }
     refreshDuplicateWindowButton();
+    refreshOpenGoogleEarthButton();
     var activeForEdit = activeLoadedSource();
     var editKmlDisabled =
       !canWrite ||
@@ -5271,6 +5656,14 @@
     }
     if (toolbarEditKmlBtn) {
       toolbarEditKmlBtn.disabled = editKmlDisabled;
+    }
+    if (inspectTagSession) {
+      updateInspectActionButtons(
+        inspectTagSession.nodeId,
+        inspectTagSession.rows ? inspectTagSession.rows.length : 0
+      );
+    } else {
+      updateInspectActionButtons(null, 0);
     }
   }
 
@@ -5305,6 +5698,74 @@
     var hasApi = !!(api && typeof api.duplicate_window === "function");
     duplicateWindowBtn.classList.toggle("hidden", !hasApi);
     duplicateWindowBtn.disabled = !hasApi || !collectDuplicateSourcePaths().length;
+  }
+
+  function refreshOpenGoogleEarthButton() {
+    if (!openGoogleEarthBtn) {
+      return;
+    }
+    var desktop = isLikelyDesktopViewer();
+    openGoogleEarthBtn.classList.toggle("hidden", !desktop);
+    openGoogleEarthBtn.disabled =
+      !desktop ||
+      openGoogleEarthInFlight ||
+      !collectDuplicateSourcePaths().length;
+  }
+
+  function openGoogleEarthFromLoadedSources() {
+    var paths = collectDuplicateSourcePaths();
+    if (!paths.length) {
+      setMessage("Save or open files from disk first.");
+      return Promise.resolve();
+    }
+    if (openGoogleEarthInFlight) {
+      return Promise.resolve();
+    }
+    openGoogleEarthInFlight = true;
+    refreshOpenGoogleEarthButton();
+    return ensureDesktop()
+      .then(function (desktop) {
+        if (!desktop) {
+          throw new Error("Desktop file access is not available.");
+        }
+        var api = desktop.api;
+        if (api && typeof api.open_google_earth === "function") {
+          return Promise.resolve(api.open_google_earth(paths)).then(function (result) {
+            if (!result || result.error) {
+              throw new Error((result && result.error) || "Could not open Google Earth.");
+            }
+            return result;
+          });
+        }
+        return fetch("/__desktop/open-google-earth", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Desktop-Token": desktop.token,
+          },
+          body: JSON.stringify({ paths: paths }),
+        }).then(function (response) {
+          return response.json().catch(function () {
+            return {};
+          }).then(function (payload) {
+            if (!response.ok) {
+              throw new Error((payload && payload.error) || "Could not open Google Earth.");
+            }
+            return payload;
+          });
+        });
+      })
+      .then(function (result) {
+        var count = result && result.count ? result.count : paths.length;
+        setMessage("Opened " + count + " file(s) in Google Earth.");
+      })
+      .catch(function (err) {
+        setMessage((err && err.message) || "Could not open Google Earth.");
+      })
+      .finally(function () {
+        openGoogleEarthInFlight = false;
+        refreshOpenGoogleEarthButton();
+      });
   }
 
   function refreshReloadAppButton() {
@@ -5594,6 +6055,47 @@
     });
   }
 
+  function updateLayerTreeContextMenuItems() {
+    if (!layerTreeContextMenu) {
+      return;
+    }
+    var editable = actionIds().length > 0;
+    var canHide = selectedIds.length > 0;
+    var canRename = !!(focusId && GisMap.findNode(focusId));
+    if (layerTreeContextMenuDeleteBtn) {
+      layerTreeContextMenuDeleteBtn.disabled = !editable;
+    }
+    if (layerTreeContextMenuHideBtn) {
+      layerTreeContextMenuHideBtn.disabled = !canHide;
+    }
+    if (layerTreeContextMenuRenameBtn) {
+      layerTreeContextMenuRenameBtn.disabled = !canRename;
+    }
+    var sourceId = focusId ? documentSourceIdForLayerNodeId(focusId) : null;
+    layerTreeContextMenuSourceId = sourceId;
+    var source = sourceId ? findLoadedSource(sourceId) : null;
+    var hasDoc = !!(source && source.doc && source.doc.xmlDoc);
+    var canSave =
+      !saveInFlight
+      && hasDoc
+      && sourceCanPersistToOriginal(source)
+      && source.docDirty;
+    var canExport = !saveInFlight && hasDoc;
+    if (layerTreeContextMenuSaveBtn) {
+      layerTreeContextMenuSaveBtn.hidden = !sourceId;
+      layerTreeContextMenuSaveBtn.disabled = !canSave;
+      layerTreeContextMenuSaveBtn.title = canSave
+        ? "Save edits to the original file on disk"
+        : hasDoc && sourceCanPersistToOriginal(source)
+          ? "No unsaved changes for this file"
+          : "Use Export… when the file has no disk path";
+    }
+    if (layerTreeContextMenuExportBtn) {
+      layerTreeContextMenuExportBtn.hidden = !sourceId;
+      layerTreeContextMenuExportBtn.disabled = !canExport;
+    }
+  }
+
   function createLayerTreeContextMenu() {
     layerTreeContextMenu = document.createElement("div");
     layerTreeContextMenu.id = "layer-tree-context-menu";
@@ -5615,9 +6117,49 @@
       }
     });
 
+    layerTreeContextMenuDeleteBtn = document.createElement("button");
+    layerTreeContextMenuDeleteBtn.type = "button";
+    layerTreeContextMenuDeleteBtn.className = "map-context-menu-item";
+    layerTreeContextMenuDeleteBtn.setAttribute("role", "menuitem");
+    layerTreeContextMenuDeleteBtn.textContent = "Delete";
+    layerTreeContextMenuDeleteBtn.addEventListener("click", function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      hideLayerTreeContextMenu();
+      deleteSelection();
+    });
+
+    layerTreeContextMenuHideBtn = document.createElement("button");
+    layerTreeContextMenuHideBtn.type = "button";
+    layerTreeContextMenuHideBtn.className = "map-context-menu-item";
+    layerTreeContextMenuHideBtn.setAttribute("role", "menuitem");
+    layerTreeContextMenuHideBtn.textContent = "Hide";
+    layerTreeContextMenuHideBtn.addEventListener("click", function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      hideLayerTreeContextMenu();
+      setSelectionVisible(false);
+    });
+
+    layerTreeContextMenuRenameBtn = document.createElement("button");
+    layerTreeContextMenuRenameBtn.type = "button";
+    layerTreeContextMenuRenameBtn.className = "map-context-menu-item";
+    layerTreeContextMenuRenameBtn.setAttribute("role", "menuitem");
+    layerTreeContextMenuRenameBtn.textContent = "Rename";
+    layerTreeContextMenuRenameBtn.addEventListener("click", function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      var id = focusId;
+      hideLayerTreeContextMenu();
+      if (id) {
+        beginRename(id);
+      }
+    });
+
     layerTreeContextMenuExportBtn = document.createElement("button");
     layerTreeContextMenuExportBtn.type = "button";
     layerTreeContextMenuExportBtn.className = "map-context-menu-item";
+    layerTreeContextMenuExportBtn.hidden = true;
     layerTreeContextMenuExportBtn.setAttribute("role", "menuitem");
     layerTreeContextMenuExportBtn.textContent = "Export…";
     layerTreeContextMenuExportBtn.addEventListener("click", function (event) {
@@ -5631,6 +6173,9 @@
     });
 
     layerTreeContextMenu.appendChild(layerTreeContextMenuSaveBtn);
+    layerTreeContextMenu.appendChild(layerTreeContextMenuDeleteBtn);
+    layerTreeContextMenu.appendChild(layerTreeContextMenuHideBtn);
+    layerTreeContextMenu.appendChild(layerTreeContextMenuRenameBtn);
     layerTreeContextMenu.appendChild(layerTreeContextMenuExportBtn);
     document.body.appendChild(layerTreeContextMenu);
 
@@ -5655,29 +6200,14 @@
     window.addEventListener("blur", hideLayerTreeContextMenu);
   }
 
-  function showLayerTreeContextMenu(sourceId, clientX, clientY) {
-    if (!layerTreeContextMenu || !sourceId) {
+  function showLayerTreeContextMenu(clientX, clientY) {
+    if (!layerTreeContextMenu) {
       return;
     }
     hideMapContextMenu();
     hideNodeBalloon();
-    layerTreeContextMenuSourceId = sourceId;
-    var source = findLoadedSource(sourceId);
-    var hasDoc = !!(source && source.doc && source.doc.xmlDoc);
-    var canSave =
-      !saveInFlight && hasDoc && sourceCanPersistToOriginal(source) && source.docDirty;
-    var canExport = !saveInFlight && hasDoc;
-    if (layerTreeContextMenuSaveBtn) {
-      layerTreeContextMenuSaveBtn.disabled = !canSave;
-      layerTreeContextMenuSaveBtn.title = canSave
-        ? "Save edits to the original file on disk"
-        : hasDoc && sourceCanPersistToOriginal(source)
-          ? "No unsaved changes for this file"
-          : "Use Export… when the file has no disk path";
-    }
-    if (layerTreeContextMenuExportBtn) {
-      layerTreeContextMenuExportBtn.disabled = !canExport;
-    }
+    hideSidebarSectionContextMenu();
+    updateLayerTreeContextMenuItems();
     layerTreeContextMenu.classList.remove("hidden");
     layerTreeContextMenu.style.left = "0px";
     layerTreeContextMenu.style.top = "0px";
@@ -5694,14 +6224,13 @@
     if (!row || !layerTreeEl.contains(row)) {
       return;
     }
-    var sourceId = documentSourceIdForLayerNodeId(row.dataset.id);
-    if (!sourceId) {
+    if (row.dataset.id === "__composite__") {
       return;
     }
     event.preventDefault();
     event.stopPropagation();
     selectRow(row.dataset.id, event);
-    showLayerTreeContextMenu(sourceId, event.clientX, event.clientY);
+    showLayerTreeContextMenu(event.clientX, event.clientY);
   }
 
   function createMapContextMenu() {
@@ -6769,6 +7298,29 @@
       });
   }
 
+  function syncBhAlignmentOverlayFlags(source) {
+    if (!source || !source.doc || !source.doc.xmlDoc || !window.KmzSave) {
+      return;
+    }
+    var documentEl = KmzSave.getKmlDocumentElement(source.doc.xmlDoc);
+    if (!documentEl) {
+      return;
+    }
+    var generated = KmzSave.readExtendedDataValue(documentEl, "kmz_opener_generated");
+    if (generated !== "bh-alignments") {
+      return;
+    }
+    source.bhAlignmentOverlay = true;
+    var parentPath = KmzSave.readExtendedDataValue(documentEl, "bh_alignment_parent");
+    if (parentPath) {
+      var parentSource = findLoadedSourceByPath(parentPath);
+      if (parentSource) {
+        source.bhAlignmentForSourceId = parentSource.id;
+      }
+    }
+    GisMap.setSourcePointNameLabelsHidden(source.id, true);
+  }
+
   function applyParsedFile(file, handle, sourcePath, parsed, openOptions) {
     var replaceSourceId = openOptions && openOptions.replaceSourceId;
     var replaceAll = !!(openOptions && openOptions.replaceAll);
@@ -6851,6 +7403,10 @@
     RecentFiles.remember(file, handle || null, sourcePath || null).then(renderRecent).catch(function () {});
     refreshDuplicateWindowButton();
     persistLoadedSession();
+    loadedSources.forEach(syncBhAlignmentOverlayFlags);
+    if (window.BhAlignments && typeof BhAlignments.refreshStatus === "function") {
+      BhAlignments.refreshStatus();
+    }
   }
 
   function normalizeSourcePathKey(path) {
@@ -7092,6 +7648,7 @@
       measure: Measure,
       map: map,
       mapScaleSelect: mapScaleSelect,
+      cursorCoordsInput: cursorCoordsInput,
     });
   }
 
@@ -7115,23 +7672,31 @@
         writeStoredPaneWidth(RIGHT_PANE_WIDTH_KEY, rightW);
       }
     }
-    var sidebarLeft = document.querySelector(".sidebar-left");
-    var inspectSection = document.querySelector(".sidebar-left .sidebar-inspect");
+    var sidebarRight = document.querySelector(".sidebar-right");
+    var inspectSection = document.querySelector(".sidebar-right .sidebar-inspect");
     if (
-      sidebarLeft
+      sidebarRight
       && inspectSection
       && !inspectSection.classList.contains("collapsed")
     ) {
-      var inspectH = parseFloat(
-        getComputedStyle(sidebarLeft).getPropertyValue("--sidebar-inspect-h")
-      );
-      if (Number.isFinite(inspectH) && inspectH > 0) {
-        writeSidebarInspectHeight(inspectH);
+      if (sidebarRight.classList.contains("is-inspect-height-custom")) {
+        var inspectH = parseFloat(
+          getComputedStyle(sidebarRight).getPropertyValue("--sidebar-inspect-h")
+        );
+        if (Number.isFinite(inspectH) && inspectH > 0) {
+          writeSidebarInspectHeight(inspectH);
+        }
+      } else {
+        clearSidebarInspectHeightStorage();
       }
     }
     var orderScroller = document.getElementById("point-chain-order-scroller");
-    if (orderScroller && orderScroller.offsetHeight > 0) {
-      writePointChainOrderHeight(orderScroller.offsetHeight);
+    if (orderScroller && orderScroller.classList.contains("is-height-custom")) {
+      if (orderScroller.offsetHeight > 0) {
+        writePointChainOrderHeight(orderScroller.offsetHeight);
+      }
+    } else {
+      clearPointChainOrderHeightStorage();
     }
   }
 
@@ -7148,6 +7713,22 @@
     setMessage("Saved current settings as defaults for the next launch.");
   }
 
+  function saveViewMenuDefaults() {
+    writeSidebarHiddenState(sidebarSectionHiddenState);
+    if (
+      window.ViewerDefaults
+      && typeof ViewerDefaults.savePartialSnapshot === "function"
+    ) {
+      var keys =
+        ViewerDefaults.VIEW_MENU_KEYS || [
+          "kmz-sidebar-sections-collapsed",
+          "kmz-sidebar-sections-hidden",
+        ];
+      ViewerDefaults.savePartialSnapshot(keys);
+    }
+    setMessage("Saved sidebar section visibility as default for the next launch.");
+  }
+
   function bindViewerGuiPrefsPersistence() {
     if (!window.ViewerGuiPrefs || launchWindowParams) {
       return;
@@ -7162,7 +7743,9 @@
   createLayerTreeContextMenu();
   initSourceOverwriteDialog();
   initFeaturePropertiesDialog();
+  initInspectTagEditing();
   initSidebarSectionFolding();
+  initSidebarSectionVisibility();
   initSidebarPanelResize();
   initSidebarWidthResize();
 
@@ -7244,14 +7827,16 @@
   });
 
   map.on("mousemove", function (event) {
-    if (toolbarCoords) {
-      toolbarCoords.textContent = formatLatLng(event.latlng);
+    if (!cursorCoordsOverlayEnabled() || !mapCursorCoordsValue) {
+      return;
     }
+    mapCursorCoordsValue.textContent = formatLatLng(event.latlng);
   });
   map.on("mouseout", function () {
-    if (toolbarCoords) {
-      toolbarCoords.textContent = "—";
+    if (!cursorCoordsOverlayEnabled() || !mapCursorCoordsValue) {
+      return;
     }
+    mapCursorCoordsValue.textContent = "—";
   });
   map.on("movestart", function () {
     if (balloonSource === "map") {
@@ -7351,8 +7936,10 @@
   window.addEventListener("pywebviewready", function () {
     refreshExternalEditorUi();
     refreshDuplicateWindowButton();
+    refreshOpenGoogleEarthButton();
     refreshReloadAppButton();
   });
+  refreshOpenGoogleEarthButton();
   refreshReloadAppButton();
   if (reloadAppBtn) {
     reloadAppBtn.addEventListener("click", function () {
@@ -7392,50 +7979,8 @@
     externalEditorCommand.addEventListener("blur", persistExternalEditorCommand);
   }
 
-  layerTreeEl.addEventListener("mouseover", function (event) {
-    var row = event.target.closest(".layer-row");
-    if (!row || !layerTreeEl.contains(row)) {
-      return;
-    }
-    var rect = row.getBoundingClientRect();
-    showNodeBalloon(row.dataset.id, {
-      x: rect.right,
-      y: rect.top + rect.height / 2,
-      source: "tree",
-    });
-  });
-  layerTreeEl.addEventListener("mouseout", function (event) {
-    var row = event.target.closest(".layer-row");
-    if (!row) {
-      return;
-    }
-    var related = event.relatedTarget;
-    if (related && (row.contains(related) || balloonOwns(related))) {
-      return;
-    }
-    scheduleHideNodeBalloon();
-  });
   layerTreeEl.addEventListener("scroll", function () {
     hideLayerTreeContextMenu();
-    if (balloonSource !== "tree" || !hoveredNodeId || !hoverBalloon || hoverBalloon.classList.contains("hidden")) {
-      return;
-    }
-    var row = findRow(hoveredNodeId);
-    var treeRect = layerTreeEl.getBoundingClientRect();
-    if (!row) {
-      hideNodeBalloon();
-      return;
-    }
-    var rect = row.getBoundingClientRect();
-    if (rect.bottom < treeRect.top || rect.top > treeRect.bottom) {
-      hideNodeBalloon();
-      return;
-    }
-    placeNodeBalloon({
-      x: rect.right,
-      y: rect.top + rect.height / 2,
-      source: "tree",
-    });
   });
   layerTreeEl.addEventListener("mousedown", function (event) {
     if (event.button !== 0) {
@@ -7615,6 +8160,10 @@
         popup: document.getElementById("menubar-file-popup"),
       },
       {
+        trigger: document.getElementById("menubar-view-trigger"),
+        popup: document.getElementById("menubar-view-popup"),
+      },
+      {
         trigger: document.getElementById("menubar-options-trigger"),
         popup: document.getElementById("menubar-options-popup"),
       },
@@ -7651,6 +8200,37 @@
         if (!item || item.disabled) {
           return;
         }
+        if (item.classList.contains("menubar-menu-item-check")) {
+          event.preventDefault();
+          event.stopPropagation();
+          var sectionSlug = item.getAttribute("data-section-slug");
+          if (sectionSlug) {
+            toggleSidebarSectionUserHidden(sectionSlug);
+          }
+          closeAllMenus();
+          return;
+        }
+        if (item.id === "menubar-view-all-sections") {
+          event.preventDefault();
+          event.stopPropagation();
+          showAllSidebarSections();
+          closeAllMenus();
+          return;
+        }
+        if (item.id === "menubar-view-none-sections") {
+          event.preventDefault();
+          event.stopPropagation();
+          hideAllSidebarSections();
+          closeAllMenus();
+          return;
+        }
+        if (item.id === "menubar-view-save-as-default") {
+          event.preventDefault();
+          event.stopPropagation();
+          saveViewMenuDefaults();
+          closeAllMenus();
+          return;
+        }
         if (item.id === "btn-set-screenshot-folder") {
           event.preventDefault();
           event.stopPropagation();
@@ -7682,6 +8262,15 @@
               setMessage("Project root set to " + path + ".");
             },
           });
+          return;
+        }
+        if (item.id === "btn-edit-map-scale-presets") {
+          event.preventDefault();
+          event.stopPropagation();
+          closeAllMenus();
+          if (typeof window.openMapScalePresetsDialog === "function") {
+            window.openMapScalePresetsDialog();
+          }
           return;
         }
         closeAllMenus();
@@ -7729,6 +8318,11 @@
           }
         });
       });
+    });
+  }
+  if (openGoogleEarthBtn) {
+    openGoogleEarthBtn.addEventListener("click", function () {
+      openGoogleEarthFromLoadedSources();
     });
   }
   fileInput.addEventListener("change", function () {
@@ -7803,11 +8397,185 @@
 
   var mapScaleSelect = document.getElementById("map-scale-select");
   var mapScaleSyncLock = false;
+  var mapScalePresetsDialog = document.getElementById("map-scale-presets-dialog");
+  var mapScalePresetsListEl = document.getElementById("map-scale-presets-list");
+  var mapScalePresetsAddInput = document.getElementById("map-scale-presets-add-input");
+  var mapScalePresetsMessageEl = document.getElementById("map-scale-presets-message");
+
+  function mapScalePresetValues() {
+    if (typeof GisMap.getMapScalePresets === "function") {
+      return GisMap.getMapScalePresets();
+    }
+    return GisMap.MAP_SCALE_PRESETS || [];
+  }
+
+  function refreshMapScaleDropdowns() {
+    populateMapScaleSelect();
+    syncMapScaleSelect();
+    if (window.BoreholeImages && typeof BoreholeImages.refreshScalePresets === "function") {
+      BoreholeImages.refreshScalePresets();
+    }
+  }
+
+  function setMapScalePresetsDialogMessage(text, isError) {
+    if (!mapScalePresetsMessageEl) {
+      return;
+    }
+    var message = String(text || "").trim();
+    if (!message) {
+      mapScalePresetsMessageEl.hidden = true;
+      mapScalePresetsMessageEl.textContent = "";
+      mapScalePresetsMessageEl.classList.remove("is-error");
+      return;
+    }
+    mapScalePresetsMessageEl.hidden = false;
+    mapScalePresetsMessageEl.textContent = message;
+    mapScalePresetsMessageEl.classList.toggle("is-error", !!isError);
+  }
+
+  function renderMapScalePresetsDialogList() {
+    if (!mapScalePresetsListEl) {
+      return;
+    }
+    mapScalePresetsListEl.innerHTML = "";
+    mapScalePresetValues().forEach(function (denom) {
+      var item = document.createElement("li");
+      item.className = "map-scale-presets-item";
+
+      var label = document.createElement("span");
+      label.className = "map-scale-presets-item-label";
+      label.textContent = GisMap.formatMapScaleLabel(denom);
+
+      var removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "btn btn-subtle map-scale-presets-remove";
+      removeBtn.textContent = "Remove";
+      removeBtn.setAttribute("aria-label", "Remove " + label.textContent);
+      removeBtn.addEventListener("click", function () {
+        var result = GisMap.removeMapScalePreset(denom);
+        if (!result || !result.ok) {
+          setMapScalePresetsDialogMessage((result && result.message) || "Could not remove scale.", true);
+          return;
+        }
+        setMapScalePresetsDialogMessage("");
+      });
+
+      item.appendChild(label);
+      item.appendChild(removeBtn);
+      mapScalePresetsListEl.appendChild(item);
+    });
+  }
+
+  function closeMapScalePresetsDialog() {
+    if (!mapScalePresetsDialog) {
+      return;
+    }
+    mapScalePresetsDialog.classList.add("hidden");
+    mapScalePresetsDialog.setAttribute("aria-hidden", "true");
+    setMapScalePresetsDialogMessage("");
+    if (mapScalePresetsAddInput) {
+      mapScalePresetsAddInput.value = "";
+    }
+  }
+
+  function openMapScalePresetsDialog() {
+    if (!mapScalePresetsDialog) {
+      return;
+    }
+    renderMapScalePresetsDialogList();
+    setMapScalePresetsDialogMessage("");
+    mapScalePresetsDialog.classList.remove("hidden");
+    mapScalePresetsDialog.setAttribute("aria-hidden", "false");
+    if (mapScalePresetsAddInput) {
+      mapScalePresetsAddInput.focus();
+    }
+  }
+
+  window.openMapScalePresetsDialog = openMapScalePresetsDialog;
+
+  function submitMapScalePresetAdd() {
+    if (!mapScalePresetsAddInput) {
+      return;
+    }
+    var parsed =
+      typeof GisMap.parseMapScalePresetInput === "function"
+        ? GisMap.parseMapScalePresetInput(mapScalePresetsAddInput.value)
+        : null;
+    var result = parsed != null ? GisMap.addMapScalePreset(parsed) : { ok: false, message: "Enter a valid scale." };
+    if (!result || !result.ok) {
+      setMapScalePresetsDialogMessage((result && result.message) || "Could not add scale.", true);
+      return;
+    }
+    mapScalePresetsAddInput.value = "";
+    setMapScalePresetsDialogMessage("");
+  }
+
+  if (mapScalePresetsDialog) {
+    var mapScalePresetsCloseBtn = document.getElementById("map-scale-presets-close");
+    var mapScalePresetsDoneBtn = document.getElementById("map-scale-presets-done");
+    var mapScalePresetsAddBtn = document.getElementById("map-scale-presets-add-btn");
+    var mapScalePresetsResetBtn = document.getElementById("map-scale-presets-reset");
+    var mapScaleEditBtn = document.getElementById("map-scale-edit-btn");
+
+    if (mapScaleEditBtn) {
+      mapScaleEditBtn.addEventListener("click", openMapScalePresetsDialog);
+    }
+    if (mapScalePresetsCloseBtn) {
+      mapScalePresetsCloseBtn.addEventListener("click", closeMapScalePresetsDialog);
+    }
+    if (mapScalePresetsDoneBtn) {
+      mapScalePresetsDoneBtn.addEventListener("click", closeMapScalePresetsDialog);
+    }
+    if (mapScalePresetsAddBtn) {
+      mapScalePresetsAddBtn.addEventListener("click", submitMapScalePresetAdd);
+    }
+    if (mapScalePresetsAddInput) {
+      mapScalePresetsAddInput.addEventListener("keydown", function (event) {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          submitMapScalePresetAdd();
+        }
+      });
+    }
+    if (mapScalePresetsResetBtn) {
+      mapScalePresetsResetBtn.addEventListener("click", function () {
+        var result = GisMap.resetMapScalePresets();
+        if (!result || !result.ok) {
+          setMapScalePresetsDialogMessage((result && result.message) || "Could not restore defaults.", true);
+          return;
+        }
+        setMapScalePresetsDialogMessage("");
+        setMessage("Restored default map scale list.");
+      });
+    }
+    mapScalePresetsDialog.addEventListener("click", function (event) {
+      if (event.target === mapScalePresetsDialog) {
+        closeMapScalePresetsDialog();
+      }
+    });
+    document.addEventListener("keydown", function (event) {
+      if (
+        event.key === "Escape"
+        && mapScalePresetsDialog
+        && !mapScalePresetsDialog.classList.contains("hidden")
+      ) {
+        closeMapScalePresetsDialog();
+      }
+    });
+  }
+
+  window.addEventListener("kmz-map-scale-presets-changed", function () {
+    refreshMapScaleDropdowns();
+    if (mapScalePresetsDialog && !mapScalePresetsDialog.classList.contains("hidden")) {
+      renderMapScalePresetsDialogList();
+    }
+  });
 
   function populateMapScaleSelect() {
     if (!mapScaleSelect) {
       return;
     }
+    var previous = mapScaleSelect.value;
     var custom = mapScaleSelect.querySelector('option[value=""]');
     mapScaleSelect.innerHTML = "";
     if (custom) {
@@ -7818,12 +8586,15 @@
       customOpt.textContent = "Custom";
       mapScaleSelect.appendChild(customOpt);
     }
-    GisMap.MAP_SCALE_PRESETS.forEach(function (denom) {
+    mapScalePresetValues().forEach(function (denom) {
       var opt = document.createElement("option");
       opt.value = String(denom);
       opt.textContent = GisMap.formatMapScaleLabel(denom);
       mapScaleSelect.appendChild(opt);
     });
+    if (previous && mapScaleSelect.querySelector('option[value="' + previous + '"]')) {
+      mapScaleSelect.value = previous;
+    }
   }
 
   function syncMapScaleSelect() {
@@ -7973,16 +8744,26 @@
     });
   }
 
+  if (cursorCoordsInput) {
+    cursorCoordsInput.addEventListener("change", function () {
+      syncCursorCoordsOverlay();
+      persistViewerGuiPrefs();
+    });
+  }
+
   if (!launchWindowParams && window.ViewerGuiPrefs) {
     ViewerGuiPrefs.apply({
       gisMap: GisMap,
       map: map,
       basemapSelect: document.getElementById("basemap-select"),
       mapScaleSelect: mapScaleSelect,
+      cursorCoordsInput: cursorCoordsInput,
+      syncCursorCoordsOverlay: syncCursorCoordsOverlay,
       chooseTool: chooseTool,
     });
   }
 
+  syncCursorCoordsOverlay();
   syncImageryLabelsControl();
   if (!launchWindowParams) {
     syncMapScaleSelect();
@@ -8236,6 +9017,9 @@
       getMap: function () {
         return GisMap.getMap();
       },
+      getGisMap: function () {
+        return GisMap;
+      },
       ensureDesktop: ensureDesktop,
       setMessage: setMessage,
       readJsonResponse: readJsonResponse,
@@ -8250,6 +9034,65 @@
         if (sourceSelect) {
           syncFileHidePointNameLabelsToggle(sourceSelect);
         }
+      },
+    });
+  }
+
+  if (window.BoreholeImages) {
+    window.BoreholeImages.init({
+      listSources: listLoadedSourcesForScreenshot,
+      ensureDesktop: ensureDesktop,
+      setMessage: setMessage,
+      onSourceChanged: function () {
+        if (window.BhAlignments && typeof BhAlignments.onBoreholeSourceChanged === "function") {
+          BhAlignments.onBoreholeSourceChanged();
+        }
+      },
+    });
+  }
+
+  if (window.AppxPdf) {
+    window.AppxPdf.init({
+      setMessage: setMessage,
+    });
+  }
+
+  if (window.BhAlignments) {
+    window.BhAlignments.init({
+      findLoadedSource: findLoadedSource,
+      findLoadedSourceByPath: findLoadedSourceByPath,
+      listLoadedSources: function () {
+        return loadedSources;
+      },
+      removeLoadedSource: removeLoadedSource,
+      applyLoadedSourceVisibility: applyLoadedSourceVisibility,
+      applyParsedFile: applyParsedFile,
+      loadKmzOrKml: KmzLoader.loadKmzOrKml,
+      commitPointIconSpec: commitPointIconSpec,
+      writeSourceBlobToDisk: writeSourceBlobToDisk,
+      markSourceSaved: markSourceSaved,
+      getGisMap: function () {
+        return GisMap;
+      },
+      buildSourceKmzBlob: buildBlobForSource,
+      buildIconPickerHtml: buildIconPickerHtml,
+      bindIconPicker: bindIconPicker,
+      specFromPickerState: specFromPickerState,
+      refreshCustomIconCatalog: refreshCustomIconCatalog,
+      hydrateCustomIconThumbnails: hydrateCustomIconThumbnails,
+      ensureDesktop: ensureDesktop,
+      setMessage: setMessage,
+      readJsonResponse: readJsonResponse,
+      renderLoadedSources: renderLoadedSources,
+      getActiveSourceId: function () {
+        return activeSourceId;
+      },
+      getSelectedBoreholeSourceId: function () {
+        if (window.BoreholeImages && typeof BoreholeImages.getSelectedSourceId === "function") {
+          return BoreholeImages.getSelectedSourceId();
+        }
+        var selectEl = document.getElementById("borehole-images-source");
+        return selectEl ? String(selectEl.value || "").trim() : "";
       },
     });
   }

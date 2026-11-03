@@ -9,9 +9,14 @@
   var MIN_IN = MIN_DIM / SCREENSHOT_DPI;
   var MAX_IN = MAX_DIM / SCREENSHOT_DPI;
   var MAX_PNG_BYTES = 50 * 1024 * 1024;
-  var HI_RES_MIN_SCALE = 1.05;
   var HI_RES_TILE_WAIT_MS = 450;
   var HI_RES_TILE_TIMEOUT_MS = 8000;
+  var DEFAULT_WIDTH_PX = 1920;
+  var DEFAULT_HEIGHT_PX = 1080;
+  var DEFAULT_WIDTH_IN = DEFAULT_WIDTH_PX / SCREENSHOT_DPI;
+  var DEFAULT_HEIGHT_IN = DEFAULT_HEIGHT_PX / SCREENSHOT_DPI;
+  var DIMENSION_INPUT_TITLE =
+    "Optional px or in prefix (e.g. px800, in10). Without a prefix, values use the box size unit (default inches).";
 
   var mapWrap = null;
   var overlayEl = null;
@@ -31,6 +36,8 @@
   var dimOutsideToggle = null;
   var hiResToggle = null;
   var getMapFn = null;
+  var getGisMapFn = null;
+  var SCREENSHOT_MAP_DETAIL_PRESET = "roads_places";
   var frameColorInput = null;
   var frameWeightInput = null;
   var frameWeightValueEl = null;
@@ -109,7 +116,7 @@
           baseName: baseNameInput ? baseNameInput.value : "",
           nameSuffix: nameSuffixMode(),
           directory: dirInput ? dirInput.value : "",
-          showFrame: showToggle ? showToggle.checked : true,
+          showFrame: showToggle ? showToggle.checked : false,
           dimOutside: dimOutsideToggle ? dimOutsideToggle.checked : true,
           frameColor: frameColorInput ? frameColorInput.value : defaultFrameLineStyle.color,
           frameWeight: frameWeightInput ? frameWeightInput.value : String(defaultFrameLineStyle.weight),
@@ -126,12 +133,47 @@
   }
 
   function dimensionUnit() {
-    return unitSelect && unitSelect.value === "in" ? "in" : "px";
+    if (!unitSelect) {
+      return "in";
+    }
+    return unitSelect.value === "px" ? "px" : "in";
   }
 
   function parseNumber(value) {
     var n = parseFloat(String(value || "").trim());
     return isFinite(n) ? n : NaN;
+  }
+
+  function parseDimensionInput(raw, fallbackUnit) {
+    var text = String(raw || "").trim();
+    if (!text) {
+      return null;
+    }
+    var prefix = /^(px|in)\s*(.+)$/i.exec(text);
+    if (prefix) {
+      return { unit: prefix[1].toLowerCase(), value: parseFloat(String(prefix[2]).trim()) };
+    }
+    var suffix = /^(.+?)\s*(px|in)$/i.exec(text);
+    if (suffix) {
+      return { unit: suffix[2].toLowerCase(), value: parseFloat(String(suffix[1]).trim()) };
+    }
+    var n = parseFloat(text);
+    if (!isFinite(n)) {
+      return null;
+    }
+    return { unit: fallbackUnit || "in", value: n };
+  }
+
+  function dimensionInputToPx(raw, fallbackUnit, fallbackPx) {
+    var parsed = parseDimensionInput(raw, fallbackUnit);
+    if (!parsed || !isFinite(parsed.value)) {
+      return fallbackPx;
+    }
+    if (parsed.unit === "in") {
+      var inches = clampIn(String(parsed.value), fallbackPx / SCREENSHOT_DPI);
+      return Math.round(inches * SCREENSHOT_DPI);
+    }
+    return clampPx(String(parsed.value), fallbackPx);
   }
 
   function clampPx(value, fallbackPx) {
@@ -161,17 +203,11 @@
 
   function dimensionsToPx(unit) {
     unit = unit || dimensionUnit();
-    if (unit === "in") {
-      var wIn = clampIn(widthInput && widthInput.value, 1920 / SCREENSHOT_DPI);
-      var hIn = clampIn(heightInput && heightInput.value, 1080 / SCREENSHOT_DPI);
-      return {
-        width: Math.round(wIn * SCREENSHOT_DPI),
-        height: Math.round(hIn * SCREENSHOT_DPI),
-      };
-    }
+    var fallbackW = unit === "in" ? DEFAULT_WIDTH_PX : DEFAULT_WIDTH_PX;
+    var fallbackH = unit === "in" ? DEFAULT_HEIGHT_PX : DEFAULT_HEIGHT_PX;
     return {
-      width: clampPx(widthInput && widthInput.value, 1920),
-      height: clampPx(heightInput && heightInput.value, 1080),
+      width: dimensionInputToPx(widthInput && widthInput.value, unit, fallbackW),
+      height: dimensionInputToPx(heightInput && heightInput.value, unit, fallbackH),
     };
   }
 
@@ -197,16 +233,11 @@
     if (heightLabel) {
       heightLabel.textContent = unit === "in" ? "Height (in)" : "Height (px)";
     }
-    if (widthInput && heightInput) {
-      var min = unit === "in" ? String(MIN_IN) : String(MIN_DIM);
-      var max = unit === "in" ? String(MAX_IN) : String(MAX_DIM);
-      var step = unit === "in" ? "0.01" : "1";
-      widthInput.min = min;
-      widthInput.max = max;
-      widthInput.step = step;
-      heightInput.min = min;
-      heightInput.max = max;
-      heightInput.step = step;
+    if (widthInput) {
+      widthInput.title = DIMENSION_INPUT_TITLE;
+    }
+    if (heightInput) {
+      heightInput.title = DIMENSION_INPUT_TITLE;
     }
   }
 
@@ -214,7 +245,7 @@
     if (!unitSelect) {
       return;
     }
-    var from = unitSelect.dataset.lastUnit || "px";
+    var from = unitSelect.dataset.lastUnit || "in";
     var to = dimensionUnit();
     if (from !== to) {
       var pxDims = dimensionsToPx(from);
@@ -504,21 +535,119 @@
     PointChain.setLayerVisible(true);
   }
 
-  function html2canvasWithPointChain(mapEl, options, map, crop) {
+  var MAP_CHROME_ALWAYS_HIDE_SELECTORS = [
+    ".leaflet-control-zoom",
+    ".map-rotate-control",
+    ".leaflet-control-attribution",
+    ".leaflet-control-scale",
+    ".map-north-control",
+  ];
+
+  function normalizeMapChromeOptions(chromeOpts) {
+    if (global.MapExportChrome && typeof MapExportChrome.normalizeOptions === "function") {
+      return MapExportChrome.normalizeOptions(chromeOpts);
+    }
+    chromeOpts = chromeOpts || {};
+    return {
+      showScale: !!chromeOpts.showScale,
+      showNorthArrow: !!chromeOpts.showNorthArrow,
+    };
+  }
+
+  function captureNeedsPostComposite(map, chromeOpts) {
+    if (
+      map
+      && global.PointChain
+      && typeof PointChain.getExportRenderState === "function"
+    ) {
+      var chainState = PointChain.getExportRenderState();
+      if (chainState && chainState.segments && chainState.segments.length) {
+        return true;
+      }
+    }
+    if (!chromeOpts) {
+      return false;
+    }
+    var opts = normalizeMapChromeOptions(chromeOpts);
+    return !!(
+      opts.showScale
+      || opts.showNorthArrow
+      || opts.showCoordinates
+      || opts.showCaptureDate
+    );
+  }
+
+  function duplicateCaptureCanvas(source) {
+    if (!source || !source.width || !source.height) {
+      return source;
+    }
+    var copy = document.createElement("canvas");
+    copy.width = source.width;
+    copy.height = source.height;
+    var ctx = copy.getContext("2d");
+    if (!ctx) {
+      return source;
+    }
+    ctx.drawImage(source, 0, 0);
+    return copy;
+  }
+
+  function applyMapChromeForCapture(mapEl, chromeOpts) {
+    var saved = [];
+    function hideElements(selector) {
+      if (!mapEl) {
+        return;
+      }
+      mapEl.querySelectorAll(selector).forEach(function (el) {
+        saved.push({ el: el, display: el.style.display });
+        el.style.display = "none";
+      });
+    }
+    MAP_CHROME_ALWAYS_HIDE_SELECTORS.forEach(hideElements);
+    return saved;
+  }
+
+  function compositeExportChromeOntoCanvas(canvas, map, chromeOpts) {
+    if (!canvas || !global.MapExportChrome || typeof MapExportChrome.compositeOntoCanvas !== "function") {
+      return;
+    }
+    MapExportChrome.compositeOntoCanvas(canvas, map, normalizeMapChromeOptions(chromeOpts));
+  }
+
+  function restoreMapChromeAfterCapture(saved) {
+    if (!saved || !saved.length) {
+      return;
+    }
+    saved.forEach(function (entry) {
+      if (!entry.el) {
+        return;
+      }
+      entry.el.style.display = entry.display || "";
+    });
+  }
+
+  function html2canvasWithPointChain(mapEl, options, map, crop, chromeOpts) {
     var chainHidden = hidePointChainForCapture();
+    var chromeSaved = applyMapChromeForCapture(mapEl, chromeOpts);
     return waitForRepaint()
       .then(function () {
         return global.html2canvas(mapEl, options);
       })
       .then(function (canvas) {
+        if (captureNeedsPostComposite(map, chromeOpts)) {
+          canvas = duplicateCaptureCanvas(canvas);
+        }
         if (map) {
           compositePointChainOntoCanvas(canvas, map, crop);
         }
+        compositeExportChromeOntoCanvas(canvas, map, chromeOpts);
         restorePointChainAfterCapture(chainHidden);
+        restoreMapChromeAfterCapture(chromeSaved);
         return canvas;
       })
       .catch(function (err) {
         restorePointChainAfterCapture(chainHidden);
+        restoreMapChromeAfterCapture(chromeSaved);
         throw err;
       });
   }
@@ -540,11 +669,15 @@
     return bearing != null && Math.abs(bearing) > 0.5;
   }
 
-  function shouldUseHiResCapture(useFrame, scale) {
-    if (!useFrame || scale <= HI_RES_MIN_SCALE) {
+  function hiResTilesRequested() {
+    if (hiResToggle && !hiResToggle.checked) {
       return false;
     }
-    if (!hiResToggle || !hiResToggle.checked) {
+    return true;
+  }
+
+  function shouldUseHiResCapture() {
+    if (!hiResTilesRequested()) {
       return false;
     }
     if (!getMapFn) {
@@ -558,6 +691,72 @@
       return false;
     }
     return true;
+  }
+
+  function saveImageryLabelCaptureState() {
+    if (!getGisMapFn) {
+      return null;
+    }
+    var gisMap = getGisMapFn();
+    if (!gisMap || typeof gisMap.getActiveBasemapKey !== "function") {
+      return null;
+    }
+    var key = gisMap.getActiveBasemapKey();
+    return {
+      basemapKey: key,
+      labelsEnabled: gisMap.getImageryLabelsEnabled(),
+      granularity: gisMap.getImageryLabelGranularity(),
+      layers:
+        typeof gisMap.getImageryLabelLayerState === "function"
+          ? gisMap.getImageryLabelLayerState(key)
+          : null,
+    };
+  }
+
+  function applyScreenshotMapDetail() {
+    if (!getGisMapFn) {
+      return;
+    }
+    var gisMap = getGisMapFn();
+    if (
+      !gisMap
+      || typeof gisMap.basemapSupportsImageryLabels !== "function"
+      || !gisMap.basemapSupportsImageryLabels(gisMap.getActiveBasemapKey())
+    ) {
+      return;
+    }
+    gisMap.setImageryLabelsEnabled(true);
+    if (typeof gisMap.setImageryLabelGranularity === "function") {
+      gisMap.setImageryLabelGranularity(SCREENSHOT_MAP_DETAIL_PRESET);
+    }
+  }
+
+  function restoreImageryLabelCaptureState(saved) {
+    if (!saved || !getGisMapFn) {
+      return;
+    }
+    var gisMap = getGisMapFn();
+    if (!gisMap) {
+      return;
+    }
+    gisMap.setImageryLabelsEnabled(saved.labelsEnabled);
+    if (
+      saved.layers
+      && typeof gisMap.setImageryLabelLayerState === "function"
+      && saved.basemapKey
+    ) {
+      gisMap.setImageryLabelLayerState(saved.basemapKey, saved.layers);
+    } else if (typeof gisMap.setImageryLabelGranularity === "function" && saved.granularity) {
+      gisMap.setImageryLabelGranularity(saved.granularity);
+    }
+  }
+
+  function waitForScreenshotMapReady(map) {
+    if (!map) {
+      return Promise.resolve();
+    }
+    map.invalidateSize();
+    return waitForMapIdle(map);
   }
 
   function saveMapExportState(map, mapEl) {
@@ -664,7 +863,8 @@
             scale: 1,
           },
           map,
-          { cropX: 0, cropY: 0, scale: 1 }
+          { cropX: 0, cropY: 0, scale: 1 },
+          null
         );
       })
       .then(function (canvas) {
@@ -744,11 +944,15 @@
     if (hadOverlay) {
       overlayEl.classList.add("hidden");
     }
-    if (shouldUseHiResCapture(useFrame, scale)) {
-      return captureMapAtTileResolution(outW, outH, cropX, cropY, cropW, cropH, hadOverlay);
-    }
     var map = getMapFn ? getMapFn() : null;
-    return html2canvasWithPointChain(
+    var savedImageryLabels = saveImageryLabelCaptureState();
+    applyScreenshotMapDetail();
+    return waitForScreenshotMapReady(map)
+      .then(function () {
+        if (shouldUseHiResCapture()) {
+          return captureMapAtTileResolution(outW, outH, cropX, cropY, cropW, cropH, hadOverlay);
+        }
+        return html2canvasWithPointChain(
       mapEl,
       {
         useCORS: true,
@@ -761,47 +965,57 @@
         height: cropH,
         scale: scale,
       },
-      map,
-      { cropX: cropX, cropY: cropY, scale: scale }
-    )
-      .then(function (canvas) {
+          map,
+          { cropX: cropX, cropY: cropY, scale: scale },
+          null
+        ).then(function (canvas) {
+          if (canvas.width !== outW || canvas.height !== outH) {
+            var scaled = document.createElement("canvas");
+            scaled.width = outW;
+            scaled.height = outH;
+            var ctx = scaled.getContext("2d");
+            if (!ctx) {
+              throw new Error("Could not prepare the screenshot.");
+            }
+            ctx.drawImage(canvas, 0, 0, outW, outH);
+            canvas = scaled;
+          }
+          return new Promise(function (resolve, reject) {
+            canvas.toBlob(
+              function (blob) {
+                if (!blob) {
+                  reject(new Error("Could not encode the screenshot (map tiles may block export)."));
+                  return;
+                }
+                if (blob.size > MAX_PNG_BYTES) {
+                  reject(new Error("Screenshot is too large to save."));
+                  return;
+                }
+                resolve(blob);
+              },
+              "image/png",
+              1
+            );
+          });
+        });
+      })
+      .then(function (blob) {
         if (hadOverlay && showToggle && showToggle.checked) {
           setOverlayVisible(true);
         }
-        if (canvas.width !== outW || canvas.height !== outH) {
-          var scaled = document.createElement("canvas");
-          scaled.width = outW;
-          scaled.height = outH;
-          var ctx = scaled.getContext("2d");
-          if (!ctx) {
-            throw new Error("Could not prepare the screenshot.");
-          }
-          ctx.drawImage(canvas, 0, 0, outW, outH);
-          canvas = scaled;
-        }
-        return new Promise(function (resolve, reject) {
-          canvas.toBlob(
-            function (blob) {
-              if (!blob) {
-                reject(new Error("Could not encode the screenshot (map tiles may block export)."));
-                return;
-              }
-              if (blob.size > MAX_PNG_BYTES) {
-                reject(new Error("Screenshot is too large to save."));
-                return;
-              }
-              resolve(blob);
-            },
-            "image/png",
-            1
-          );
-        });
+        return blob;
       })
       .catch(function (err) {
         if (hadOverlay && showToggle && showToggle.checked) {
           setOverlayVisible(true);
         }
         throw err;
+      })
+      .finally(function () {
+        restoreImageryLabelCaptureState(savedImageryLabels);
+        if (map) {
+          waitForScreenshotMapReady(map);
+        }
       });
   }
 
@@ -982,6 +1196,50 @@
     });
   }
 
+  function prepareBlobForSave(blob, metadata) {
+    if (!metadata || !global.PngMetadata || typeof PngMetadata.embedScreenshotMetadata !== "function") {
+      return Promise.resolve(blob);
+    }
+    return PngMetadata.embedScreenshotMetadata(blob, metadata).then(function (embedded) {
+      if (embedded.size > MAX_PNG_BYTES) {
+        throw new Error("Screenshot is too large to save.");
+      }
+      return embedded;
+    });
+  }
+
+  function currentCaptureDimensions() {
+    if (isCaptureFrameVisible() && frameEl) {
+      return targetDimensions();
+    }
+    var mapEl = document.getElementById("map");
+    var w = mapEl ? mapEl.clientWidth : 0;
+    var h = mapEl ? mapEl.clientHeight : 0;
+    if (w > 0 && h > 0) {
+      return { width: Math.round(w), height: Math.round(h) };
+    }
+    return targetDimensions();
+  }
+
+  function buildMapFrameMetadata(extra) {
+    if (!global.ScreenshotMetadata || typeof ScreenshotMetadata.buildForMapFrame !== "function") {
+      return null;
+    }
+    var dims = currentCaptureDimensions();
+    return ScreenshotMetadata.buildForMapFrame(
+      Object.assign(
+        {
+          captureKind: "map_frame",
+          widthPx: dims.width,
+          heightPx: dims.height,
+          dpi: SCREENSHOT_DPI,
+          includeLiveBounds: true,
+        },
+        extra || {}
+      )
+    );
+  }
+
   function persistBlob(blob, baseNameStem, nameOpts) {
     nameOpts = nameOpts || {};
     var directory = dirInput ? String(dirInput.value || "").trim() : "";
@@ -997,7 +1255,8 @@
       sequenceNumber: sequenceNumber,
       when: new Date(),
     });
-    return (ensureDesktopFn ? ensureDesktopFn() : Promise.resolve(null)).then(function (desktop) {
+    return prepareBlobForSave(blob, nameOpts.metadata).then(function (preparedBlob) {
+      return (ensureDesktopFn ? ensureDesktopFn() : Promise.resolve(null)).then(function (desktop) {
       if (desktop) {
         if (!directory) {
           throw new Error("Enter a save directory.");
@@ -1011,7 +1270,7 @@
             "X-Preferred-Filename": encodeURIComponent(downloadName),
             "X-Base-Filename": encodeURIComponent(sanitizeBaseName(baseNameStem)),
           },
-          body: blob,
+          body: preparedBlob,
         }).then(function (response) {
           return (readJsonResponseFn || defaultReadJson)(response).then(function (result) {
             if (!result.ok) {
@@ -1024,8 +1283,9 @@
           });
         });
       }
-      downloadBlob(blob, downloadName);
+      downloadBlob(preparedBlob, downloadName);
       return { name: downloadName, downloaded: true };
+    });
     });
   }
 
@@ -1069,9 +1329,12 @@
     }
     writeSettings();
     var savedResults = [];
+    var frameMeta = buildMapFrameMetadata({
+      captureNotes: takeTwo ? { takeTwo: true, shotIndex: 1 } : null,
+    });
     captureMapPng()
       .then(function (blob) {
-        return persistBlob(blob, baseStem).then(function (result) {
+        return persistBlob(blob, baseStem, { metadata: frameMeta }).then(function (result) {
           savedResults.push(result);
           if (!takeTwo) {
             return;
@@ -1106,8 +1369,18 @@
         if (hideNames) {
           suffix = hideIds.length ? suffix + "-no-names" : "-no-names";
         }
+        var secondMeta = buildMapFrameMetadata({
+          captureKind: "map_frame_second",
+          captureNotes: {
+            takeTwo: true,
+            shotIndex: 2,
+            filenameSuffix: suffix,
+            hiddenSourceIds: hideIds.slice(),
+            hidePointNameLabels: hideNames,
+          },
+        });
         return captureMapPng().then(function (blob) {
-          return persistBlob(blob, baseStem, { suffix: suffix }).then(function (result) {
+          return persistBlob(blob, baseStem, { suffix: suffix, metadata: secondMeta }).then(function (result) {
             savedResults.push(result);
           });
         });
@@ -1270,22 +1543,23 @@
 
   function applyStoredSettings(stored) {
     var settings = stored || {};
-    var unit = settings.dimensionUnit === "in" ? "in" : "px";
+    var unit = settings.dimensionUnit === "px" ? "px" : "in";
     if (unitSelect) {
       unitSelect.value = unit;
       unitSelect.dataset.lastUnit = unit;
     }
     syncDimensionFieldUi();
-    if (unit === "in") {
-      if (widthInput) {
-        widthInput.value = formatInches(clampIn(settings.width, 1920 / SCREENSHOT_DPI));
-      }
-      if (heightInput) {
-        heightInput.value = formatInches(clampIn(settings.height, 1080 / SCREENSHOT_DPI));
-      }
-    } else if (widthInput && heightInput) {
-      widthInput.value = String(clampPx(settings.width, 1920));
-      heightInput.value = String(clampPx(settings.height, 1080));
+    if (widthInput && settings.width != null && String(settings.width).trim() !== "") {
+      widthInput.value = String(settings.width);
+    } else if (widthInput) {
+      widthInput.value =
+        unit === "in" ? formatInches(DEFAULT_WIDTH_IN) : String(DEFAULT_WIDTH_PX);
+    }
+    if (heightInput && settings.height != null && String(settings.height).trim() !== "") {
+      heightInput.value = String(settings.height);
+    } else if (heightInput) {
+      heightInput.value =
+        unit === "in" ? formatInches(DEFAULT_HEIGHT_IN) : String(DEFAULT_HEIGHT_PX);
     }
     if (baseNameInput) {
       baseNameInput.value = settings.baseName || "map-screenshot";
@@ -1302,7 +1576,7 @@
       dirInput.value = settings.directory;
     }
     if (showToggle) {
-      showToggle.checked = settings.showFrame !== false;
+      showToggle.checked = settings.showFrame === true;
     }
     if (dimOutsideToggle) {
       dimOutsideToggle.checked = settings.dimOutside !== false;
@@ -1363,6 +1637,7 @@
     takeTwoPanelEl = document.getElementById("screenshot-take-two-panel");
     takeTwoSourcesEl = document.getElementById("screenshot-take-two-sources");
     getMapFn = options.getMap || null;
+    getGisMapFn = options.getGisMap || null;
     getLoadedSourcesFn = options.getLoadedSources || null;
     setLoadedSourceVisibleFn = options.setLoadedSourceVisible || null;
     getSourcePointNameLabelsHiddenFn = options.getSourcePointNameLabelsHidden || null;
@@ -1389,7 +1664,7 @@
     bindInputs();
     bindBrowse();
     refreshTakeTwoSources();
-    setOverlayVisible(showToggle ? showToggle.checked : true);
+    setOverlayVisible(showToggle ? showToggle.checked : false);
 
     (ensureDesktopFn ? ensureDesktopFn() : Promise.resolve(null)).then(function (desktop) {
       if (browseBtn) {
@@ -1398,10 +1673,126 @@
     });
   }
 
+  function clampZoom(map, zoom) {
+    var maxZoom = typeof map.getMaxZoom === "function" ? map.getMaxZoom() : 19;
+    var minZoom = typeof map.getMinZoom === "function" ? map.getMinZoom() : 0;
+    return Math.max(minZoom, Math.min(maxZoom, zoom));
+  }
+
+  function captureFixedViewPng(lat, lng, zoom, outW, outH, chromeOpts) {
+    if (!global.html2canvas) {
+      return Promise.reject(new Error("Screenshot library did not load."));
+    }
+    var map = getMapFn ? getMapFn() : null;
+    var mapEl = document.getElementById("map");
+    if (!map || !mapEl || !global.L) {
+      return Promise.reject(new Error("Map is not ready."));
+    }
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || !Number.isFinite(zoom)) {
+      return Promise.reject(new Error("Invalid map view for capture."));
+    }
+    outW = Math.round(outW);
+    outH = Math.round(outH);
+    if (outW < MIN_DIM || outH < MIN_DIM) {
+      return Promise.reject(new Error("Capture size is too small."));
+    }
+    var saved = saveMapExportState(map, mapEl);
+    var savedImageryLabels = saveImageryLabelCaptureState();
+    applyScreenshotMapDetail();
+    var hadOverlay =
+      overlayEl != null && showToggle && showToggle.checked && !overlayEl.classList.contains("hidden");
+    if (hadOverlay) {
+      overlayEl.classList.add("hidden");
+    }
+    applyMapExportLayout(mapEl, outW, outH);
+    map.invalidateSize();
+    map.setView(global.L.latLng(lat, lng), clampZoom(map, zoom), { animate: false });
+    return waitForMapIdle(map)
+      .then(function () {
+        return html2canvasWithPointChain(
+          mapEl,
+          {
+            useCORS: true,
+            allowTaint: false,
+            backgroundColor: null,
+            logging: false,
+            width: outW,
+            height: outH,
+            scale: 1,
+          },
+          map,
+          { cropX: 0, cropY: 0, scale: 1 },
+          chromeOpts
+        );
+      })
+      .then(function (canvas) {
+        return new Promise(function (resolve, reject) {
+          canvas.toBlob(
+            function (blob) {
+              if (!blob) {
+                reject(new Error("Could not encode the screenshot (map tiles may block export)."));
+                return;
+              }
+              if (blob.size > MAX_PNG_BYTES) {
+                reject(new Error("Screenshot is too large to save."));
+                return;
+              }
+              resolve(blob);
+            },
+            "image/png",
+            1
+          );
+        });
+      })
+      .catch(function (err) {
+        throw err;
+      })
+      .finally(function () {
+        restoreMapExportState(map, mapEl, saved);
+        restoreImageryLabelCaptureState(savedImageryLabels);
+        if (hadOverlay && showToggle && showToggle.checked) {
+          setOverlayVisible(true);
+        }
+        waitForScreenshotMapReady(map);
+      });
+  }
+
+  function savePngBlob(blob, baseNameStem, nameOpts) {
+    nameOpts = nameOpts || {};
+    var savedDir = null;
+    if (nameOpts.directory && dirInput) {
+      savedDir = dirInput.value;
+      dirInput.value = nameOpts.directory;
+    }
+    return persistBlob(blob, baseNameStem, nameOpts).finally(function () {
+      if (savedDir !== null && dirInput) {
+        dirInput.value = savedDir;
+      }
+    });
+  }
+
+  function readOutputDimensions() {
+    return targetDimensions();
+  }
+
   global.MapScreenshot = {
     init: init,
     layoutFrame: layoutFrame,
     refreshTakeTwoSources: refreshTakeTwoSources,
     persistSettings: writeSettings,
+    captureFixedViewPng: captureFixedViewPng,
+    savePngBlob: savePngBlob,
+    buildMapFrameMetadata: buildMapFrameMetadata,
+    prepareBlobForSave: prepareBlobForSave,
+    readOutputDimensions: readOutputDimensions,
+    dimensionInputToPx: dimensionInputToPx,
+    parseDimensionInput: parseDimensionInput,
+    defaultWidthPx: function () {
+      return DEFAULT_WIDTH_PX;
+    },
+    defaultHeightPx: function () {
+      return DEFAULT_HEIGHT_PX;
+    },
+    sanitizeBaseName: sanitizeBaseName,
   };
 })(window);
