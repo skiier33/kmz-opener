@@ -2,6 +2,8 @@
   "use strict";
 
   var REFRESH_DEBOUNCE_MS = 350;
+  var SCAN_TIMEOUT_MS = 90000;
+  var SHEET_PREVIEW_LIMIT = 10;
 
   var sidebarLeft = null;
   var dirInput = null;
@@ -9,21 +11,61 @@
   var browseDirBtn = null;
   var browseTemplateBtn = null;
   var editTemplateBtn = null;
+  var scanBtn = null;
   var countEl = null;
   var sheetPreviewsEl = null;
   var buildBtn = null;
   var statusEl = null;
   var setMessageFn = null;
   var building = false;
+  var scanning = false;
   var refreshTimer = null;
+  var lastPreviewData = null;
+  var lastDesktopApi = null;
+  var previewRequestId = 0;
 
   function desktopApi() {
     var desktop = global.pywebview;
     return desktop && desktop.api ? desktop.api : null;
   }
 
-  function isDesktopBuildAvailable() {
-    var api = desktopApi();
+  function whenDesktopApiReady() {
+    if (global.DesktopBridge && typeof DesktopBridge.whenDesktopApiReady === "function") {
+      return DesktopBridge.whenDesktopApiReady();
+    }
+    return Promise.resolve(desktopApi());
+  }
+
+  function hasListAppendixApi(api) {
+    api = api || lastDesktopApi || desktopApi();
+    return !!(api && typeof api.list_appendix_screenshots === "function");
+  }
+
+  function canScanAppendixFolder() {
+    if (hasListAppendixApi(lastDesktopApi || desktopApi())) {
+      return true;
+    }
+    return !!(
+      global.DesktopBridge
+      && typeof DesktopBridge.ensureDesktopSession === "function"
+    );
+  }
+
+  function formatPngCountLabel(data) {
+    var count = data && !data.error ? data.count || 0 : 0;
+    var folder =
+      (data && (data.scanDirectory || data.directory))
+      || screenshotDirectory()
+      || "";
+    var base = count === 1 ? "1 PNG file" : count + " PNG files";
+    if (folder) {
+      return base + " in " + folder;
+    }
+    return base;
+  }
+
+  function isDesktopBuildAvailable(api) {
+    api = api || lastDesktopApi || desktopApi();
     return !!(api && typeof api.build_geg_appendix_pdf === "function");
   }
 
@@ -122,12 +164,50 @@
     );
   }
 
+  function templateReadyForBuild(data) {
+    if (data && data.templateError) {
+      return false;
+    }
+    var path =
+      (data && data.templatePath) ||
+      templatePath() ||
+      (templateInput && String(templateInput.value || "").trim()) ||
+      "";
+    return !!String(path || "").trim();
+  }
+
   function updateBuildEnabled(data) {
     if (!buildBtn) {
       return;
     }
     var count = data && !data.error ? data.count || 0 : 0;
-    buildBtn.disabled = building || !isDesktopBuildAvailable() || count < 1;
+    var canBuild =
+      !building
+      && !scanning
+      && isDesktopBuildAvailable()
+      && count > 0
+      && templateReadyForBuild(data);
+    buildBtn.disabled = !canBuild;
+    if (canBuild) {
+      buildBtn.title = "Insert PNGs into the GEG workbook and export the appendix PDF";
+    } else if (building) {
+      buildBtn.title = "Building appendix PDF…";
+    } else if (scanning) {
+      buildBtn.title = "Waiting for folder scan to finish…";
+    } else if (!isDesktopBuildAvailable()) {
+      buildBtn.title = "Requires the KMZ GIS Viewer desktop app";
+    } else if (!screenshotDirectory()) {
+      buildBtn.title = "Choose a screenshot folder with PNG files";
+    } else if (count < 1) {
+      buildBtn.title =
+        "No PNG files found in this folder (also checks ss_w_icon when the parent folder is empty)";
+    } else if (!templateReadyForBuild(data)) {
+      buildBtn.title =
+        (data && data.templateError)
+        || "Set a valid GEG .xlsm Excel template";
+    } else {
+      buildBtn.title = "Build appendix PDF";
+    }
   }
 
   function renderSheetPreviews(data) {
@@ -209,26 +289,65 @@
     updateBuildEnabled(data);
   }
 
+  function syncTemplateFieldFromPreview(data) {
+    if (!templateInput || !data || !data.templatePath) {
+      return;
+    }
+    var resolved = String(data.templatePath).trim();
+    var current = String(templateInput.value || "").trim();
+    if (!resolved) {
+      return;
+    }
+    if (!data.templateError && current !== resolved) {
+      templateInput.value = resolved;
+      persistPaths();
+      return;
+    }
+    if (data.templateError && !current) {
+      templateInput.value = resolved;
+      persistPaths();
+    }
+  }
+
   function renderPreview(data) {
+    lastPreviewData = data || null;
     if (!countEl) {
       renderSheetPreviews(data);
       return;
     }
     if (!data || data.error) {
-      countEl.textContent = "0 PNG files";
+      countEl.textContent = formatPngCountLabel(data || { count: 0 });
+      if (data && data.error) {
+        setStatus(data.error, true);
+      }
       renderSheetPreviews(data);
       return;
     }
     var count = data.count || 0;
-    countEl.textContent = count === 1 ? "1 PNG file" : count + " PNG files";
-    if (templateInput && data.templatePath && !String(templateInput.value || "").trim()) {
-      templateInput.value = data.templatePath;
+    countEl.textContent = formatPngCountLabel(data);
+    if (countEl.title !== undefined) {
+      countEl.title = data.scanDirectory || data.directory || "";
+    }
+    syncTemplateFieldFromPreview(data);
+    if (data.templateError && !data.error) {
+      setStatus(data.templateError + " Set a valid .xlsm template to build the appendix.", true);
+    } else if (data.templateNote && count > 0) {
+      setStatus(data.templateNote, false);
+    } else if (count > 0) {
+      setStatus(
+        count === 1
+          ? "1 PNG ready — click Build appendix PDF to insert into Excel."
+          : count + " PNGs ready — click Build appendix PDF to insert into Excel.",
+        false
+      );
+    } else if (data.directory || data.scanDirectory) {
+      setStatus("", false);
     }
     renderSheetPreviews(data);
   }
 
-  function loadDefaultTemplatePath() {
-    var api = desktopApi();
+  function loadDefaultTemplatePath(api) {
+    api = api || lastDesktopApi || desktopApi();
     if (!api || typeof api.geg_appendix_template_path !== "function") {
       return Promise.resolve();
     }
@@ -245,6 +364,178 @@
     });
   }
 
+  function promiseWithTimeout(promise, timeoutMs, timeoutMessage) {
+    return new Promise(function (resolve, reject) {
+      var settled = false;
+      var timer = global.setTimeout(function () {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        reject(new Error(timeoutMessage));
+      }, timeoutMs);
+      Promise.resolve(promise)
+        .then(function (value) {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          global.clearTimeout(timer);
+          resolve(value);
+        })
+        .catch(function (err) {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          global.clearTimeout(timer);
+          reject(err);
+        });
+    });
+  }
+
+  function syncScanButton() {
+    if (!scanBtn) {
+      return;
+    }
+    scanBtn.disabled =
+      scanning
+      || building
+      || !screenshotDirectory()
+      || !canScanAppendixFolder();
+  }
+
+  function listAppendixViaHttp(directory, template) {
+    if (
+      !global.DesktopBridge
+      || typeof DesktopBridge.ensureDesktopSession !== "function"
+    ) {
+      return Promise.resolve(null);
+    }
+    return DesktopBridge.ensureDesktopSession().then(function (session) {
+      if (!session || !session.token) {
+        return null;
+      }
+      return global
+        .fetch("/__desktop/list-appendix-screenshots", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Desktop-Token": session.token,
+          },
+          body: JSON.stringify({
+            directory: directory,
+            templatePath: template,
+            sheetPreviewLimit: SHEET_PREVIEW_LIMIT,
+            includeThumbnails: true,
+          }),
+        })
+        .then(function (response) {
+          return response.text().then(function (text) {
+            if (!text || !String(text).trim()) {
+              return {
+                error: response.ok
+                  ? "Appendix scan returned an empty response."
+                  : "Appendix scan failed (HTTP " + response.status + ").",
+              };
+            }
+            try {
+              return JSON.parse(text);
+            } catch (parseErr) {
+              return {
+                error:
+                  (parseErr && parseErr.message)
+                  || "Appendix scan returned invalid JSON.",
+              };
+            }
+          });
+        });
+    });
+  }
+
+  function callListAppendixScreenshots(api, directory, template) {
+    return listAppendixViaHttp(directory, template).then(function (httpData) {
+      if (httpData) {
+        return httpData;
+      }
+      if (!api || typeof api.list_appendix_screenshots !== "function") {
+        return { error: "Appendix folder scan is not available." };
+      }
+      return Promise.resolve(api.list_appendix_screenshots(directory, template));
+    });
+  }
+
+  function fetchAppendixPreview(showScanStatus) {
+    persistPaths();
+    if (dirInput && !String(dirInput.value || "").trim()) {
+      var folderFromPrefs = defaultScreenshotDirectory();
+      if (folderFromPrefs) {
+        dirInput.value = folderFromPrefs;
+      }
+    }
+    var directory = screenshotDirectory();
+    if (!directory) {
+      if (showScanStatus) {
+        renderPreview({
+          error: "Choose a screenshot folder to scan for PNG files.",
+        });
+      }
+      syncScanButton();
+      return Promise.resolve();
+    }
+    var requestId = ++previewRequestId;
+    if (showScanStatus) {
+      scanning = true;
+      setStatus("Scanning folder for PNG files…", false);
+      syncScanButton();
+    }
+    return whenDesktopApiReady()
+      .then(function (api) {
+        lastDesktopApi = api || null;
+        syncScanButton();
+        if (requestId !== previewRequestId) {
+          return null;
+        }
+        var template = templatePath();
+        if (!canScanAppendixFolder()) {
+          return {
+            error: isDesktopBuildAvailable(api)
+              ? "Appendix listing is not available."
+              : "Build appendix PDF is available in the desktop app only.",
+          };
+        }
+        return promiseWithTimeout(
+          callListAppendixScreenshots(api, directory, template),
+          SCAN_TIMEOUT_MS,
+          "Scan timed out. Click Scan folder to try again."
+        );
+      })
+      .then(function (data) {
+        if (requestId !== previewRequestId || data === null) {
+          return;
+        }
+        renderPreview(data);
+      })
+      .catch(function (err) {
+        if (requestId !== previewRequestId) {
+          return;
+        }
+        renderPreview({
+          error: (err && err.message) || "Could not read screenshot folder.",
+        });
+      })
+      .finally(function () {
+        if (requestId !== previewRequestId) {
+          return;
+        }
+        if (showScanStatus) {
+          scanning = false;
+        }
+        syncScanButton();
+        updateBuildEnabled(lastPreviewData);
+      });
+  }
+
   function scheduleRefreshPreview() {
     if (refreshTimer) {
       global.clearTimeout(refreshTimer);
@@ -256,51 +547,41 @@
   }
 
   function refreshPreview() {
-    persistPaths();
-    var api = desktopApi();
-    var directory = screenshotDirectory();
-    var template = templatePath();
-    if (!api || typeof api.list_appendix_screenshots !== "function") {
-      renderPreview({
-        error: isDesktopBuildAvailable()
-          ? "Appendix listing is not available."
-          : "Build appendix PDF is available in the desktop app only.",
-      });
+    return fetchAppendixPreview(false);
+  }
+
+  function runFolderScan() {
+    if (scanning) {
       return Promise.resolve();
     }
-    return Promise.resolve(api.list_appendix_screenshots(directory, template))
-      .then(function (data) {
-        renderPreview(data);
-      })
-      .catch(function (err) {
-        renderPreview({
-          error: (err && err.message) || "Could not read screenshot folder.",
-        });
-      });
+    return loadDefaultTemplatePath(lastDesktopApi).then(function () {
+      return fetchAppendixPreview(true);
+    });
   }
 
   function onBrowseDirectory() {
-    var api = desktopApi();
-    if (!api || typeof api.choose_directory !== "function") {
-      setStatus("Folder browse is available in the desktop app only.", true);
-      return;
-    }
-    var initial = screenshotDirectory();
-    if (initial) {
-      initial = initial.replace(/[\\/][^\\/]*$/, "");
-    }
-    return Promise.resolve(api.choose_directory(initial))
+    return whenDesktopApiReady().then(function (api) {
+      if (!api || typeof api.choose_directory !== "function") {
+        setStatus("Folder browse is available in the desktop app only.", true);
+        return;
+      }
+      var initial = screenshotDirectory();
+      if (initial) {
+        initial = initial.replace(/[\\/][^\\/]*$/, "");
+      }
+      return Promise.resolve(api.choose_directory(initial))
       .then(function (result) {
         if (!result || !result.path || !dirInput) {
           return;
         }
         dirInput.value = result.path;
         persistPaths();
-        refreshPreview();
+        return runFolderScan();
       })
       .catch(function (err) {
         setStatus((err && err.message) || "Could not choose folder.", true);
       });
+    });
   }
 
   function onEditTemplate() {
@@ -330,16 +611,16 @@
   }
 
   function onBrowseTemplate() {
-    var api = desktopApi();
-    if (!api || typeof api.choose_geg_appendix_template !== "function") {
-      setStatus("Template browse is available in the desktop app only.", true);
-      return;
-    }
-    var initial = templatePath();
-    if (initial) {
-      initial = initial.replace(/[\\/][^\\/]*$/, "");
-    }
-    return Promise.resolve(api.choose_geg_appendix_template(initial))
+    return whenDesktopApiReady().then(function (api) {
+      if (!api || typeof api.choose_geg_appendix_template !== "function") {
+        setStatus("Template browse is available in the desktop app only.", true);
+        return;
+      }
+      var initial = templatePath();
+      if (initial) {
+        initial = initial.replace(/[\\/][^\\/]*$/, "");
+      }
+      return Promise.resolve(api.choose_geg_appendix_template(initial))
       .then(function (result) {
         if (!result || !result.path || !templateInput) {
           return;
@@ -351,15 +632,11 @@
       .catch(function (err) {
         setStatus((err && err.message) || "Could not choose template.", true);
       });
+    });
   }
 
   function onBuildClick() {
     if (building || !buildBtn || buildBtn.disabled) {
-      return;
-    }
-    var api = desktopApi();
-    if (!api || typeof api.build_geg_appendix_pdf !== "function") {
-      setStatus("Build appendix PDF is available in the desktop app only.", true);
       return;
     }
     var directory = screenshotDirectory();
@@ -370,9 +647,20 @@
     if (setMessageFn) {
       setMessageFn("Building appendix PDF…");
     }
-    return Promise.resolve(api.build_geg_appendix_pdf(directory, template))
+    return whenDesktopApiReady()
+      .then(function (api) {
+        lastDesktopApi = api || null;
+        if (!api || typeof api.build_geg_appendix_pdf !== "function") {
+          setStatus("Build appendix PDF is available in the desktop app only.", true);
+          return null;
+        }
+        return Promise.resolve(api.build_geg_appendix_pdf(directory, template));
+      })
       .then(function (result) {
-        if (!result || result.error) {
+        if (result === null || result === undefined) {
+          return;
+        }
+        if (result.error) {
           var err = (result && result.error) || "Appendix build failed.";
           setStatus(err, true);
           if (setMessageFn) {
@@ -390,6 +678,9 @@
           " (" +
           (result.imageCount || 0) +
           " sheets).";
+        if (result.templateNote) {
+          ok = result.templateNote + " " + ok;
+        }
         setStatus(ok, false);
         if (setMessageFn) {
           setMessageFn(ok);
@@ -408,8 +699,8 @@
       });
   }
 
-  function syncBrowseButtons() {
-    var api = desktopApi();
+  function syncBrowseButtons(api) {
+    api = api || desktopApi();
     if (browseDirBtn) {
       browseDirBtn.disabled = !(api && typeof api.choose_directory === "function");
     }
@@ -419,6 +710,25 @@
     if (editTemplateBtn) {
       editTemplateBtn.disabled = !(api && typeof api.open_geg_appendix_template === "function");
     }
+    syncScanButton();
+  }
+
+  function onScanFolderClick() {
+    runFolderScan().catch(function (err) {
+      setStatus((err && err.message) || "Scan failed.", true);
+    });
+  }
+
+  function onDesktopApiReady(api) {
+    lastDesktopApi = api || null;
+    syncBrowseButtons(api);
+    updateBuildEnabled(lastPreviewData);
+    return loadDefaultTemplatePath(api).then(function () {
+      if (isAppxSidebarMode()) {
+        return refreshPreview();
+      }
+      return undefined;
+    });
   }
 
   function bindEvents() {
@@ -434,7 +744,14 @@
     if (editTemplateBtn) {
       editTemplateBtn.addEventListener("click", onEditTemplate);
     }
+    if (scanBtn) {
+      scanBtn.addEventListener("click", onScanFolderClick);
+    }
     if (dirInput) {
+      dirInput.addEventListener("input", function () {
+        persistPaths();
+        scheduleRefreshPreview();
+      });
       dirInput.addEventListener("change", function () {
         persistPaths();
         scheduleRefreshPreview();
@@ -477,6 +794,7 @@
     browseDirBtn = global.document.getElementById("appx-pdf-browse-dir");
     browseTemplateBtn = global.document.getElementById("appx-pdf-browse-template");
     editTemplateBtn = global.document.getElementById("appx-pdf-edit-template");
+    scanBtn = global.document.getElementById("appx-pdf-scan");
     countEl = global.document.getElementById("appx-pdf-count");
     sheetPreviewsEl = global.document.getElementById("appx-pdf-sheet-previews");
     buildBtn = global.document.getElementById("appx-pdf-build");
@@ -489,21 +807,16 @@
       SidebarModes.onActivate(SidebarModes.MODE_APPX, refreshPreview);
     }
     syncBrowseButtons();
-    loadDefaultTemplatePath().then(function () {
-      refreshPreview();
-    });
-
+    whenDesktopApiReady().then(onDesktopApiReady);
     global.addEventListener("pywebviewready", function () {
-      syncBrowseButtons();
-      loadDefaultTemplatePath().then(function () {
-        refreshPreview();
-      });
+      whenDesktopApiReady().then(onDesktopApiReady);
     });
   }
 
   global.AppxPdf = {
     init: init,
     refreshPreview: refreshPreview,
+    scanFolder: runFolderScan,
     setSidebarMode: function (mode) {
       if (global.SidebarModes && typeof SidebarModes.setMode === "function") {
         SidebarModes.setMode(mode);

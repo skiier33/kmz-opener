@@ -414,22 +414,28 @@ def _png_bytes_thumb_jpeg_b64(png_bytes: bytes, max_width: int = 320) -> Optiona
     return base64.standard_b64encode(buf.getvalue()).decode("ascii")
 
 
-def _png_file_thumb_jpeg_b64(path: str, max_width: int = 320) -> Optional[str]:
+def _png_file_thumb_jpeg_b64(
+    path: str,
+    max_width: int = 320,
+    orient_for_appendix: bool = False,
+) -> Optional[str]:
     """
     Encode a PNG file as JPEG base64 for UI thumbnails.
 
     Args:
         path: Absolute path to a PNG file.
         max_width: Maximum thumbnail width in pixels.
+        orient_for_appendix: When True, rotate like the exported appendix PDF.
 
     Returns:
         Base64 JPEG payload, or None when the image cannot be read.
     """
-    preview_bytes = _appendix_preview_png_bytes(path)
-    if preview_bytes:
-        thumb = _png_bytes_thumb_jpeg_b64(preview_bytes, max_width=max_width)
-        if thumb:
-            return thumb
+    if orient_for_appendix:
+        preview_bytes = _appendix_preview_png_bytes(path)
+        if preview_bytes:
+            thumb = _png_bytes_thumb_jpeg_b64(preview_bytes, max_width=max_width)
+            if thumb:
+                return thumb
     try:
         with Image.open(path) as img:
             copy = img.convert("RGB")
@@ -447,6 +453,41 @@ def _png_file_thumb_jpeg_b64(path: str, max_width: int = 320) -> Optional[str]:
     except OSError:
         return None
     return base64.standard_b64encode(buf.getvalue()).decode("ascii")
+
+
+def resolve_appendix_template_path(
+    template_path: str,
+    viewer_root: str,
+) -> Tuple[str, Optional[str], Optional[str]]:
+    """
+    Resolve the Excel template for appendix export.
+
+    Args:
+        template_path: User-selected template path, or empty for bundled default.
+        viewer_root: Viewer install root containing ``examples/``.
+
+    Returns:
+        Tuple of absolute template path, error when no usable template, and an
+        optional note when a user path was ignored in favor of the bundled file.
+    """
+    bundled = default_template_path(viewer_root)
+    custom = str(template_path or "").strip()
+    if custom:
+        custom_abs = os.path.abspath(custom)
+        if validate_template_path(custom_abs) is None:
+            return custom_abs, None, None
+        bundled_err = validate_template_path(bundled)
+        if bundled_err is None:
+            return (
+                bundled,
+                None,
+                "Using bundled GEG template; the path in Excel template is not a valid .xlsm file.",
+            )
+        return custom_abs, validate_template_path(custom_abs), None
+    bundled_err = validate_template_path(bundled)
+    if bundled_err is None:
+        return bundled, None, None
+    return bundled, bundled_err, None
 
 
 def validate_template_path(template_path: str) -> Optional[str]:
@@ -495,10 +536,15 @@ def open_template_workbook(template_path: str) -> Optional[str]:
     return None
 
 
+APPENDIX_UI_PREVIEW_LIMIT = 10
+
+
 def list_appendix_preview(
     directory: str,
     limit: int = 20,
-    sheet_preview_limit: int = 50,
+    sheet_preview_limit: int = APPENDIX_UI_PREVIEW_LIMIT,
+    include_thumbnails: bool = True,
+    orient_thumbnails: bool = False,
 ) -> Dict[str, Any]:
     """
     Return PNG count and sheet previews for the Appx PDF UI.
@@ -507,6 +553,8 @@ def list_appendix_preview(
         directory: Screenshot save folder.
         limit: Maximum number of file names to return.
         sheet_preview_limit: Maximum sheets to include with thumbnails.
+        include_thumbnails: When False, list file names only (fast rescan).
+        orient_thumbnails: When True, orient thumbnails like the PDF export.
 
     Returns:
         Dict with directory, count, names, and sheets list.
@@ -514,15 +562,23 @@ def list_appendix_preview(
     scan_dir, paths = resolve_screenshot_png_scan(directory)
     names = [os.path.basename(p) for p in paths]
     sheets: List[Dict[str, Any]] = []
-    for index, png_path in enumerate(paths[: max(0, sheet_preview_limit)]):
+    preview_cap = max(0, int(sheet_preview_limit or 0))
+    for index, png_path in enumerate(paths[:preview_cap]):
         base = os.path.basename(png_path)
         stem, _ext = os.path.splitext(base)
+        thumb_b64: Optional[str] = None
+        if include_thumbnails:
+            thumb_b64 = _png_file_thumb_jpeg_b64(
+                png_path,
+                max_width=240,
+                orient_for_appendix=orient_thumbnails,
+            )
         sheets.append(
             {
                 "index": index + 1,
                 "fileName": base,
                 "tabLabel": stem or f"Sheet {index + 1}",
-                "thumbJpegB64": _png_file_thumb_jpeg_b64(png_path),
+                "thumbJpegB64": thumb_b64,
             }
         )
     return {
@@ -532,6 +588,52 @@ def list_appendix_preview(
         "names": names[: max(0, limit)],
         "sheets": sheets,
     }
+
+
+def list_appendix_screenshots_response(
+    screenshot_directory: str,
+    template_path: str,
+    viewer_root: str,
+    sheet_preview_limit: int = APPENDIX_UI_PREVIEW_LIMIT,
+    include_thumbnails: bool = True,
+) -> Dict[str, Any]:
+    """
+    Build the Appx PDF folder scan payload for the desktop UI.
+
+    Args:
+        screenshot_directory: Folder to scan for PNG screenshots.
+        template_path: Optional .xlsm template path from the UI.
+        viewer_root: Viewer install root containing ``examples/``.
+        sheet_preview_limit: Maximum sheet cards returned to the UI.
+        include_thumbnails: When False, skip JPEG thumbnails for a faster scan.
+
+    Returns:
+        Preview dict or ``error`` when the folder is invalid.
+    """
+    directory = os.path.abspath(os.path.normpath(str(screenshot_directory or "").strip()))
+    err = validate_screenshot_directory(directory)
+    if err:
+        return {"error": err}
+    template_raw = str(template_path or "").strip()
+    template_custom = (
+        os.path.abspath(os.path.normpath(template_raw)) if template_raw else ""
+    )
+    template, template_err, template_note = resolve_appendix_template_path(
+        template_custom,
+        viewer_root,
+    )
+    preview = list_appendix_preview(
+        directory,
+        sheet_preview_limit=max(0, min(int(sheet_preview_limit or APPENDIX_UI_PREVIEW_LIMIT), 24)),
+        include_thumbnails=bool(include_thumbnails),
+        orient_thumbnails=False,
+    )
+    preview["templatePath"] = template
+    if template_err:
+        preview["templateError"] = template_err
+    if template_note:
+        preview["templateNote"] = template_note
+    return preview
 
 
 def validate_screenshot_directory(directory: str) -> Optional[str]:

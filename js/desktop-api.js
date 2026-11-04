@@ -1,6 +1,15 @@
 (function (global) {
   "use strict";
 
+  var log = global.KmzLog
+    ? global.KmzLog.getLogger("desktop-bridge")
+    : {
+        debug: function () {},
+        info: function () {},
+        warn: function () {},
+        error: function () {},
+      };
+
   /**
    * Resolve when window.pywebview.api is ready (desktop shell only).
    *
@@ -81,13 +90,17 @@
    * @returns {Promise<object|null>} Result dict or null when not in desktop app.
    */
   function openScanGpsWindow() {
+    log.info("openScanGpsWindow");
     return ensureDesktopSession().then(function (session) {
       if (!session) {
+        log.debug("openScanGpsWindow: no desktop session");
         return null;
       }
       if (typeof session.api.open_scan_gps_window === "function") {
+        log.debug("openScanGpsWindow via pywebview API");
         return Promise.resolve(session.api.open_scan_gps_window());
       }
+      log.debug("openScanGpsWindow via HTTP bridge");
       return global
         .fetch("/__desktop/open-scan-gps-tool", {
           method: "POST",
@@ -105,13 +118,17 @@
    * @returns {Promise<object|null>} Result dict or null when not in desktop app.
    */
   function openCrosshairIconWindow() {
+    log.info("openCrosshairIconWindow");
     return ensureDesktopSession().then(function (session) {
       if (!session) {
+        log.debug("openCrosshairIconWindow: no desktop session");
         return null;
       }
       if (typeof session.api.open_crosshair_icon_window === "function") {
+        log.debug("openCrosshairIconWindow via pywebview API");
         return Promise.resolve(session.api.open_crosshair_icon_window());
       }
+      log.debug("openCrosshairIconWindow via HTTP bridge");
       return global
         .fetch("/__desktop/open-crosshair-icon-tool", {
           method: "POST",
@@ -130,13 +147,17 @@
    * @returns {Promise<object|null>} Result dict or null when not in the desktop app.
    */
   function openToolWindow(tool) {
+    log.info("openToolWindow tool=%s", tool);
     return ensureDesktopSession().then(function (session) {
       if (!session) {
+        log.debug("openToolWindow: no desktop session");
         return null;
       }
       if (typeof session.api.open_tool_window === "function") {
+        log.debug("openToolWindow via pywebview API");
         return Promise.resolve(session.api.open_tool_window(tool));
       }
+      log.debug("openToolWindow via HTTP bridge");
       return global
         .fetch("/__desktop/open-tool-window?tool=" + encodeURIComponent(tool), {
           method: "POST",
@@ -156,13 +177,17 @@
    */
   function openSidebarModeWindow(mode) {
     var normalized = String(mode || "").trim();
+    log.info("openSidebarModeWindow mode=%s", normalized);
     return ensureDesktopSession().then(function (session) {
       if (!session) {
+        log.debug("openSidebarModeWindow: no desktop session");
         return null;
       }
       if (typeof session.api.open_sidebar_mode_window === "function") {
+        log.debug("openSidebarModeWindow via pywebview API");
         return Promise.resolve(session.api.open_sidebar_mode_window(normalized));
       }
+      log.debug("openSidebarModeWindow via HTTP bridge");
       return global
         .fetch(
           "/__desktop/open-sidebar-mode-window?mode=" + encodeURIComponent(normalized),
@@ -185,11 +210,26 @@
    * @returns {Promise<object>}
    */
   function toolDispatch(action, payload) {
+    payload = payload || {};
+    log.info(
+      "toolDispatch action=%s tool=%s",
+      action,
+      payload.tool || "(none)"
+    );
+    log.debug("toolDispatch payload keys=%s", Object.keys(payload));
     return ensureDesktopSession().then(function (session) {
       if (!session || typeof session.api.tool_dispatch !== "function") {
+        log.warn("toolDispatch unavailable (no desktop session or API)");
         return { error: "Open this tool from the KMZ GIS Viewer." };
       }
-      return Promise.resolve(session.api.tool_dispatch(action, payload || {}));
+      return Promise.resolve(session.api.tool_dispatch(action, payload)).then(function (result) {
+        if (result && result.error) {
+          log.warn("toolDispatch error: %s", result.error);
+        } else {
+          log.debug("toolDispatch ok");
+        }
+        return result;
+      });
     });
   }
 

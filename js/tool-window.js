@@ -1,6 +1,15 @@
 (function (global) {
   "use strict";
 
+  var log = global.KmzLog
+    ? global.KmzLog.getLogger("tool-window")
+    : {
+        debug: function () {},
+        info: function () {},
+        warn: function () {},
+        error: function () {},
+      };
+
   var TITLES = {
     "csv-coords": "CSV Coordinates to KMZ File",
     "point-chain": "Point chain",
@@ -65,10 +74,14 @@
     if (!body.fields) {
       body.fields = collectFields();
     }
+    log.info("dispatch action=%s tool=%s", action, tool);
+    log.debug("dispatch field count=%s", body.fields ? body.fields.length : 0);
     if (global.opener && !global.opener.closed && global.opener.KmzToolHost) {
       try {
+        log.debug("dispatch via opener.KmzToolHost");
         return Promise.resolve(global.opener.KmzToolHost.dispatch(action, body));
       } catch (err) {
+        log.error("dispatch opener failed: %s", (err && err.message) || err);
         return Promise.reject(err);
       }
     }
@@ -84,15 +97,18 @@
     return dispatch(action, payload)
       .then(function (result) {
         if (!result || result.error) {
+          log.warn("run failed action=%s: %s", action, (result && result.error) || "unknown");
           setStatus((result && result.error) || "The tool could not update.");
           return;
         }
+        log.debug("run ok action=%s", action);
         setStatus("");
         if (replace !== false && result.html != null) {
           applyHtml(result.html, true);
         }
       })
       .catch(function (err) {
+        log.error("run error action=%s: %s", action, (err && err.message) || err);
         setStatus((err && err.message) || "The tool could not update.");
       });
   }
@@ -282,9 +298,11 @@
     }
     global.document.title = title;
     if (!mount || !TITLES[tool]) {
+      log.warn("init missing tool id: %s", tool || "(empty)");
       setStatus("This tool window is missing a tool id.");
       return;
     }
+    log.info("init tool=%s level=%s", tool, global.KmzLog ? global.KmzLog.getLevel() : "info");
     bind();
     if (global.opener && global.opener.KmzToolHost) {
       refresh();

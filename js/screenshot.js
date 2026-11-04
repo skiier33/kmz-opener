@@ -11,8 +11,8 @@
   var MAX_PNG_BYTES = 50 * 1024 * 1024;
   var HI_RES_TILE_WAIT_MS = 450;
   var HI_RES_TILE_TIMEOUT_MS = 8000;
-  var DEFAULT_WIDTH_PX = 1920;
-  var DEFAULT_HEIGHT_PX = 1080;
+  var DEFAULT_WIDTH_PX = 954;
+  var DEFAULT_HEIGHT_PX = 615;
   var DEFAULT_WIDTH_IN = DEFAULT_WIDTH_PX / SCREENSHOT_DPI;
   var DEFAULT_HEIGHT_IN = DEFAULT_HEIGHT_PX / SCREENSHOT_DPI;
   var DIMENSION_INPUT_TITLE =
@@ -57,6 +57,35 @@
   var setMessageFn = null;
   var readJsonResponseFn = null;
   var saveInFlight = false;
+  var showScaleToggle = null;
+  var showNorthToggle = null;
+  var chromePanel = null;
+  var scaleStyleSelect = null;
+  var scalePositionSelect = null;
+  var scaleInsetInput = null;
+  var scaleWidthInput = null;
+  var scaleHeightInput = null;
+  var scalePreserveAspectToggle = null;
+  var scaleColorInput = null;
+  var northStyleSelect = null;
+  var northPositionSelect = null;
+  var northInsetInput = null;
+  var northWidthInput = null;
+  var northHeightInput = null;
+  var northPreserveAspectToggle = null;
+  var northColorInput = null;
+  var showScaleRatioToggle = null;
+  var chromePlateToggle = null;
+  var scaleStylePreviewCanvas = null;
+  var northStylePreviewCanvas = null;
+
+  var FALLBACK_SCALE_COLOR = "#e8eaed";
+  var FALLBACK_NORTH_COLOR = "#e8710a";
+  var NORTH_ARROW_MANIFEST_URL = "custom-icons/NorthArrowsPNG128/manifest.json";
+  var DEFAULT_LEGEND_INSET_PX = 14;
+  var scaleLegendAspect = null;
+  var northLegendAspect = null;
+  var legendSizeSyncLock = false;
 
   var OUTSIDE_DIM_SHADOW = "0 0 0 9999px rgba(8, 10, 14, 0.45)";
 

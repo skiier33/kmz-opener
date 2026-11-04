@@ -15,8 +15,10 @@ from desktop.geg_appendix_excel import (
     copy_template,
     default_template_path,
     list_appendix_preview,
+    list_appendix_screenshots_response,
     list_screenshot_pngs,
     open_template_workbook,
+    resolve_appendix_template_path,
     resolve_screenshot_png_scan,
     validate_screenshot_directory,
     validate_template_path,
@@ -67,6 +69,14 @@ class TestGegAppendixExcel(unittest.TestCase):
             self.assertTrue(os.path.isfile(dest))
             self.assertGreater(os.path.getsize(dest), 1000)
 
+    def test_list_appendix_screenshots_response(self) -> None:
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with tempfile.TemporaryDirectory() as tmp:
+            open(os.path.join(tmp, "a.png"), "wb").close()
+            payload = list_appendix_screenshots_response(tmp, "", root)
+            self.assertNotIn("error", payload)
+            self.assertEqual(payload["count"], 1)
+
     def test_list_appendix_preview(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             for i in range(3):
@@ -77,6 +87,19 @@ class TestGegAppendixExcel(unittest.TestCase):
             self.assertEqual(len(preview["names"]), 2)
             self.assertEqual(len(preview["sheets"]), 3)
             self.assertTrue(preview["sheets"][0]["thumbJpegB64"])
+
+    def test_resolve_appendix_template_path_fallback(self) -> None:
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        bundled = default_template_path(root)
+        if not os.path.isfile(bundled):
+            self.skipTest("GEG template not bundled in this checkout.")
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = os.path.join(tmp, "not-a-template.xlsx")
+            open(bad, "wb").close()
+            path, err, note = resolve_appendix_template_path(bad, root)
+            self.assertIsNone(err)
+            self.assertEqual(os.path.normcase(path), os.path.normcase(bundled))
+            self.assertTrue(note)
 
     def test_validate_template_path(self) -> None:
         self.assertIsNotNone(validate_template_path(""))

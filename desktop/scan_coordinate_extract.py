@@ -15,6 +15,10 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import pymupdf
 from PIL import Image, ImageOps
 
+from desktop.log_config import get_logger
+
+log = get_logger(__name__)
+
 ThumbSize = Tuple[int, int]
 
 DEFAULT_THUMB_WIDTH = 96
@@ -433,12 +437,14 @@ def parse_scan_coordinates_pdf(pdf_path: str, parser: str = PARSER_OCR) -> Dict[
         Dict with pages list and metadata, or error key on failure.
     """
     mode = normalize_scan_parser(parser)
+    log.info("parse_scan_coordinates_pdf start parser=%s path=%s", mode, pdf_path)
     if mode == PARSER_COPILOT:
         from desktop.copilot_scan_parser import parse_scan_coordinates_pdf_copilot
 
         return parse_scan_coordinates_pdf_copilot(pdf_path)
     err = validate_scan_pdf_path(pdf_path)
     if err:
+        log.warning("parse_scan_coordinates_pdf validation failed: %s", err)
         return {"error": err}
     full = os.path.abspath(pdf_path)
     try:
@@ -461,6 +467,12 @@ def parse_scan_coordinates_pdf(pdf_path: str, parser: str = PARSER_OCR) -> Dict[
         doc.close()
 
     tess = resolve_tesseract_cmd()
+    log.info(
+        "parse_scan_coordinates_pdf OCR complete pages=%s tesseract=%s",
+        len(extracted),
+        "yes" if tess else "no",
+    )
+    log.debug("parse_scan_coordinates_pdf pdfPath=%s", full)
     return {
         "pdfPath": full,
         "pageCount": len(extracted),
@@ -546,6 +558,7 @@ def write_scan_coordinates_export(
         )
     if not data_rows:
         return {"error": "No rows to export."}
+    log.info("write_scan_coordinates_export writing %s rows to %s", len(data_rows), full)
     try:
         with open(full, "w", encoding="utf-8", newline="") as handle:
             writer = csv.writer(handle)

@@ -1,6 +1,15 @@
 (function (global) {
   "use strict";
 
+  var log = global.KmzLog
+    ? global.KmzLog.getLogger("crosshair-icon")
+    : {
+        debug: function () {},
+        info: function () {},
+        warn: function () {},
+        error: function () {},
+      };
+
   var DEFAULT_STROKE_WIDTH = 8;
   var previewObjectUrl = null;
 
@@ -84,6 +93,11 @@
     }
     var opts = readOptions();
     syncStrokeWidthLabel();
+    log.debug(
+      "refreshPreview size=%s strokeWidth=%s",
+      opts.size,
+      opts.strokeWidth
+    );
     return global.PointIcons.rasterizeCrosshair(
       {
         strokeColor: opts.strokeColor,
@@ -110,6 +124,8 @@
 
   function saveToCustomIcons() {
     var opts = readOptions();
+    var fileName = generatedFileName(opts);
+    log.info("saveToCustomIcons file=%s", fileName);
     return global.DesktopBridge.ensureDesktopSession().then(function (session) {
       if (!session || !session.token) {
         setStatus("Save to custom icons requires the KMZ GIS Viewer desktop app.", true);
@@ -119,7 +135,6 @@
         if (!blob) {
           return;
         }
-        var fileName = generatedFileName(opts);
         return blob.arrayBuffer().then(function (buf) {
           return global
             .fetch("/__desktop/save-generated-crosshair", {
@@ -136,10 +151,12 @@
                 return {};
               }).then(function (payload) {
                 if (!response.ok) {
+                  log.warn("save failed: %s", (payload && payload.error) || response.status);
                   setStatus((payload && payload.error) || "Could not save icon.", true);
                   return;
                 }
                 var savedName = (payload && payload.name) || ("xhgen/" + fileName);
+                log.info("save ok name=%s", savedName);
                 setStatus(
                   "Saved " +
                     savedName +
@@ -194,6 +211,7 @@
       return;
     }
 
+    log.info("init crosshair icon tool level=%s", global.KmzLog ? global.KmzLog.getLevel() : "info");
     bindControls();
     refreshPreview();
   }

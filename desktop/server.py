@@ -17,7 +17,11 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Dict, List, Optional, Set, Tuple
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
+from desktop.geg_appendix_excel import list_appendix_screenshots_response
 from desktop.google_earth import launch_google_earth
+from desktop.log_config import get_logger
+
+log = get_logger(__name__)
 
 # Fixed loopback port so the WebView origin stays stable and recent files persist.
 PREFERRED_PORT = 47821
@@ -56,13 +60,18 @@ def invoke_scan_gps_window_callback() -> dict:
         Result dict from the callback, or an error when unavailable.
     """
     if _SCAN_GPS_WINDOW_CALLBACK is None:
+        log.warning("Parse GPS from Scan callback is not registered")
         return {"error": "Parse GPS from Scan is not available."}
+    log.info("Opening Parse GPS from Scan tool window")
     try:
         result = _SCAN_GPS_WINDOW_CALLBACK()
     except (OSError, RuntimeError, TypeError, ValueError) as err:
+        log.error("Parse GPS window callback failed: %s", err)
         return {"error": str(err)}
     if isinstance(result, dict):
+        log.debug("Parse GPS window callback result: %s", result)
         return result
+    log.warning("Parse GPS window callback returned non-dict")
     return {"error": "Parse GPS from Scan did not return a result."}
 
 
@@ -85,13 +94,18 @@ def invoke_crosshair_icon_window_callback() -> dict:
         Result dict from the callback, or an error when unavailable.
     """
     if _CROSSHAIR_ICON_WINDOW_CALLBACK is None:
+        log.warning("Crosshair icon callback is not registered")
         return {"error": "Crosshair icon generator is not available."}
+    log.info("Opening Crosshair icon generator tool window")
     try:
         result = _CROSSHAIR_ICON_WINDOW_CALLBACK()
     except (OSError, RuntimeError, TypeError, ValueError) as err:
+        log.error("Crosshair icon window callback failed: %s", err)
         return {"error": str(err)}
     if isinstance(result, dict):
+        log.debug("Crosshair icon window callback result: %s", result)
         return result
+    log.warning("Crosshair icon window callback returned non-dict")
     return {"error": "Crosshair icon generator did not return a result."}
 
 
@@ -117,13 +131,19 @@ def invoke_tool_window_callback(tool: str) -> dict:
         Result dict from the callback, or an error when unavailable.
     """
     if _TOOL_WINDOW_CALLBACK is None:
+        log.warning("Tool window callback is not registered")
         return {"error": "That tool window is not available."}
+    tool_id = str(tool or "").strip()
+    log.info("Opening tool window: %s", tool_id or "(empty)")
     try:
-        result = _TOOL_WINDOW_CALLBACK(str(tool or "").strip())
+        result = _TOOL_WINDOW_CALLBACK(tool_id)
     except (OSError, RuntimeError, TypeError, ValueError) as err:
+        log.error("Tool window callback failed for %s: %s", tool_id, err)
         return {"error": str(err)}
     if isinstance(result, dict):
+        log.debug("Tool window callback result for %s: %s", tool_id, result)
         return result
+    log.warning("Tool window callback returned non-dict for %s", tool_id)
     return {"error": "That tool window did not return a result."}
 
 
@@ -149,12 +169,17 @@ def invoke_sidebar_mode_window_callback(mode: str) -> dict:
         Result dict from the callback, or an error when unavailable.
     """
     if _SIDEBAR_MODE_WINDOW_CALLBACK is None:
+        log.warning("Sidebar mode callback is not registered")
         return {"error": "That sidebar window is not available."}
+    mode_id = str(mode or "").strip()
+    log.info("Opening sidebar mode window: %s", mode_id or "(empty)")
     try:
-        result = _SIDEBAR_MODE_WINDOW_CALLBACK(str(mode or "").strip())
+        result = _SIDEBAR_MODE_WINDOW_CALLBACK(mode_id)
     except (OSError, RuntimeError, TypeError, ValueError) as err:
+        log.error("Sidebar mode callback failed for %s: %s", mode_id, err)
         return {"error": str(err)}
     if isinstance(result, dict):
+        log.debug("Sidebar mode callback result for %s: %s", mode_id, result)
         return result
     return {"error": "That sidebar window did not return a result."}
 
@@ -353,9 +378,11 @@ def save_generated_crosshair_png(
         Catalog metadata for the saved icon, or None when the bytes are not a PNG.
     """
     if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        log.warning("Generated crosshair upload is not a PNG")
         return None
     safe = _safe_png_basename(preferred_file_name or "xh.png")
     if not safe:
+        log.warning("Generated crosshair file name rejected: %s", preferred_file_name)
         return None
     directory = os.path.join(viewer_root, "custom-icons", GENERATED_CROSSHAIR_SUBDIR)
     os.makedirs(directory, exist_ok=True)
@@ -364,6 +391,8 @@ def save_generated_crosshair_png(
         handle.write(data)
     catalog_name = f"{GENERATED_CROSSHAIR_SUBDIR}/{safe}"
     add_icon_to_shipped_manifest(viewer_root, catalog_name)
+    log.info("Saved generated crosshair icon %s (%s bytes)", catalog_name, len(data))
+    log.debug("Crosshair icon path: %s", dest)
     return {
         "name": catalog_name,
         "url": _shipped_icon_url(catalog_name),
@@ -679,7 +708,7 @@ def _handler_class(viewer_root: str) -> type:
             super().__init__(*args, directory=viewer_root, **kwargs)
 
         def log_message(self, format: str, *args) -> None:
-            return
+            log.debug("HTTP %s", format % args if args else format)
 
         def end_headers(self) -> None:
             """Disable caching so a browser reload picks up edited viewer files."""
@@ -701,6 +730,10 @@ def _handler_class(viewer_root: str) -> type:
         def do_GET(self) -> None:
             """Serve a registered KMZ or KML, or a static viewer file."""
             parsed = urlparse(self.path)
+            if parsed.path.startswith("/__desktop"):
+                log.info("GET %s", parsed.path)
+            else:
+                log.debug("GET %s", parsed.path)
             if parsed.path == "/__desktop/file":
                 self._serve_source(parsed.query)
                 return
@@ -751,6 +784,10 @@ def _handler_class(viewer_root: str) -> type:
         def do_POST(self) -> None:
             """Write a timestamped copy or an exported KMZ chosen in a save dialog."""
             parsed = urlparse(self.path)
+            if parsed.path.startswith("/__desktop"):
+                log.info("POST %s", parsed.path)
+            else:
+                log.debug("POST %s", parsed.path)
             if parsed.path == "/__desktop/save-copy":
                 self._save_copy()
                 return
@@ -784,7 +821,54 @@ def _handler_class(viewer_root: str) -> type:
             if parsed.path == "/__desktop/open-sidebar-mode-window":
                 self._open_sidebar_mode_window(parsed.query)
                 return
+            if parsed.path == "/__desktop/list-appendix-screenshots":
+                self._list_appendix_screenshots()
+                return
             self._send_json(404, {"error": "Not found."})
+
+        def _list_appendix_screenshots(self) -> None:
+            """Scan a folder for appendix PNG screenshots."""
+            if not token_ok(self.headers.get("X-Desktop-Token")):
+                self._send_json(403, {"error": "Desktop access was denied."})
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                length = 0
+            if length <= 0 or length > 65536:
+                self._send_json(400, {"error": "Invalid request body."})
+                return
+            try:
+                raw = self.rfile.read(length)
+                payload = json.loads(raw.decode("utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            if not isinstance(payload, dict):
+                self._send_json(400, {"error": "Invalid JSON body."})
+                return
+            directory = str(payload.get("directory") or payload.get("screenshotDirectory") or "")
+            template = str(payload.get("templatePath") or payload.get("template_path") or "")
+            limit_raw = payload.get("sheetPreviewLimit", payload.get("sheet_preview_limit", 10))
+            include_raw = payload.get("includeThumbnails", payload.get("include_thumbnails", True))
+            try:
+                sheet_limit = int(limit_raw)
+            except (TypeError, ValueError):
+                sheet_limit = 10
+            include_thumbs = include_raw is not False and str(include_raw).lower() not in (
+                "0",
+                "false",
+                "no",
+            )
+            viewer_root = self.directory or ""
+            result = list_appendix_screenshots_response(
+                normalize_path(directory) if directory else "",
+                normalize_path(template) if template else "",
+                viewer_root,
+                sheet_preview_limit=sheet_limit,
+                include_thumbnails=include_thumbs,
+            )
+            self._send_json(200, result)
 
         def _open_scan_gps_tool(self) -> None:
             """Open the Parse GPS from Scan tool in a new native window."""
@@ -1147,4 +1231,7 @@ def start_server(viewer_root: str) -> Tuple[ThreadingHTTPServer, int]:
         name="kmz-viewer-http",
     )
     thread.start()
-    return server, int(server.server_address[1])
+    bound_port = int(server.server_address[1])
+    log.info("Loopback viewer server listening on 127.0.0.1:%s", bound_port)
+    log.debug("Viewer root: %s", viewer_root)
+    return server, bound_port

@@ -120,8 +120,14 @@ def read_json_metadata(png_bytes: bytes) -> dict[str, Any] | None:
                         text_start = len(data)
                     else:
                         text_start = trans_end + 1
-                    payload = data[text_start:].decode("utf-8")
-                    return json.loads(payload)
+                    payload = data[text_start:].decode("utf-8").strip()
+                    if not payload:
+                        return None
+                    try:
+                        parsed = json.loads(payload)
+                    except json.JSONDecodeError:
+                        return None
+                    return parsed if isinstance(parsed, dict) else None
         pos += 12 + length
         if chunk_type == b"IEND":
             break

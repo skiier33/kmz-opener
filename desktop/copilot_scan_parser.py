@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from PIL import Image
 
+from desktop.log_config import get_logger
 from desktop.scan_coordinate_extract import (
     PageExtract,
     _embedded_page_image,
@@ -18,6 +19,8 @@ from desktop.scan_coordinate_extract import (
     parse_decimal_coordinate,
     validate_scan_pdf_path,
 )
+
+log = get_logger(__name__)
 
 DEFAULT_API_VERSION = "2024-08-01-preview"
 COPILOT_MAX_PREVIEW_WIDTH = 1400
@@ -216,11 +219,14 @@ def parse_scan_coordinates_pdf_copilot(pdf_path: str) -> Dict[str, Any]:
     """
     import pymupdf
 
+    log.info("parse_scan_coordinates_pdf_copilot start path=%s", pdf_path)
     err = validate_scan_pdf_path(pdf_path)
     if err:
+        log.warning("Copilot parse validation failed: %s", err)
         return {"error": err}
     config = copilot_config()
     if not config:
+        log.warning("Copilot parse requested but MS_COPILOT_* / AZURE_OPENAI_* not configured")
         return {
             "error": (
                 "Microsoft Copilot is not configured. Add MS_COPILOT_ENDPOINT, "
@@ -244,11 +250,13 @@ def parse_scan_coordinates_pdf_copilot(pdf_path: str) -> Dict[str, Any]:
             warnings: List[str] = []
             img = _embedded_page_image(doc, index)
             vision_b64 = _image_to_jpeg_b64(img, COPILOT_MAX_PREVIEW_WIDTH)
+            log.debug("Copilot vision request page=%s", index + 1)
             try:
                 boring_raw, lat_raw, lon_raw, copilot_warnings = _copilot_extract_page(
                     vision_b64, config
                 )
             except OSError as copilot_err:
+                log.error("Copilot vision failed on page %s: %s", index + 1, copilot_err)
                 return {"error": str(copilot_err)}
             warnings.extend(copilot_warnings)
 
@@ -275,6 +283,7 @@ def parse_scan_coordinates_pdf_copilot(pdf_path: str) -> Dict[str, Any]:
 
     from desktop.scan_coordinate_extract import _page_to_dict
 
+    log.info("parse_scan_coordinates_pdf_copilot complete pages=%s", len(pages))
     return {
         "pdfPath": full,
         "pageCount": len(pages),

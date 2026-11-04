@@ -9832,7 +9832,17 @@
     setCsvCoordsDialogStatus("", false);
   }
 
+  var toolHostLog = window.KmzLog
+    ? window.KmzLog.getLogger("tool-host")
+    : {
+        debug: function () {},
+        info: function () {},
+        warn: function () {},
+        error: function () {},
+      };
+
   function openNamedToolWindow(tool) {
+    toolHostLog.info("openNamedToolWindow tool=%s", tool);
     if (tool === "point-chain") {
       refreshPointChainPanel();
     }
@@ -9840,6 +9850,7 @@
       refreshExternalEditorUi();
     }
     function openBrowserWindow() {
+      toolHostLog.debug("openNamedToolWindow browser fallback tool=%s", tool);
       window.open(
         "tool-window.html?tool=" + encodeURIComponent(tool),
         "kmz-tool-" + tool,
@@ -9872,6 +9883,7 @@
   window.openCsvCoordsDialog = openCsvCoordsDialog;
 
   function openParseGpsFromScanWindow() {
+    toolHostLog.info("openParseGpsFromScanWindow");
     function openTool() {
       if (!window.DesktopBridge || typeof window.DesktopBridge.openScanGpsWindow !== "function") {
         setMessage("Parse GPS from Scan could not start (desktop bridge missing).");
@@ -9899,6 +9911,7 @@
   window.openParseGpsFromScanWindow = openParseGpsFromScanWindow;
 
   function openCrosshairIconGeneratorWindow() {
+    toolHostLog.info("openCrosshairIconGeneratorWindow");
     if (window.DesktopBridge && typeof window.DesktopBridge.openCrosshairIconWindow === "function") {
       window.DesktopBridge.openCrosshairIconWindow()
         .then(function (result) {
@@ -11424,6 +11437,12 @@
     dispatch: function (action, payload) {
       payload = payload || {};
       var tool = payload.tool || "";
+      toolHostLog.info("dispatch action=%s tool=%s", action, tool || "(none)");
+      toolHostLog.debug(
+        "dispatch fields=%s id=%s",
+        payload.fields ? payload.fields.length : 0,
+        payload.id || ""
+      );
       if (action === "snapshot") {
         return toolHostSnapshot(tool);
       }
@@ -11461,6 +11480,7 @@
         applyPointChainOrderHeight(Number(payload.px), true);
         return toolHostSnapshot("point-chain");
       }
+      toolHostLog.warn("unknown tool action: %s", action);
       return { error: "Unknown tool action." };
     },
   };

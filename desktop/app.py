@@ -57,8 +57,9 @@ from desktop.external_edit import (  # noqa: E402
 from desktop.geg_appendix_excel import (  # noqa: E402
     build_appendix_from_screenshots,
     default_template_path,
-    list_appendix_preview,
+    list_appendix_screenshots_response,
     open_template_workbook,
+    resolve_appendix_template_path,
     validate_screenshot_directory,
     validate_template_path,
 )
@@ -73,6 +74,7 @@ from desktop.scan_coordinate_extract import (  # noqa: E402
     validate_scan_pdf_path,
     write_scan_coordinates_export,
 )
+from desktop.log_config import configure_logging, get_logger  # noqa: E402
 from desktop.server import (  # noqa: E402
     DESKTOP_TOKEN,
     EXPORT_PATHS,
@@ -92,6 +94,7 @@ from desktop.server import (  # noqa: E402
 
 _EXTERNAL_EDIT = ExternalEditManager()
 _VIEWER_BASE_URL: Optional[str] = None
+_log = get_logger(__name__)
 
 
 def _attach_log_if_no_console() -> None:
@@ -198,6 +201,7 @@ def _ensure_webview() -> None:
 
 if __name__ == "__main__":
     _attach_log_if_no_console()
+    configure_logging()
     _ensure_webview()
 
 import webview  # noqa: E402
@@ -653,7 +657,9 @@ class DesktopApi:
         Returns:
             Dict with ``parsers`` list (id, label, available).
         """
-        return {"parsers": list_scan_parsers()}
+        parsers = list_scan_parsers()
+        _log.debug("scan_parser_options: %s", parsers)
+        return {"parsers": parsers}
 
     def parse_scan_coordinates_pdf(self, pdf_path: str = "", parser: str = "ocr") -> dict:
         """
@@ -668,7 +674,16 @@ class DesktopApi:
         """
         path = normalize_path(pdf_path) if pdf_path else ""
         mode = parser.strip().lower() if isinstance(parser, str) else "ocr"
-        return parse_scan_coordinates_pdf(path, parser=mode)
+        _log.info("parse_scan_coordinates_pdf parser=%s path=%s", mode, path or "(empty)")
+        result = parse_scan_coordinates_pdf(path, parser=mode)
+        if isinstance(result, dict) and result.get("error"):
+            _log.warning("parse_scan_coordinates_pdf failed: %s", result.get("error"))
+        elif isinstance(result, dict):
+            _log.info(
+                "parse_scan_coordinates_pdf ok pages=%s",
+                result.get("pageCount", "?"),
+            )
+        return result
 
     def write_scan_coordinates_export(
         self, export_path: str, rows: object
@@ -688,9 +703,15 @@ class DesktopApi:
         if not isinstance(rows, list):
             return {"error": "No rows to export."}
         full = normalize_path(export_path)
+        _log.info("write_scan_coordinates_export path=%s rows=%s", full, len(rows))
         result = write_scan_coordinates_export(full, rows)
         if "error" in result:
+            _log.warning("write_scan_coordinates_export failed: %s", result.get("error"))
             return result
+        _log.info(
+            "write_scan_coordinates_export ok lineCount=%s",
+            result.get("lineCount", "?"),
+        )
         with STATE_LOCK:
             EXPORT_PATHS.add(full)
         return result
@@ -900,6 +921,8 @@ class DesktopApi:
         self,
         screenshot_directory: str = "",
         template_path: str = "",
+        sheet_preview_limit: int = 10,
+        include_thumbnails: bool = True,
     ) -> dict:
         """
         List PNG screenshots available for appendix PDF compilation.
@@ -907,21 +930,21 @@ class DesktopApi:
         Args:
             screenshot_directory: Folder to scan; must exist when non-empty.
             template_path: Optional .xlsm template; defaults to bundled GEG file.
+            sheet_preview_limit: Maximum sheet cards returned to the UI.
+            include_thumbnails: When False, skip JPEG thumbnails for a faster scan.
 
         Returns:
             Preview dict or ``error`` when the folder is invalid.
         """
         directory = normalize_path(screenshot_directory) if screenshot_directory else ""
-        err = validate_screenshot_directory(directory)
-        if err:
-            return {"error": err}
-        template = normalize_path(template_path) if template_path else default_template_path(app_root())
-        template_err = validate_template_path(template)
-        if template_err:
-            return {"error": template_err}
-        preview = list_appendix_preview(directory)
-        preview["templatePath"] = template
-        return preview
+        template = normalize_path(template_path) if template_path else ""
+        return list_appendix_screenshots_response(
+            directory,
+            template,
+            app_root(),
+            sheet_preview_limit=sheet_preview_limit,
+            include_thumbnails=include_thumbnails,
+        )
 
     def preview_icon_to_image(
         self,
@@ -998,8 +1021,10 @@ class DesktopApi:
         err = validate_screenshot_directory(directory)
         if err:
             return {"error": err}
-        template = normalize_path(template_path) if template_path else default_template_path(app_root())
-        template_err = validate_template_path(template)
+        template, template_err, template_note = resolve_appendix_template_path(
+            normalize_path(template_path) if template_path else "",
+            app_root(),
+        )
         if template_err:
             return {"error": template_err}
 
@@ -1010,10 +1035,13 @@ class DesktopApi:
 
         def _build() -> dict:
             try:
-                return build_appendix_from_screenshots(
+                result = build_appendix_from_screenshots(
                     directory,
                     template_path=template,
                 )
+                if template_note and isinstance(result, dict) and "error" not in result:
+                    result["templateNote"] = template_note
+                return result
             except ValueError as val_err:
                 return {"error": str(val_err)}
             except OSError as os_err:
@@ -1048,6 +1076,7 @@ class DesktopApi:
             return {"error": "Desktop window is not available."}
         window = windows[0]
         url = f"{_VIEWER_BASE_URL}scan-coordinates.html"
+        _log.info("open_scan_gps_window url=%s", url)
 
         def _open() -> dict:
             try:
@@ -1082,6 +1111,7 @@ class DesktopApi:
             return {"error": "Desktop window is not available."}
         window = windows[0]
         url = f"{_VIEWER_BASE_URL}crosshair-icon.html"
+        _log.info("open_crosshair_icon_window url=%s", url)
 
         def _open() -> dict:
             try:
@@ -1126,6 +1156,7 @@ class DesktopApi:
         window = windows[0]
         title, width, height = spec
         url = f"{_VIEWER_BASE_URL}tool-window.html?tool={tool}"
+        _log.info("open_tool_window tool=%s url=%s", tool, url)
 
         def _open() -> dict:
             try:
@@ -1171,6 +1202,7 @@ class DesktopApi:
         window = windows[0]
         title, width, height = spec
         url = f"{_VIEWER_BASE_URL}?popout={key}"
+        _log.info("open_sidebar_mode_window mode=%s url=%s", key, url)
 
         def _open() -> dict:
             try:
@@ -1203,9 +1235,13 @@ class DesktopApi:
             Result object from the viewer, or an error dict.
         """
         if not isinstance(action, str) or re.fullmatch(r"[a-zA-Z0-9_-]+", action) is None:
+            _log.warning("tool_dispatch rejected invalid action: %r", action)
             return {"error": "Invalid tool action."}
         if not isinstance(payload, dict):
             payload = {}
+        tool_id = str(payload.get("tool") or "")
+        _log.info("tool_dispatch action=%s tool=%s", action, tool_id or "(none)")
+        _log.debug("tool_dispatch payload keys=%s", sorted(payload.keys()))
         viewer = None
         for candidate in webview.windows:
             title = str(getattr(candidate, "title", "") or "")
@@ -1213,6 +1249,7 @@ class DesktopApi:
                 viewer = candidate
                 break
         if viewer is None:
+            _log.warning("tool_dispatch: main viewer window not found")
             return {"error": "The main viewer window is not open."}
         script = (
             "(function(){try{return window.KmzToolHost&&window.KmzToolHost.dispatch("
@@ -1227,16 +1264,27 @@ class DesktopApi:
         try:
             result = evaluate(script)
         except (OSError, RuntimeError, TypeError, ValueError) as err:
+            _log.error("tool_dispatch evaluate_js failed: %s", err)
             return {"error": str(err)}
         if isinstance(result, str):
             try:
                 parsed = json.loads(result)
             except json.JSONDecodeError:
+                _log.debug("tool_dispatch returned raw HTML string")
                 return {"html": result}
             if isinstance(parsed, dict):
+                if parsed.get("error"):
+                    _log.warning("tool_dispatch viewer error: %s", parsed.get("error"))
+                else:
+                    _log.debug("tool_dispatch ok (json string)")
                 return parsed
         if isinstance(result, dict):
+            if result.get("error"):
+                _log.warning("tool_dispatch viewer error: %s", result.get("error"))
+            else:
+                _log.debug("tool_dispatch ok")
             return result
+        _log.warning("tool_dispatch unexpected result type: %s", type(result).__name__)
         return {"error": "The tool did not return a result."}
 
     def duplicate_window(
@@ -1325,6 +1373,8 @@ def _notify_external_kml_saved() -> None:
 def main() -> None:
     """Open the KMZ GIS Viewer in a native window."""
     global _VIEWER_BASE_URL
+    configure_logging()
+    _log.info("Starting KMZ GIS Viewer desktop app")
     server: Optional[ThreadingHTTPServer] = None
     try:
         ensure_user_custom_icons_dir()

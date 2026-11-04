@@ -903,27 +903,27 @@
               <label class="screenshot-field screenshot-field-wide">
                 <span class="screenshot-label">Box size units</span>
                 <select id="screenshot-dimension-unit" aria-label="Screenshot box size units">
-                  <option value="px">Pixels (px)</option>
-                  <option value="in" selected>Inches (in) at 96 DPI</option>
+                  <option value="px" selected>Pixels (px)</option>
+                  <option value="in">Inches (in) at 96 DPI</option>
                 </select>
               </label>
               <label class="screenshot-field">
-                <span id="screenshot-width-label" class="screenshot-label">Width (in)</span>
+                <span id="screenshot-width-label" class="screenshot-label">Width (px)</span>
                 <input
                   id="screenshot-width"
                   type="text"
-                  value="20"
+                  value="954"
                   spellcheck="false"
                   autocomplete="off"
                   title="Optional px or in prefix (e.g. px800, in10). Without a prefix, values use the box size unit."
                 />
               </label>
               <label class="screenshot-field">
-                <span id="screenshot-height-label" class="screenshot-label">Height (in)</span>
+                <span id="screenshot-height-label" class="screenshot-label">Height (px)</span>
                 <input
                   id="screenshot-height"
                   type="text"
-                  value="11.25"
+                  value="615"
                   spellcheck="false"
                   autocomplete="off"
                   title="Optional px or in prefix (e.g. px800, in10). Without a prefix, values use the box size unit."
@@ -974,6 +974,213 @@
                 <input id="screenshot-hi-res-tiles" type="checkbox" checked />
                 Sharper basemap (reload tiles at output size)
               </label>
+              <label class="screenshot-toggle screenshot-field-wide">
+                <input id="screenshot-show-scale" type="checkbox" />
+                Show scale legend on captures
+              </label>
+              <label class="screenshot-toggle screenshot-field-wide">
+                <input id="screenshot-show-north" type="checkbox" />
+                Show north arrow on captures
+              </label>
+              <div
+                id="screenshot-chrome-panel"
+                class="borehole-images-chrome-panel hidden"
+                aria-hidden="true"
+              >
+                <p class="muted borehole-images-chrome-hint">Drawn on saved PNGs.</p>
+                <div class="borehole-images-chrome-columns">
+                  <div class="borehole-images-chrome-block">
+                    <p class="borehole-images-chrome-block-title">Scale</p>
+                    <div class="borehole-images-chrome-style-row">
+                      <label class="borehole-images-field">
+                        <span class="borehole-images-label">Style</span>
+                        <select id="screenshot-scale-style" aria-label="Scale legend style">
+                          <option value="bar-dual">Bar — ft / m</option>
+                          <option value="bar">Bar — ft</option>
+                          <option value="engineering">Engineering label</option>
+                          <option value="ratio">Ratio only (1:2400)</option>
+                        </select>
+                      </label>
+                      <div
+                        class="borehole-images-legend-preview-wrap"
+                        title="Preview of scale legend on captures"
+                      >
+                        <canvas
+                          id="screenshot-scale-style-preview"
+                          class="borehole-images-legend-preview"
+                          aria-hidden="true"
+                        ></canvas>
+                      </div>
+                    </div>
+                    <div class="borehole-images-chrome-meta-row">
+                      <label class="borehole-images-field">
+                        <span class="borehole-images-label">Corner</span>
+                        <select id="screenshot-scale-position" aria-label="Scale legend corner">
+                          <option value="bottom-right" selected>Bottom right</option>
+                          <option value="bottom-left">Bottom left</option>
+                          <option value="bottom-center">Bottom center</option>
+                          <option value="top-right">Top right</option>
+                          <option value="top-left">Top left</option>
+                          <option value="top-center">Top center</option>
+                        </select>
+                      </label>
+                      <label class="borehole-images-field borehole-images-field-color">
+                        <span class="borehole-images-label">Color</span>
+                        <input
+                          id="screenshot-scale-color"
+                          type="color"
+                          value="#e8eaed"
+                          aria-label="Scale legend color"
+                        />
+                      </label>
+                    </div>
+                    <div class="borehole-images-chrome-layout-row">
+                      <label class="borehole-images-field">
+                        <span class="borehole-images-label">Inset from corner (px)</span>
+                        <input
+                          id="screenshot-scale-inset"
+                          type="number"
+                          min="0"
+                          max="512"
+                          step="1"
+                          value="14"
+                          aria-label="Scale legend inset from corner in pixels"
+                        />
+                      </label>
+                    </div>
+                    <div class="borehole-images-chrome-size-row">
+                      <label class="borehole-images-field">
+                        <span class="borehole-images-label">Width (px)</span>
+                        <input
+                          id="screenshot-scale-width"
+                          type="number"
+                          min="1"
+                          max="4096"
+                          step="1"
+                          placeholder="Auto"
+                          aria-label="Scale legend width in pixels"
+                        />
+                      </label>
+                      <label class="borehole-images-field">
+                        <span class="borehole-images-label">Height (px)</span>
+                        <input
+                          id="screenshot-scale-height"
+                          type="number"
+                          min="1"
+                          max="4096"
+                          step="1"
+                          placeholder="Auto"
+                          aria-label="Scale legend height in pixels"
+                        />
+                      </label>
+                    </div>
+                    <label class="borehole-images-toggle borehole-images-chrome-aspect-toggle">
+                      <input id="screenshot-scale-preserve-aspect" type="checkbox" checked />
+                      Preserve aspect ratio
+                    </label>
+                  </div>
+                  <div class="borehole-images-chrome-block">
+                    <p class="borehole-images-chrome-block-title">North</p>
+                    <div class="borehole-images-chrome-style-row">
+                      <label class="borehole-images-field">
+                        <span class="borehole-images-label">Style</span>
+                        <select id="screenshot-north-style" aria-label="North arrow style">
+                          <option value="classic" selected>Classic arrow</option>
+                          <option value="simple">Filled triangle</option>
+                          <option value="compass">Compass ring</option>
+                          <option value="minimal">Minimal line</option>
+                        </select>
+                      </label>
+                      <div
+                        class="borehole-images-legend-preview-wrap"
+                        title="Preview of north arrow on captures"
+                      >
+                        <canvas
+                          id="screenshot-north-style-preview"
+                          class="borehole-images-legend-preview"
+                          aria-hidden="true"
+                        ></canvas>
+                      </div>
+                    </div>
+                    <div class="borehole-images-chrome-meta-row">
+                      <label class="borehole-images-field">
+                        <span class="borehole-images-label">Corner</span>
+                        <select id="screenshot-north-position" aria-label="North arrow corner">
+                          <option value="bottom-right" selected>Bottom right</option>
+                          <option value="bottom-left">Bottom left</option>
+                          <option value="bottom-center">Bottom center</option>
+                          <option value="top-right">Top right</option>
+                          <option value="top-left">Top left</option>
+                          <option value="top-center">Top center</option>
+                        </select>
+                      </label>
+                      <label class="borehole-images-field borehole-images-field-color">
+                        <span class="borehole-images-label">Color</span>
+                        <input
+                          id="screenshot-north-color"
+                          type="color"
+                          value="#e8710a"
+                          aria-label="North arrow color"
+                        />
+                      </label>
+                    </div>
+                    <div class="borehole-images-chrome-layout-row">
+                      <label class="borehole-images-field">
+                        <span class="borehole-images-label">Inset from corner (px)</span>
+                        <input
+                          id="screenshot-north-inset"
+                          type="number"
+                          min="0"
+                          max="512"
+                          step="1"
+                          value="14"
+                          aria-label="North arrow inset from corner in pixels"
+                        />
+                      </label>
+                    </div>
+                    <div class="borehole-images-chrome-size-row">
+                      <label class="borehole-images-field">
+                        <span class="borehole-images-label">Width (px)</span>
+                        <input
+                          id="screenshot-north-width"
+                          type="number"
+                          min="1"
+                          max="4096"
+                          step="1"
+                          placeholder="Auto"
+                          aria-label="North arrow width in pixels"
+                        />
+                      </label>
+                      <label class="borehole-images-field">
+                        <span class="borehole-images-label">Height (px)</span>
+                        <input
+                          id="screenshot-north-height"
+                          type="number"
+                          min="1"
+                          max="4096"
+                          step="1"
+                          placeholder="Auto"
+                          aria-label="North arrow height in pixels"
+                        />
+                      </label>
+                    </div>
+                    <label class="borehole-images-toggle borehole-images-chrome-aspect-toggle">
+                      <input id="screenshot-north-preserve-aspect" type="checkbox" checked />
+                      Preserve aspect ratio
+                    </label>
+                  </div>
+                </div>
+                <div class="borehole-images-chrome-options">
+                  <label class="borehole-images-toggle">
+                    <input id="screenshot-show-scale-ratio" type="checkbox" checked />
+                    Show map scale ratio on bar legends
+                  </label>
+                  <label class="borehole-images-toggle">
+                    <input id="screenshot-chrome-plate" type="checkbox" checked />
+                    Dark plate behind legends
+                  </label>
+                </div>
+              </div>
               <fieldset class="screenshot-frame-style">
                 <legend class="screenshot-frame-style-legend">Frame line style</legend>
                 <label class="screenshot-frame-style-row screenshot-frame-style-color">
@@ -1139,7 +1346,17 @@
                 </button>
               </label>
               <div class="appx-pdf-preview">
-                <span id="appx-pdf-count" class="appx-pdf-count">0 PNG files</span>
+                <div class="appx-pdf-preview-toolbar">
+                  <span id="appx-pdf-count" class="appx-pdf-count">0 PNG files</span>
+                  <button
+                    id="appx-pdf-scan"
+                    class="btn btn-subtle appx-pdf-scan-btn"
+                    type="button"
+                    title="Scan the screenshot folder for PNG files"
+                  >
+                    Scan folder
+                  </button>
+                </div>
                 <div
                   id="appx-pdf-sheet-previews"
                   class="appx-pdf-sheet-previews"
@@ -2002,6 +2219,7 @@
     <script src="js/bh-alignments.js"></script>
     <script src="js/floating-panel.js"></script>
     <script src="js/borehole-images.js"></script>
+    <script src="js/kmz-log.js"></script>
     <script src="js/desktop-api.js"></script>
     <script src="js/sidebar-modes.js"></script>
     <script src="js/appx-pdf.js"></script>

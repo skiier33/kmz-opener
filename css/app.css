@@ -1073,9 +1073,23 @@ body.is-sidebar-mode-popout[data-sidebar-popout-mode="map"] .sidebar-mode-tabs {
   gap: 6px;
 }
 
+.appx-pdf-preview-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .appx-pdf-count {
   font-size: 0.8125rem;
   font-weight: 600;
+}
+
+.appx-pdf-scan-btn {
+  flex-shrink: 0;
+  font-size: 0.8125rem;
+  padding: 4px 10px;
 }
 
 .appx-pdf-sheet-previews {
@@ -2662,7 +2676,8 @@ body.floating-panel-resizing {
 .screenshot-field-wide,
 .screenshot-toggle,
 .screenshot-frame-style,
-.screenshot-save-row {
+.screenshot-save-row,
+.screenshot-fields > .borehole-images-chrome-panel {
   grid-column: 1 / -1;
 }
 

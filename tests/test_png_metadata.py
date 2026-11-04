@@ -118,3 +118,14 @@ def test_embed_and_read_round_trip() -> None:
     assert parsed is not None
     assert parsed["placemark"]["name"] == "B6A"
     assert parsed["map"]["scaleDenominator"] == 2400
+
+
+def test_read_json_metadata_ignores_empty_or_invalid_payload() -> None:
+    from desktop.png_metadata import _find_iend_start, _make_itxt_chunk
+
+    iend = _find_iend_start(_MINIMAL_PNG)
+    assert iend >= 0
+    for bad_text in ("", "   ", "{not json"):
+        chunk = _make_itxt_chunk(JSON_KEY, bad_text)
+        png = _MINIMAL_PNG[:iend] + chunk + _MINIMAL_PNG[iend:]
+        assert read_json_metadata(png) is None

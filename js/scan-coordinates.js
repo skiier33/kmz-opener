@@ -1,6 +1,15 @@
 (function (global) {
   "use strict";
 
+  var log = global.KmzLog
+    ? global.KmzLog.getLogger("scan-coordinates")
+    : {
+        debug: function () {},
+        info: function () {},
+        warn: function () {},
+        error: function () {},
+      };
+
   var pdfInput = null;
   var parseBtn = null;
   var exportBtn = null;
@@ -386,6 +395,7 @@
           return null;
         }
         var parser = selectedParser();
+        log.info("parse pdf path=%s parser=%s", pdfPath, parser);
         try {
           global.localStorage.setItem(PARSER_STORAGE_KEY, parser);
         } catch (storeErr) {
@@ -404,6 +414,7 @@
       .then(function (result) {
         if (!result || result.error) {
           var err = (result && result.error) || "Parse failed.";
+          log.warn("parse failed: %s", err);
           setStatus(err, true);
           if (setMessageFn) {
             setMessageFn(err);
@@ -411,6 +422,7 @@
           return;
         }
         renderPages(result);
+        log.info("parse ok pages=%s parser=%s", result.pageCount || 0, result.parser || parser);
         var ok = "Parsed " + (result.pageCount || 0) + " page(s)";
         if (result.parser === "copilot") {
           ok += " with Microsoft Copilot.";
@@ -463,8 +475,10 @@
       fileName +
       "?\n\nYou can still edit values in the list above before confirming.";
     if (!global.confirm(confirmMsg)) {
+      log.debug("export cancelled by user");
       return;
     }
+    log.info("export path=%s rows=%s", exportPath, rows.length);
     var payload = rows.map(function (row) {
       return {
         page: row.page,
@@ -483,9 +497,11 @@
           .then(function (result) {
             if (!result || result.error) {
               var err = (result && result.error) || "Export failed.";
+              log.warn("export failed: %s", err);
               setStatus(err, true);
               return;
             }
+            log.info("export ok lineCount=%s path=%s", result.lineCount || 0, result.path || exportPath);
             var ok = "Saved " + (result.lineCount || 0) + " row(s) to " + (result.path || exportPath);
             setStatus(ok, false);
             if (setMessageFn) {
@@ -598,6 +614,7 @@
     if (!global.document.getElementById("scan-coords-pdf")) {
       return;
     }
+    log.info("init scan-coordinates level=%s", global.KmzLog ? global.KmzLog.getLevel() : "info");
     init({});
   }
 
