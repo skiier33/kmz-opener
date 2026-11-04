@@ -175,30 +175,32 @@
               >
                 Parse GPS from Scan
               </button>
-              <div class="menubar-sep" role="separator"></div>
               <button
                 type="button"
-                class="menubar-menu-item menubar-menu-item-check"
-                id="menubar-tools-point-chain"
-                role="menuitemcheckbox"
-                data-section-slug="point-chain"
-                aria-checked="true"
-                title="Show or hide the Point chain section in the sidebar"
+                class="menubar-menu-item"
+                id="menubar-tools-crosshair-icon"
+                role="menuitem"
+                title="Generate a custom 128px crosshair PNG for custom-icons"
               >
-                <span class="menubar-checkmark" aria-hidden="true">✓</span>
-                <span class="menubar-menu-item-label">Point chain</span>
+                Crosshair icon generator…
               </button>
               <button
                 type="button"
-                class="menubar-menu-item menubar-menu-item-check"
-                id="menubar-tools-kml-editor"
-                role="menuitemcheckbox"
-                data-section-slug="kml-editor"
-                aria-checked="true"
-                title="Show or hide the KML editor section in the sidebar"
+                class="menubar-menu-item"
+                id="menubar-tools-point-chain"
+                role="menuitem"
+                title="Open the point chain tool in its own window"
               >
-                <span class="menubar-checkmark" aria-hidden="true">✓</span>
-                <span class="menubar-menu-item-label">KML editor</span>
+                Point chain…
+              </button>
+              <button
+                type="button"
+                class="menubar-menu-item"
+                id="menubar-tools-kml-editor"
+                role="menuitem"
+                title="Open the KML editor in its own window"
+              >
+                KML editor…
               </button>
             </div>
           </div>
@@ -524,53 +526,6 @@
           <section class="sidebar-section sidebar-point-icons" id="point-icons-section" hidden>
             <h2>Point icons</h2>
             <div id="file-point-icons" class="file-point-icons" aria-label="Point icon settings"></div>
-          </section>
-
-          <section class="sidebar-section sidebar-point-chain" id="point-chain-section" hidden>
-            <h2>Point chain</h2>
-            <div id="point-chain-panel" class="point-chain-panel" aria-label="Nearest-neighbor point chain"></div>
-          </section>
-
-          <section class="sidebar-section sidebar-kml-editor hidden" id="external-edit-section">
-            <h2>KML editor</h2>
-            <div class="external-edit">
-              <p class="muted external-edit-hint">
-                Edit the KML in Sublime Text or another editor. The map reloads when you save.
-              </p>
-              <label class="external-edit-field hidden" id="external-edit-source-wrap">
-                <span class="external-edit-label">File to edit</span>
-                <select
-                  id="external-edit-source"
-                  aria-label="Loaded KMZ or KML to edit externally"
-                  disabled
-                ></select>
-              </label>
-              <label class="external-edit-field">
-                <span class="external-edit-label">Editor command</span>
-                <div class="external-edit-row">
-                  <input
-                    id="external-editor-command"
-                    type="text"
-                    placeholder="Sublime Text (auto) if installed"
-                    spellcheck="false"
-                    autocomplete="off"
-                    title="Executable or full command. Optional placeholders: {path}, {line}, {column}, {lineEnd}, {columnEnd}"
-                  />
-                  <button id="external-editor-browse" class="btn" type="button" title="Choose editor">
-                    Browse…
-                  </button>
-                </div>
-              </label>
-              <button
-                type="button"
-                class="btn external-edit-open"
-                id="file-edit-kml-external"
-                disabled
-                title="Open this file's KML in your external editor"
-              >
-                Edit KML externally…
-              </button>
-            </div>
           </section>
 
           <section class="sidebar-section sidebar-borehole-images">
@@ -1265,165 +1220,6 @@
             </div>
           </div>
           <div
-            id="csv-coords-dialog"
-            class="csv-coords-dialog hidden"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="csv-coords-dialog-title"
-            aria-hidden="true"
-          >
-            <div class="csv-coords-panel">
-              <header class="csv-coords-header">
-                <div>
-                  <h2 id="csv-coords-dialog-title">CSV Coordinates to KMZ File</h2>
-                  <p class="muted csv-coords-dialog-subtitle">
-                    Update matching point placemarks in a KMZ or KML from a spreadsheet export.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  class="btn-dismiss"
-                  id="csv-coords-dialog-close"
-                  aria-label="Close CSV Coordinates to KMZ File"
-                >
-                  ×
-                </button>
-              </header>
-              <div class="csv-coords" aria-label="Update coordinates from CSV">
-                <p class="muted csv-coords-hint">
-                  Set a CSV with borehole id, latitude, and longitude columns (any common spelling, such as
-                  <strong>BH_ID</strong> / <strong>Borehole</strong> / <strong>boring_id</strong>,
-                  <strong>LAT</strong> / <strong>Latitude</strong>, and
-                  <strong>LONG</strong> / <strong>Longitude</strong>), and the KMZ or KML to update. Each point placemark must have
-                  <strong>&lt;Point&gt;&lt;coordinates&gt;</strong>. Match CSV rows by ExtendedData
-                  <strong>BH_ID</strong> or by <strong>&lt;name&gt;</strong> (e.g. B6A). Preview
-                  changes before applying them to the open file. <strong>BH_ID</strong> matching
-                  tolerates common spelling differences (e.g. B6A vs B-6A, B06A, or BH-6A).
-                </p>
-                <label class="csv-coords-field">
-                  <span class="csv-coords-label">CSV file</span>
-                  <div class="csv-coords-path-row">
-                    <input
-                      id="csv-coords-csv-path"
-                      type="text"
-                      spellcheck="false"
-                      autocomplete="off"
-                      placeholder="Path to coordinate CSV…"
-                    />
-                    <button
-                      type="button"
-                      class="btn btn-subtle"
-                      id="csv-coords-browse-csv"
-                      title="Choose CSV file"
-                    >
-                      Browse…
-                    </button>
-                  </div>
-                  <p
-                    id="csv-coords-csv-selected"
-                    class="csv-coords-selected-path muted"
-                    hidden
-                    aria-live="polite"
-                  ></p>
-                </label>
-                <label class="csv-coords-field">
-                  <span class="csv-coords-label">KMZ or KML file</span>
-                  <div class="csv-coords-path-row">
-                    <input
-                      id="csv-coords-kmz-path"
-                      type="text"
-                      spellcheck="false"
-                      autocomplete="off"
-                      placeholder="Path to KMZ or KML…"
-                    />
-                    <button
-                      type="button"
-                      class="btn btn-subtle"
-                      id="csv-coords-browse-kmz"
-                      title="Choose KMZ or KML file"
-                    >
-                      Browse…
-                    </button>
-                  </div>
-                  <p
-                    id="csv-coords-kmz-selected"
-                    class="csv-coords-selected-path muted"
-                    hidden
-                    aria-live="polite"
-                  ></p>
-                </label>
-                <p id="csv-coords-status" class="csv-coords-status muted" aria-live="polite"></p>
-                <section
-                  id="csv-coords-preview-section"
-                  class="csv-coords-preview-section hidden"
-                  aria-label="Coordinate change preview"
-                  hidden
-                >
-                  <p id="csv-coords-preview-summary" class="csv-coords-preview-summary muted"></p>
-                  <p
-                    id="csv-coords-preview-warnings"
-                    class="csv-coords-preview-warnings muted hidden"
-                    hidden
-                  ></p>
-                  <div class="csv-coords-diff-wrap">
-                    <table class="csv-coords-diff-table">
-                      <thead>
-                        <tr>
-                          <th scope="col">BH_ID</th>
-                          <th scope="col">Latitude</th>
-                          <th scope="col">Longitude</th>
-                        </tr>
-                      </thead>
-                      <tbody id="csv-coords-diff-body"></tbody>
-                    </table>
-                  </div>
-                </section>
-                <input
-                  id="csv-coords-input"
-                  type="file"
-                  accept=".csv,text/csv"
-                  hidden
-                  tabindex="-1"
-                  aria-hidden="true"
-                />
-                <input
-                  id="csv-coords-kmz-input"
-                  type="file"
-                  accept=".kmz,.kml,application/vnd.google-earth.kmz,application/vnd.google-earth.kml+xml"
-                  hidden
-                  tabindex="-1"
-                  aria-hidden="true"
-                />
-              </div>
-              <footer class="csv-coords-footer">
-                <button
-                  type="button"
-                  class="btn btn-subtle"
-                  id="csv-coords-dialog-dismiss"
-                >
-                  Close
-                </button>
-                <button
-                  type="button"
-                  class="btn"
-                  id="btn-csv-coords-preview"
-                  title="Load both files and show coordinate changes"
-                >
-                  Preview changes
-                </button>
-                <button
-                  type="button"
-                  class="btn"
-                  id="btn-csv-coords-apply"
-                  disabled
-                  title="Update point coordinates and ExtendedData tags, then save the KMZ or KML"
-                >
-                  Apply and save
-                </button>
-              </footer>
-            </div>
-          </div>
-          <div
             id="map-scale-presets-dialog"
             class="map-scale-presets-dialog hidden"
             role="dialog"
@@ -1514,6 +1310,54 @@
               <footer class="feature-properties-footer">
                 <button type="button" class="btn btn-subtle" id="feature-properties-cancel">Cancel</button>
                 <button type="button" class="btn" id="feature-properties-save" disabled>Save to KML</button>
+              </footer>
+            </div>
+          </div>
+          <div
+            id="layer-node-icon-dialog"
+            class="feature-properties-dialog hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="layer-node-icon-title"
+            aria-hidden="true"
+          >
+            <div class="feature-properties-panel layer-node-icon-panel">
+              <header class="feature-properties-header">
+                <div>
+                  <h2 id="layer-node-icon-title">Change icon</h2>
+                  <p id="layer-node-icon-subtitle" class="muted feature-properties-subtitle"></p>
+                </div>
+                <button
+                  type="button"
+                  class="btn-dismiss"
+                  id="layer-node-icon-close"
+                  aria-label="Close change icon dialog"
+                >
+                  ×
+                </button>
+              </header>
+              <div class="layer-node-icon-body">
+                <p id="layer-node-icon-target-hint" class="muted icon-picker-hint"></p>
+                <div class="file-point-icon-load">
+                  <button type="button" class="btn btn-subtle" id="layer-node-load-custom-icon">
+                    Load icon…
+                  </button>
+                  <input
+                    id="layer-node-load-custom-icon-file"
+                    type="file"
+                    accept="image/png,.png"
+                    hidden
+                  />
+                </div>
+                <div id="layer-node-icon-picker"></div>
+                <label class="file-point-icon-save-kmz">
+                  <input id="layer-node-icon-save-kmz" type="checkbox" checked />
+                  Save to KMZ — write icon changes into the file
+                </label>
+              </div>
+              <footer class="feature-properties-footer">
+                <button type="button" class="btn btn-subtle" id="layer-node-icon-cancel">Cancel</button>
+                <button type="button" class="btn" id="layer-node-icon-apply">Apply</button>
               </footer>
             </div>
           </div>
@@ -1722,6 +1566,213 @@
         </div>
       </div>
 
+      <div id="detached-tool-hosts" hidden>
+        <div id="tool-host-point-chain">
+          <div id="point-chain-panel" class="point-chain-panel" aria-label="Nearest-neighbor point chain"></div>
+        </div>
+        <div id="tool-host-kml-editor">
+            <div class="external-edit">
+              <p class="muted external-edit-hint">
+                Edit the KML in Sublime Text or another editor. The map reloads when you save.
+              </p>
+              <label class="external-edit-field hidden" id="external-edit-source-wrap">
+                <span class="external-edit-label">File to edit</span>
+                <select
+                  id="external-edit-source"
+                  aria-label="Loaded KMZ or KML to edit externally"
+                  disabled
+                ></select>
+              </label>
+              <label class="external-edit-field">
+                <span class="external-edit-label">Editor command</span>
+                <div class="external-edit-row">
+                  <input
+                    id="external-editor-command"
+                    type="text"
+                    placeholder="Sublime Text (auto) if installed"
+                    spellcheck="false"
+                    autocomplete="off"
+                    title="Executable or full command. Optional placeholders: {path}, {line}, {column}, {lineEnd}, {columnEnd}"
+                  />
+                  <button id="external-editor-browse" class="btn" type="button" title="Choose editor">
+                    Browse…
+                  </button>
+                </div>
+              </label>
+              <button
+                type="button"
+                class="btn external-edit-open"
+                id="file-edit-kml-external"
+                disabled
+                title="Open this file's KML in your external editor"
+              >
+                Edit KML externally…
+              </button>
+            </div>
+        </div>
+        <div id="tool-host-csv-coords">
+          <div
+            id="csv-coords-dialog"
+            class="csv-coords-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="csv-coords-dialog-title"
+            aria-hidden="false"
+          >
+            <div class="csv-coords-panel">
+              <header class="csv-coords-header">
+                <div>
+                  <h2 id="csv-coords-dialog-title">CSV Coordinates to KMZ File</h2>
+                  <p class="muted csv-coords-dialog-subtitle">
+                    Update matching point placemarks in a KMZ or KML from a spreadsheet export.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  class="btn-dismiss"
+                  id="csv-coords-dialog-close"
+                  aria-label="Close CSV Coordinates to KMZ File"
+                >
+                  ×
+                </button>
+              </header>
+              <div class="csv-coords" aria-label="Update coordinates from CSV">
+                <p class="muted csv-coords-hint">
+                  Set a CSV with borehole id, latitude, and longitude columns (any common spelling, such as
+                  <strong>BH_ID</strong> / <strong>Borehole</strong> / <strong>boring_id</strong>,
+                  <strong>LAT</strong> / <strong>Latitude</strong>, and
+                  <strong>LONG</strong> / <strong>Longitude</strong>), and the KMZ or KML to update. Each point placemark must have
+                  <strong>&lt;Point&gt;&lt;coordinates&gt;</strong>. Match CSV rows by ExtendedData
+                  <strong>BH_ID</strong> or by <strong>&lt;name&gt;</strong> (e.g. B6A). Preview
+                  changes before applying them to the open file. <strong>BH_ID</strong> matching
+                  tolerates common spelling differences (e.g. B6A vs B-6A, B06A, or BH-6A).
+                </p>
+                <label class="csv-coords-field">
+                  <span class="csv-coords-label">CSV file</span>
+                  <div class="csv-coords-path-row">
+                    <input
+                      id="csv-coords-csv-path"
+                      type="text"
+                      spellcheck="false"
+                      autocomplete="off"
+                      placeholder="Path to coordinate CSV…"
+                    />
+                    <button
+                      type="button"
+                      class="btn btn-subtle"
+                      id="csv-coords-browse-csv"
+                      title="Choose CSV file"
+                    >
+                      Browse…
+                    </button>
+                  </div>
+                  <p
+                    id="csv-coords-csv-selected"
+                    class="csv-coords-selected-path muted"
+                    hidden
+                    aria-live="polite"
+                  ></p>
+                </label>
+                <label class="csv-coords-field">
+                  <span class="csv-coords-label">KMZ or KML file</span>
+                  <div class="csv-coords-path-row">
+                    <input
+                      id="csv-coords-kmz-path"
+                      type="text"
+                      spellcheck="false"
+                      autocomplete="off"
+                      placeholder="Path to KMZ or KML…"
+                    />
+                    <button
+                      type="button"
+                      class="btn btn-subtle"
+                      id="csv-coords-browse-kmz"
+                      title="Choose KMZ or KML file"
+                    >
+                      Browse…
+                    </button>
+                  </div>
+                  <p
+                    id="csv-coords-kmz-selected"
+                    class="csv-coords-selected-path muted"
+                    hidden
+                    aria-live="polite"
+                  ></p>
+                </label>
+                <p id="csv-coords-status" class="csv-coords-status muted" aria-live="polite"></p>
+                <section
+                  id="csv-coords-preview-section"
+                  class="csv-coords-preview-section hidden"
+                  aria-label="Coordinate change preview"
+                  hidden
+                >
+                  <p id="csv-coords-preview-summary" class="csv-coords-preview-summary muted"></p>
+                  <p
+                    id="csv-coords-preview-warnings"
+                    class="csv-coords-preview-warnings muted hidden"
+                    hidden
+                  ></p>
+                  <div class="csv-coords-diff-wrap">
+                    <table class="csv-coords-diff-table">
+                      <thead>
+                        <tr>
+                          <th scope="col">BH_ID</th>
+                          <th scope="col">Latitude</th>
+                          <th scope="col">Longitude</th>
+                        </tr>
+                      </thead>
+                      <tbody id="csv-coords-diff-body"></tbody>
+                    </table>
+                  </div>
+                </section>
+                <input
+                  id="csv-coords-input"
+                  type="file"
+                  accept=".csv,text/csv"
+                  hidden
+                  tabindex="-1"
+                  aria-hidden="true"
+                />
+                <input
+                  id="csv-coords-kmz-input"
+                  type="file"
+                  accept=".kmz,.kml,application/vnd.google-earth.kmz,application/vnd.google-earth.kml+xml"
+                  hidden
+                  tabindex="-1"
+                  aria-hidden="true"
+                />
+              </div>
+              <footer class="csv-coords-footer">
+                <button
+                  type="button"
+                  class="btn btn-subtle"
+                  id="csv-coords-dialog-dismiss"
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  class="btn"
+                  id="btn-csv-coords-preview"
+                  title="Load both files and show coordinate changes"
+                >
+                  Preview changes
+                </button>
+                <button
+                  type="button"
+                  class="btn"
+                  id="btn-csv-coords-apply"
+                  disabled
+                  title="Update point coordinates and ExtendedData tags, then save the KMZ or KML"
+                >
+                  Apply and save
+                </button>
+              </footer>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <footer class="statusbar">
         <span id="status-tool">Tool: Pan</span>
         <span class="status-sep"></span>
@@ -1756,6 +1807,7 @@
     <script src="js/screenshot-metadata.js"></script>
     <script src="js/screenshot.js"></script>
     <script src="js/bh-alignments.js"></script>
+    <script src="js/floating-panel.js"></script>
     <script src="js/borehole-images.js"></script>
     <script src="js/desktop-api.js"></script>
     <script src="js/sidebar-modes.js"></script>

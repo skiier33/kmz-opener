@@ -5,6 +5,8 @@ from PyInstaller.utils.hooks import collect_all
 datas = [
     ("index.html", "."),
     ("scan-coordinates.html", "."),
+    ("crosshair-icon.html", "."),
+    ("tool-window.html", "."),
     ("css", "css"),
     ("js", "js"),
     ("custom-icons", "custom-icons"),

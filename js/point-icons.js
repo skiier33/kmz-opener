@@ -70,7 +70,34 @@
     return resolveColor(style);
   }
 
-  function crosshairSvg(size, color) {
+  function clampCrosshairStrokeWidth(strokeWidth) {
+    var parsed = parseFloat(strokeWidth);
+    if (Number.isNaN(parsed) || parsed <= 0) {
+      return 2;
+    }
+    return Math.max(0.5, Math.min(24, parsed));
+  }
+
+  function resolveCrosshairDrawOptions(colorOrOptions) {
+    if (typeof colorOrOptions === "string" || colorOrOptions == null) {
+      var color = colorOrOptions || DEFAULT_COLOR;
+      return {
+        fillColor: color,
+        strokeColor: color,
+        strokeWidth: 2,
+      };
+    }
+    var opts = colorOrOptions || {};
+    var fillColor = opts.fillColor || opts.color || DEFAULT_COLOR;
+    return {
+      fillColor: fillColor,
+      strokeColor: opts.strokeColor || opts.color || fillColor,
+      strokeWidth: clampCrosshairStrokeWidth(opts.strokeWidth),
+    };
+  }
+
+  function crosshairSvg(size, colorOrOptions) {
+    var draw = resolveCrosshairDrawOptions(colorOrOptions);
     var mid = size / 2;
     var radius = Math.max(4, Math.round((CROSSHAIR_RADIUS * size) / BASE_SIZE));
     var east = mid + radius;
@@ -80,6 +107,8 @@
     var arc = radius + " " + radius + " 0 0 0 ";
     var q2 = "M " + mid + " " + mid + " L " + mid + " " + north + " A " + arc + west + " " + mid + " Z";
     var q4 = "M " + mid + " " + mid + " L " + mid + " " + south + " A " + arc + east + " " + mid + " Z";
+    var ringStroke = draw.strokeWidth;
+    var armStroke = Math.max(1, size / BASE_SIZE);
     return (
       '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' +
       size +
@@ -93,12 +122,12 @@
       '<path class="geo-crosshair-q2" d="' +
       q2 +
       '" fill="' +
-      color +
+      draw.fillColor +
       '"/>' +
       '<path class="geo-crosshair-q4" d="' +
       q4 +
       '" fill="' +
-      color +
+      draw.fillColor +
       '"/>' +
       '<circle class="geo-crosshair-ring" cx="' +
       mid +
@@ -107,8 +136,10 @@
       '" r="' +
       radius +
       '" fill="none" stroke="' +
-      color +
-      '" stroke-width="2"/>' +
+      draw.strokeColor +
+      '" stroke-width="' +
+      ringStroke +
+      '"/>' +
       '<line class="geo-crosshair-v" x1="' +
       mid +
       '" y1="' +
@@ -118,8 +149,10 @@
       '" y2="' +
       south +
       '" stroke="' +
-      color +
-      '" stroke-width="2" stroke-linecap="butt"/>' +
+      draw.strokeColor +
+      '" stroke-width="' +
+      armStroke +
+      '" stroke-linecap="butt"/>' +
       '<line class="geo-crosshair-h" x1="' +
       west +
       '" y1="' +
@@ -129,8 +162,10 @@
       '" y2="' +
       mid +
       '" stroke="' +
-      color +
-      '" stroke-width="2" stroke-linecap="butt"/>' +
+      draw.strokeColor +
+      '" stroke-width="' +
+      armStroke +
+      '" stroke-linecap="butt"/>' +
       "</svg>"
     );
   }
@@ -379,6 +414,16 @@
     return rasterizeSvgToBlob(svg, size);
   }
 
+  function rasterizeCrosshair(colorOrOptions, outputSize) {
+    var size = parseInt(outputSize, 10);
+    if (Number.isNaN(size) || size <= 0) {
+      size = 128;
+    }
+    size = Math.max(16, Math.min(512, size));
+    var svg = crosshairSvg(size, colorOrOptions);
+    return rasterizeSvgToBlob(svg, size);
+  }
+
   var catalogCache = null;
 
   function catalogEntryFromRelativePath(relativePath, urlOverride) {
@@ -563,6 +608,9 @@
     divIconForStyle: divIconForStyle,
     labelOffsetRadius: labelOffsetRadius,
     rasterizePreset: rasterizePreset,
+    rasterizeCrosshair: rasterizeCrosshair,
+    rasterizeSvgToBlob: rasterizeSvgToBlob,
+    resolveCrosshairDrawOptions: resolveCrosshairDrawOptions,
     zipPathForPreset: zipPathForPreset,
     cssColorToKmlAbgr: cssColorToKmlAbgr,
     colorHash: colorHash,

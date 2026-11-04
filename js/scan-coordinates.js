@@ -13,6 +13,7 @@
   var previewImg = null;
   var previewCloseBtn = null;
   var previewTitleEl = null;
+  var previewPanelController = null;
   var resultsSection = null;
   var parserSelect = null;
   var parserHintEl = null;
@@ -218,6 +219,9 @@
     }
     previewDialog.classList.remove("hidden");
     previewDialog.setAttribute("aria-hidden", "false");
+    if (previewPanelController) {
+      previewPanelController.ensure();
+    }
   }
 
   function closePreview() {
@@ -517,6 +521,23 @@
     }
     if (previewCloseBtn) {
       previewCloseBtn.addEventListener("click", closePreview);
+    }
+    if (previewDialog && global.FloatingPanel) {
+      var previewPanel = previewDialog.querySelector(".scan-coords-preview-panel");
+      var previewHeader = previewPanel
+        ? previewPanel.querySelector(".scan-coords-preview-header")
+        : null;
+      if (previewPanel && previewHeader) {
+        previewPanelController = global.FloatingPanel.bind({
+          backdrop: previewDialog,
+          panel: previewPanel,
+          dragHandle: previewHeader,
+          minWidth: 280,
+          minHeight: 220,
+          maxWidthPx: 920,
+          maxHeightPx: 900,
+        });
+      }
     }
     if (previewDialog) {
       previewDialog.addEventListener("click", function (event) {

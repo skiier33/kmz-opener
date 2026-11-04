@@ -92,10 +92,6 @@
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6z"/></svg>';
   var SIDEBAR_SECTION_STORAGE_KEY = "kmz-sidebar-sections-collapsed";
   var SIDEBAR_SECTION_HIDDEN_STORAGE_KEY = "kmz-sidebar-sections-hidden";
-  var TOOLS_MENU_SIDEBAR_SECTION_IDS = {
-    "point-chain": "menubar-tools-point-chain",
-    "kml-editor": "menubar-tools-kml-editor",
-  };
   var sidebarSectionRegistry = [];
   var sidebarSectionHiddenState = {};
   var sidebarSectionContextMenu = null;
@@ -362,9 +358,6 @@
     }
     container.innerHTML = "";
     sidebarSectionRegistry.forEach(function (entry) {
-      if (TOOLS_MENU_SIDEBAR_SECTION_IDS[entry.slug]) {
-        return;
-      }
       var btn = document.createElement("button");
       btn.type = "button";
       btn.className = "menubar-menu-item menubar-menu-item-check";
@@ -429,28 +422,9 @@
     window.addEventListener("blur", hideSidebarSectionContextMenu);
   }
 
-  function wireToolsMenuSidebarSections() {
-    Object.keys(TOOLS_MENU_SIDEBAR_SECTION_IDS).forEach(function (slug) {
-      var btn = document.getElementById(TOOLS_MENU_SIDEBAR_SECTION_IDS[slug]);
-      if (!btn) {
-        return;
-      }
-      var entry = findSidebarSectionEntry(slug);
-      if (!entry) {
-        return;
-      }
-      entry.toolsMenuItem = btn;
-      btn.setAttribute(
-        "aria-checked",
-        isSidebarSectionUserHidden(slug) ? "false" : "true"
-      );
-    });
-  }
-
   function initSidebarSectionVisibility() {
     buildSidebarSectionRegistry();
     populateViewMenuSidebarSections();
-    wireToolsMenuSidebarSections();
     createSidebarSectionContextMenu();
     var sidebarLeft = document.querySelector(".sidebar-left");
     if (sidebarLeft) {
@@ -1019,6 +993,22 @@
   var layerTreeContextMenuRenameBtn = null;
   var layerTreeContextMenuGotoBtn = null;
   var layerTreeContextMenuExportBtn = null;
+  var layerTreeContextMenuChangeIconBtn = null;
+  var layerTreeContextMenuIconRecursionBtn = null;
+  var layerTreeContextMenuPlacemarksOnlyBtn = null;
+  var layerTreeIconIncludeChildren = true;
+  var layerTreeIconPlacemarksOnly = false;
+  var layerNodeIconDialog = document.getElementById("layer-node-icon-dialog");
+  var layerNodeIconSubtitle = document.getElementById("layer-node-icon-subtitle");
+  var layerNodeIconTargetHint = document.getElementById("layer-node-icon-target-hint");
+  var layerNodeIconApplyBtn = document.getElementById("layer-node-icon-apply");
+  var layerNodeIconSession = null;
+  var layerNodeIconPickerState = {
+    selection: "crosshair",
+    color: "#ff0000",
+    scale: 1,
+  };
+  var layerNodeIconSaveToKmz = true;
   var sourceOverwriteDialog = document.getElementById("source-overwrite-dialog");
   var sourceOverwriteSubtitle = document.getElementById("source-overwrite-subtitle");
   var sourceOverwriteMessage = document.getElementById("source-overwrite-message");
@@ -1252,6 +1242,16 @@
     return refreshCustomIconCatalog().then(function () {
       selectCustomIconInCatalog(data.name);
       refreshFilePointIconsPanel();
+      if (layerNodeIconSession) {
+        var layerItem = customIconsCatalog.find(function (row) {
+          return row.label === data.name || row.id === "custom:" + data.name;
+        });
+        layerNodeIconPickerState.selection = "custom:" + data.name;
+        if (layerItem && layerItem.url) {
+          layerNodeIconPickerState.customUrl = layerItem.url;
+        }
+        refreshLayerNodeIconDialogPicker();
+      }
       setMessage("Saved icon as " + data.name + " for future use.");
     });
   }
@@ -1432,9 +1432,87 @@
     }
   }
 
+  function layerNodeIconTargetOptions() {
+    return {
+      recursive: layerTreeIconIncludeChildren,
+      placemarksOnly: layerTreeIconPlacemarksOnly,
+    };
+  }
+
+  function countLayerNodeIconTargets(nodeId) {
+    if (!nodeId) {
+      return 0;
+    }
+    return GisMap.countSubtreePointIconTargets(nodeId, layerNodeIconTargetOptions());
+  }
+
+  function layerNodeIconTargetHintText(nodeId) {
+    var count = countLayerNodeIconTargets(nodeId);
+    if (!count) {
+      return "No point icons match the current scope.";
+    }
+    var parts = [count + " point" + (count === 1 ? "" : "s")];
+    if (layerTreeIconIncludeChildren) {
+      parts.push("including child nodes");
+    } else {
+      parts.push("this node only");
+    }
+    if (layerTreeIconPlacemarksOnly) {
+      parts.push("placemarks only");
+    }
+    return "Will update " + parts.join(", ") + ".";
+  }
+
+  function pickerStateFromMapNode(node) {
+    var state = {
+      selection: "crosshair",
+      color: PointIcons.DEFAULT_COLOR,
+      scale: 1,
+      customUrl: "",
+    };
+    if (!node || !node.feature) {
+      return state;
+    }
+    var style = node.feature.style || {};
+    var preset = PointIcons.effectivePreset(style);
+    state.scale = PointIcons.clampScale(style.iconScale > 0 ? style.iconScale : 1);
+    state.color = PointIcons.resolveIconColor(style);
+    if (preset === "png") {
+      var custom = customIconsCatalog.find(function (item) {
+        return item.url && style.iconUrl && item.url === style.iconUrl;
+      });
+      if (custom) {
+        state.selection = custom.id;
+        state.customUrl = custom.url;
+      } else if (style.iconUrl) {
+        state.selection = "custom:" + (iconBasename(style.iconUrl) || "icon");
+        state.customUrl = style.iconUrl;
+      }
+    } else if (PointIcons.BUILTIN_IDS.indexOf(preset) !== -1) {
+      state.selection = preset;
+    }
+    return state;
+  }
+
+  function formatLayerNodeIconApplyMessage(count, saveToKmz) {
+    if (!count) {
+      return "No point icons were updated for that scope.";
+    }
+    return (
+      (saveToKmz ? "Updated icons on " : "Changed map icons on ") +
+      count +
+      " point" +
+      (count === 1 ? "" : "s") +
+      (saveToKmz ? "." : " — not written to the file until Save to KMZ is checked.")
+    );
+  }
+
   function commitPointIconSpec(spec, context) {
     context = context || {};
     var sourceId = context.sourceId || activeSourceId;
+    if (context.mode === "layerNode" && context.rootNodeId) {
+      sourceId = sourceIdFromNodeId(context.rootNodeId);
+    }
     var source = findLoadedSource(sourceId);
     if (!source || !source.doc) {
       setMessage("Open a KMZ or KML file first.");
@@ -1493,6 +1571,18 @@
           noteEdit();
         }
         return true;
+      }
+      if (context.mode === "layerNode" && context.rootNodeId) {
+        var subtreeCount = GisMap.applySubtreePointIcon(context.rootNodeId, normalized, {
+          recursive: !!context.recursive,
+          placemarksOnly: !!context.placemarksOnly,
+          saveToKmz: saveToKmz,
+        });
+        setMessage(formatLayerNodeIconApplyMessage(subtreeCount, saveToKmz));
+        if (saveToKmz && subtreeCount) {
+          noteEdit();
+        }
+        return subtreeCount > 0;
       }
       if (context.featureId) {
         GisMap.setFeaturePointIcon(context.featureId, normalized, { skipInspect: true });
@@ -1556,6 +1646,13 @@
                   ")" +
                   (saveToKmz ? "." : " — not written to the file until Save to KMZ is checked.")
               );
+            } else if (context.mode === "layerNode" && context.rootNodeId) {
+              var pngSubtreeCount = GisMap.applySubtreePointIcon(context.rootNodeId, pngSpec, {
+                recursive: !!context.recursive,
+                placemarksOnly: !!context.placemarksOnly,
+                saveToKmz: saveToKmz,
+              });
+              setMessage(formatLayerNodeIconApplyMessage(pngSubtreeCount, saveToKmz));
             } else if (context.featureId) {
               GisMap.setFeatureIconUrl(context.featureId, objectUrl, {
                 kmlHref: kmlHref,
@@ -3751,7 +3848,8 @@
       pointChainSectionEl.hidden = pointCount < 2;
     }
     if (pointCount < 2) {
-      pointChainPanelEl.innerHTML = "";
+      pointChainPanelEl.innerHTML =
+        '<p class="muted icon-picker-hint">Load a file with at least two point placemarks to build a chain.</p>';
       resetPointChainRoute();
       return;
     }
@@ -6111,6 +6209,177 @@
     });
   }
 
+  function createLayerTreeContextMenuCheckItem(label, getChecked, onToggle) {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "map-context-menu-item map-context-menu-item-check";
+    btn.setAttribute("role", "menuitemcheckbox");
+    btn.innerHTML =
+      '<span class="map-context-menu-checkmark" aria-hidden="true">✓</span>' +
+      '<span class="map-context-menu-item-label"></span>';
+    btn.querySelector(".map-context-menu-item-label").textContent = label;
+    btn.addEventListener("click", function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      var next = !getChecked();
+      onToggle(next);
+      btn.setAttribute("aria-checked", next ? "true" : "false");
+      updateLayerTreeContextMenuItems();
+    });
+    return btn;
+  }
+
+  function refreshLayerNodeIconDialogPicker() {
+    var pickerHost = document.getElementById("layer-node-icon-picker");
+    if (!pickerHost || !layerNodeIconSession) {
+      return;
+    }
+    pickerHost.innerHTML = buildIconPickerHtml("layer-node", layerNodeIconPickerState);
+    bindIconPicker("layer-node-icon-picker", "layer-node", layerNodeIconPickerState, {});
+    ensureDesktop().then(function (desktop) {
+      hydrateCustomIconThumbnails(pickerHost, desktop ? desktop.token : "");
+    });
+    if (layerNodeIconTargetHint) {
+      layerNodeIconTargetHint.textContent = layerNodeIconTargetHintText(layerNodeIconSession.nodeId);
+    }
+  }
+
+  function closeLayerNodeIconDialog() {
+    layerNodeIconSession = null;
+    if (!layerNodeIconDialog) {
+      return;
+    }
+    layerNodeIconDialog.classList.add("hidden");
+    layerNodeIconDialog.setAttribute("aria-hidden", "true");
+    var pickerHost = document.getElementById("layer-node-icon-picker");
+    if (pickerHost) {
+      pickerHost.innerHTML = "";
+    }
+  }
+
+  function applyLayerNodeIconDialog() {
+    var session = layerNodeIconSession;
+    if (!session) {
+      return;
+    }
+    var saveToggle = document.getElementById("layer-node-icon-save-kmz");
+    var saveToKmz = saveToggle ? saveToggle.checked : layerNodeIconSaveToKmz;
+    layerNodeIconSaveToKmz = saveToKmz;
+    if (layerNodeIconApplyBtn) {
+      layerNodeIconApplyBtn.disabled = true;
+    }
+    commitPointIconSpec(specFromPickerState(layerNodeIconPickerState), {
+      mode: "layerNode",
+      rootNodeId: session.nodeId,
+      recursive: session.recursive,
+      placemarksOnly: session.placemarksOnly,
+      saveToKmz: saveToKmz,
+    }).then(function () {
+      if (layerNodeIconApplyBtn) {
+        layerNodeIconApplyBtn.disabled = false;
+      }
+    });
+  }
+
+  function openLayerNodeIconDialog(nodeId) {
+    if (!layerNodeIconDialog || !nodeId) {
+      return;
+    }
+    var node = GisMap.findNode(nodeId);
+    if (!node) {
+      setMessage("That layer is no longer in the tree.");
+      return;
+    }
+    layerNodeIconPickerState = pickerStateFromMapNode(nodeIsMapPoint(node) ? node : null);
+    layerNodeIconSession = {
+      nodeId: nodeId,
+      recursive: layerTreeIconIncludeChildren,
+      placemarksOnly: layerTreeIconPlacemarksOnly,
+    };
+    if (layerNodeIconSubtitle) {
+      var subtitle = node.name || node.type || "Layer";
+      var source = findLoadedSource(sourceIdFromNodeId(nodeId));
+      if (source && source.doc && source.doc.fileName) {
+        subtitle += " — " + source.doc.fileName;
+      }
+      layerNodeIconSubtitle.textContent = subtitle;
+    }
+    var saveToggle = document.getElementById("layer-node-icon-save-kmz");
+    if (saveToggle) {
+      saveToggle.checked = layerNodeIconSaveToKmz;
+    }
+    refreshLayerNodeIconDialogPicker();
+    if (layerNodeIconApplyBtn) {
+      layerNodeIconApplyBtn.disabled = countLayerNodeIconTargets(nodeId) === 0;
+    }
+    layerNodeIconDialog.classList.remove("hidden");
+    layerNodeIconDialog.setAttribute("aria-hidden", "false");
+  }
+
+  function initLayerNodeIconDialog() {
+    if (!layerNodeIconDialog) {
+      return;
+    }
+    var closeBtn = document.getElementById("layer-node-icon-close");
+    var cancelBtn = document.getElementById("layer-node-icon-cancel");
+    if (closeBtn) {
+      closeBtn.addEventListener("click", closeLayerNodeIconDialog);
+    }
+    if (cancelBtn) {
+      cancelBtn.addEventListener("click", closeLayerNodeIconDialog);
+    }
+    if (layerNodeIconApplyBtn) {
+      layerNodeIconApplyBtn.addEventListener("click", applyLayerNodeIconDialog);
+    }
+    layerNodeIconDialog.addEventListener("click", function (event) {
+      if (event.target === layerNodeIconDialog) {
+        closeLayerNodeIconDialog();
+      }
+    });
+    document.addEventListener("keydown", function (event) {
+      if (
+        event.key === "Escape"
+        && layerNodeIconDialog
+        && !layerNodeIconDialog.classList.contains("hidden")
+      ) {
+        closeLayerNodeIconDialog();
+      }
+    });
+    var loadBtn = document.getElementById("layer-node-load-custom-icon");
+    var fileInput = document.getElementById("layer-node-load-custom-icon-file");
+    if (loadBtn) {
+      loadBtn.addEventListener("click", function () {
+        ensureDesktop().then(function (desktop) {
+          if (desktop && desktop.api && typeof desktop.api.import_custom_icon === "function") {
+            Promise.resolve(desktop.api.import_custom_icon()).then(finishCustomIconImport);
+            return;
+          }
+          if (fileInput) {
+            fileInput.value = "";
+            fileInput.click();
+          } else if (!desktop || !desktop.token) {
+            setMessage("Load icon is available in the desktop app.");
+          }
+        });
+      });
+    }
+    if (fileInput) {
+      fileInput.addEventListener("change", function () {
+        var file = fileInput.files && fileInput.files[0];
+        if (!file) {
+          return;
+        }
+        ensureDesktop().then(function (desktop) {
+          if (!desktop || !desktop.token) {
+            setMessage("Load icon is available in the desktop app.");
+            return;
+          }
+          uploadCustomIconPng(file, desktop).then(finishCustomIconImport);
+        });
+      });
+    }
+  }
+
   function updateLayerTreeContextMenuItems() {
     if (!layerTreeContextMenu) {
       return;
@@ -6153,6 +6422,31 @@
     if (layerTreeContextMenuExportBtn) {
       layerTreeContextMenuExportBtn.hidden = !sourceId;
       layerTreeContextMenuExportBtn.disabled = !canExport;
+    }
+    var focusNode = focusId ? GisMap.findNode(focusId) : null;
+    var hasChildNodes = !!(focusNode && focusNode.children && focusNode.children.length);
+    if (layerTreeContextMenuIconRecursionBtn) {
+      layerTreeContextMenuIconRecursionBtn.setAttribute(
+        "aria-checked",
+        layerTreeIconIncludeChildren ? "true" : "false"
+      );
+      layerTreeContextMenuIconRecursionBtn.disabled = !hasChildNodes;
+      layerTreeContextMenuIconRecursionBtn.title = hasChildNodes
+        ? "Also change icons on child layers"
+        : "This layer has no child nodes";
+    }
+    if (layerTreeContextMenuPlacemarksOnlyBtn) {
+      layerTreeContextMenuPlacemarksOnlyBtn.setAttribute(
+        "aria-checked",
+        layerTreeIconPlacemarksOnly ? "true" : "false"
+      );
+    }
+    var iconTargets = focusId ? countLayerNodeIconTargets(focusId) : 0;
+    if (layerTreeContextMenuChangeIconBtn) {
+      layerTreeContextMenuChangeIconBtn.disabled = !focusId || iconTargets === 0;
+      layerTreeContextMenuChangeIconBtn.title = iconTargets
+        ? layerNodeIconTargetHintText(focusId)
+        : "No point icons in scope for the current options";
     }
   }
 
@@ -6247,12 +6541,55 @@
       }
     });
 
+    layerTreeContextMenuChangeIconBtn = document.createElement("button");
+    layerTreeContextMenuChangeIconBtn.type = "button";
+    layerTreeContextMenuChangeIconBtn.className = "map-context-menu-item";
+    layerTreeContextMenuChangeIconBtn.setAttribute("role", "menuitem");
+    layerTreeContextMenuChangeIconBtn.textContent = "Change icon…";
+    layerTreeContextMenuChangeIconBtn.addEventListener("click", function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      var id = focusId;
+      hideLayerTreeContextMenu();
+      if (id) {
+        openLayerNodeIconDialog(id);
+      }
+    });
+
+    var iconMenuSeparator = document.createElement("div");
+    iconMenuSeparator.className = "map-context-menu-separator";
+    iconMenuSeparator.setAttribute("role", "separator");
+
+    layerTreeContextMenuIconRecursionBtn = createLayerTreeContextMenuCheckItem(
+      "Include child nodes",
+      function () {
+        return layerTreeIconIncludeChildren;
+      },
+      function (next) {
+        layerTreeIconIncludeChildren = next;
+      }
+    );
+
+    layerTreeContextMenuPlacemarksOnlyBtn = createLayerTreeContextMenuCheckItem(
+      "Placemarks Only",
+      function () {
+        return layerTreeIconPlacemarksOnly;
+      },
+      function (next) {
+        layerTreeIconPlacemarksOnly = next;
+      }
+    );
+
     layerTreeContextMenu.appendChild(layerTreeContextMenuGotoBtn);
     layerTreeContextMenu.appendChild(layerTreeContextMenuSaveBtn);
     layerTreeContextMenu.appendChild(layerTreeContextMenuDeleteBtn);
     layerTreeContextMenu.appendChild(layerTreeContextMenuHideBtn);
     layerTreeContextMenu.appendChild(layerTreeContextMenuRenameBtn);
     layerTreeContextMenu.appendChild(layerTreeContextMenuExportBtn);
+    layerTreeContextMenu.appendChild(iconMenuSeparator);
+    layerTreeContextMenu.appendChild(layerTreeContextMenuChangeIconBtn);
+    layerTreeContextMenu.appendChild(layerTreeContextMenuIconRecursionBtn);
+    layerTreeContextMenu.appendChild(layerTreeContextMenuPlacemarksOnlyBtn);
     document.body.appendChild(layerTreeContextMenu);
 
     document.addEventListener(
@@ -8158,6 +8495,7 @@
   createLayerTreeContextMenu();
   initSourceOverwriteDialog();
   initFeaturePropertiesDialog();
+  initLayerNodeIconDialog();
   initInspectTagEditing();
   initSidebarSectionFolding();
   initSidebarSectionVisibility();
@@ -8309,24 +8647,45 @@
     fileSaveBtn.addEventListener("click", saveTimestampedCopy);
   }
   function closeCsvCoordsDialog() {
-    if (!csvCoordsDialog) {
-      return;
-    }
-    csvCoordsDialog.classList.add("hidden");
-    csvCoordsDialog.setAttribute("aria-hidden", "true");
     clearCsvCoordsPreviewUi();
     setCsvCoordsDialogStatus("", false);
   }
 
-  function openCsvCoordsDialog() {
-    if (!csvCoordsDialog) {
+  function openNamedToolWindow(tool) {
+    if (tool === "point-chain") {
+      refreshPointChainPanel();
+    }
+    if (tool === "kml-editor") {
+      refreshExternalEditorUi();
+    }
+    function openBrowserWindow() {
+      window.open(
+        "tool-window.html?tool=" + encodeURIComponent(tool),
+        "kmz-tool-" + tool,
+        "width=760,height=820"
+      );
+    }
+    if (window.DesktopBridge && typeof window.DesktopBridge.openToolWindow === "function") {
+      window.DesktopBridge.openToolWindow(tool)
+        .then(function (result) {
+          if (result === null) {
+            openBrowserWindow();
+            return;
+          }
+          if (result && result.error) {
+            setMessage(result.error);
+          }
+        })
+        .catch(function (err) {
+          setMessage((err && err.message) || "Could not open that tool.");
+        });
       return;
     }
-    csvCoordsDialog.classList.remove("hidden");
-    csvCoordsDialog.setAttribute("aria-hidden", "false");
-    if (csvCoordsCsvPathInput) {
-      csvCoordsCsvPathInput.focus();
-    }
+    openBrowserWindow();
+  }
+
+  function openCsvCoordsDialog() {
+    openNamedToolWindow("csv-coords");
   }
 
   window.openCsvCoordsDialog = openCsvCoordsDialog;
@@ -8358,6 +8717,28 @@
 
   window.openParseGpsFromScanWindow = openParseGpsFromScanWindow;
 
+  function openCrosshairIconGeneratorWindow() {
+    if (window.DesktopBridge && typeof window.DesktopBridge.openCrosshairIconWindow === "function") {
+      window.DesktopBridge.openCrosshairIconWindow()
+        .then(function (result) {
+          if (result === null) {
+            window.open("crosshair-icon.html", "_blank", "noopener,noreferrer");
+            return;
+          }
+          if (result && result.error) {
+            setMessage(result.error);
+          }
+        })
+        .catch(function (err) {
+          setMessage((err && err.message) || "Could not open Crosshair icon generator.");
+        });
+      return;
+    }
+    window.open("crosshair-icon.html", "_blank", "noopener,noreferrer");
+  }
+
+  window.openCrosshairIconGeneratorWindow = openCrosshairIconGeneratorWindow;
+
   if (csvCoordsDialog) {
     var csvCoordsDialogCloseBtn = document.getElementById("csv-coords-dialog-close");
     var csvCoordsDialogDismissBtn = document.getElementById("csv-coords-dialog-dismiss");
@@ -8367,20 +8748,6 @@
     if (csvCoordsDialogDismissBtn) {
       csvCoordsDialogDismissBtn.addEventListener("click", closeCsvCoordsDialog);
     }
-    csvCoordsDialog.addEventListener("click", function (event) {
-      if (event.target === csvCoordsDialog) {
-        closeCsvCoordsDialog();
-      }
-    });
-    document.addEventListener("keydown", function (event) {
-      if (
-        event.key === "Escape"
-        && csvCoordsDialog
-        && !csvCoordsDialog.classList.contains("hidden")
-      ) {
-        closeCsvCoordsDialog();
-      }
-    });
   }
 
   if (btnCsvCoordsPreview) {
@@ -8815,6 +9182,27 @@
           event.stopPropagation();
           closeAllMenus();
           openParseGpsFromScanWindow();
+          return;
+        }
+        if (item.id === "menubar-tools-crosshair-icon") {
+          event.preventDefault();
+          event.stopPropagation();
+          closeAllMenus();
+          openCrosshairIconGeneratorWindow();
+          return;
+        }
+        if (item.id === "menubar-tools-point-chain") {
+          event.preventDefault();
+          event.stopPropagation();
+          closeAllMenus();
+          openNamedToolWindow("point-chain");
+          return;
+        }
+        if (item.id === "menubar-tools-kml-editor") {
+          event.preventDefault();
+          event.stopPropagation();
+          closeAllMenus();
+          openNamedToolWindow("kml-editor");
           return;
         }
         closeAllMenus();
@@ -9701,4 +10089,148 @@
       refreshExternalEditorUi();
       scheduleExternalEditUiRetries();
     });
+
+  function toolHostElement(tool) {
+    return document.getElementById("tool-host-" + tool);
+  }
+
+  function syncHostControlAttributes(host) {
+    if (!host) {
+      return;
+    }
+    host.querySelectorAll("input, select, textarea").forEach(function (el) {
+      if (el.type === "file") {
+        return;
+      }
+      if (el.type === "checkbox" || el.type === "radio") {
+        if (el.checked) {
+          el.setAttribute("checked", "checked");
+        } else {
+          el.removeAttribute("checked");
+        }
+        return;
+      }
+      if (el.tagName === "SELECT") {
+        Array.prototype.forEach.call(el.options, function (opt) {
+          if (opt.selected) {
+            opt.setAttribute("selected", "selected");
+          } else {
+            opt.removeAttribute("selected");
+          }
+        });
+        return;
+      }
+      el.setAttribute("value", el.value);
+    });
+  }
+
+  function toolHostSnapshot(tool) {
+    var host = toolHostElement(tool);
+    syncHostControlAttributes(host);
+    return { html: host ? host.innerHTML : "" };
+  }
+
+  function applyToolFields(fields) {
+    if (!Array.isArray(fields)) {
+      return;
+    }
+    fields.forEach(function (field) {
+      if (!field || !field.id) {
+        return;
+      }
+      var el = document.getElementById(field.id);
+      if (!el || el.type === "file") {
+        return;
+      }
+      if (el.type === "checkbox" || el.type === "radio") {
+        el.checked = !!field.checked;
+        if (el.checked) {
+          el.setAttribute("checked", "checked");
+        } else {
+          el.removeAttribute("checked");
+        }
+        return;
+      }
+      if (field.value == null) {
+        return;
+      }
+      el.value = String(field.value);
+      if (el.tagName === "SELECT") {
+        Array.prototype.forEach.call(el.options, function (opt) {
+          if (opt.value === el.value) {
+            opt.setAttribute("selected", "selected");
+          } else {
+            opt.removeAttribute("selected");
+          }
+        });
+        return;
+      }
+      el.setAttribute("value", el.value);
+    });
+  }
+
+  function reorderPointChainDraft(fromIndex, toIndex) {
+    if (!pointChainDraftPath) {
+      return;
+    }
+    if (
+      fromIndex < 0
+      || toIndex < 0
+      || fromIndex >= pointChainDraftPath.length
+      || toIndex >= pointChainDraftPath.length
+      || fromIndex === toIndex
+    ) {
+      return;
+    }
+    var path = pointChainDraftPath.slice();
+    var moved = path.splice(fromIndex, 1)[0];
+    path.splice(toIndex, 0, moved);
+    pointChainDraftPath = path;
+    renderPointChainOrderList();
+  }
+
+  window.KmzToolHost = {
+    dispatch: function (action, payload) {
+      payload = payload || {};
+      var tool = payload.tool || "";
+      if (action === "snapshot") {
+        return toolHostSnapshot(tool);
+      }
+      if (action === "sync") {
+        applyToolFields(payload.fields);
+        if (payload.eventType && payload.id) {
+          var control = document.getElementById(payload.id);
+          if (control) {
+            control.dispatchEvent(new Event(payload.eventType, { bubbles: true }));
+          }
+        }
+        return toolHostSnapshot(tool);
+      }
+      if (action === "click") {
+        applyToolFields(payload.fields);
+        var el = payload.id ? document.getElementById(payload.id) : null;
+        if (el && !el.disabled) {
+          el.click();
+        }
+        return toolHostSnapshot(tool);
+      }
+      if (action === "point-chain-move") {
+        movePointChainDraftItem(Number(payload.index), Number(payload.delta));
+        return toolHostSnapshot("point-chain");
+      }
+      if (action === "point-chain-remove") {
+        removePointChainDraftItem(Number(payload.index));
+        return toolHostSnapshot("point-chain");
+      }
+      if (action === "point-chain-reorder") {
+        reorderPointChainDraft(Number(payload.from), Number(payload.to));
+        return toolHostSnapshot("point-chain");
+      }
+      if (action === "point-chain-height") {
+        applyPointChainOrderHeight(Number(payload.px), true);
+        return toolHostSnapshot("point-chain");
+      }
+      return { error: "Unknown tool action." };
+    },
+  };
 })();

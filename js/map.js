@@ -1037,6 +1037,58 @@
     return count;
   }
 
+  function nodeMatchesLayerIconTarget(node, placemarksOnly) {
+    if (!node || !node.feature || !featureHasPointGeometry(node.feature)) {
+      return false;
+    }
+    if (placemarksOnly && node.type !== "placemark") {
+      return false;
+    }
+    return true;
+  }
+
+  function visitLayerIconTargets(rootId, options, visitor) {
+    var root = currentRoot ? findNode(currentRoot, rootId) : null;
+    if (!root || !visitor) {
+      return;
+    }
+    var recursive = !!options.recursive;
+    var placemarksOnly = !!options.placemarksOnly;
+    function visit(node) {
+      if (nodeMatchesLayerIconTarget(node, placemarksOnly)) {
+        visitor(node);
+      }
+      if (recursive) {
+        (node.children || []).forEach(visit);
+      }
+    }
+    visit(root);
+  }
+
+  function countSubtreePointIconTargets(rootId, options) {
+    var count = 0;
+    visitLayerIconTargets(rootId, options || {}, function () {
+      count += 1;
+    });
+    return count;
+  }
+
+  function applySubtreePointIcon(rootId, spec, options) {
+    if (!rootId || !spec) {
+      return 0;
+    }
+    var applyOptions = options || {};
+    var count = 0;
+    visitLayerIconTargets(rootId, applyOptions, function (node) {
+      applySpecToNodeStyle(node, spec, applyOptions);
+      count += 1;
+    });
+    if (count && selectedId) {
+      selectFeature(selectedId, false);
+    }
+    return count;
+  }
+
   function countSourcePointPlacemarks(sourceId) {
     var count = 0;
     walkSourceRoot(sourceId, function (root) {
@@ -2653,6 +2705,8 @@
     setFeatureIconUrl: setFeatureIconUrl,
     setFeaturePointIcon: setFeaturePointIcon,
     applySourcePointIcon: applySourcePointIcon,
+    countSubtreePointIconTargets: countSubtreePointIconTargets,
+    applySubtreePointIcon: applySubtreePointIcon,
     countSourcePointPlacemarks: countSourcePointPlacemarks,
     listSourcePointLatLngs: listSourcePointLatLngs,
     setSourcePointNameLabelsHidden: setSourcePointNameLabelsHidden,

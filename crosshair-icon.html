@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Crosshair Icon Generator</title>
+    <link rel="stylesheet" href="css/app.css" />
+  </head>
+  <body class="crosshair-icon-body">
+    <main id="crosshair-icon-window" class="crosshair-icon-window">
+      <header class="crosshair-icon-window-header">
+        <h1>Crosshair icon generator</h1>
+        <p class="muted crosshair-icon-hint">
+          Build a 128×128 PNG crosshair like the shipped
+          <code>custom-icons/png128/xh.png</code> icon. The width control changes only the outer
+          circle. The vertical and horizontal arms stay thin and meet at the center so the cross
+          stays sharp on the map.
+        </p>
+      </header>
+      <div class="crosshair-icon-layout">
+        <section class="crosshair-icon-fields" aria-label="Crosshair settings">
+          <label class="crosshair-icon-field">
+            <span class="crosshair-icon-label">Ring &amp; crosshair color</span>
+            <input id="crosshair-icon-stroke-color" type="color" value="#ff0000" aria-label="Ring and crosshair color" />
+          </label>
+          <label class="crosshair-icon-field">
+            <span class="crosshair-icon-label">Filled quadrant color</span>
+            <input id="crosshair-icon-fill-color" type="color" value="#ff0000" aria-label="Filled quadrant color" />
+          </label>
+          <label class="crosshair-icon-field">
+            <span class="crosshair-icon-label">
+              Outer circle line width <strong id="crosshair-icon-stroke-width-value">8</strong> px
+            </span>
+            <input
+              id="crosshair-icon-stroke-width"
+              type="range"
+              min="1"
+              max="24"
+              step="1"
+              value="8"
+              aria-valuemin="1"
+              aria-valuemax="24"
+              aria-valuenow="8"
+              aria-label="Outer circle line width in pixels at the export size"
+            />
+          </label>
+          <label class="crosshair-icon-field">
+            <span class="crosshair-icon-label">Export size</span>
+            <input
+              id="crosshair-icon-size"
+              type="number"
+              min="16"
+              max="512"
+              step="1"
+              value="128"
+              aria-label="PNG width and height in pixels"
+            />
+          </label>
+          <div class="crosshair-icon-actions">
+            <button id="crosshair-icon-save" class="btn" type="button">Save to custom icons</button>
+          </div>
+          <p id="crosshair-icon-status" class="crosshair-icon-status muted" aria-live="polite"></p>
+        </section>
+        <section class="crosshair-icon-preview-panel" aria-label="Preview">
+          <h2 class="crosshair-icon-preview-title">Preview</h2>
+          <div class="crosshair-icon-preview-wrap">
+            <img
+              id="crosshair-icon-preview"
+              class="crosshair-icon-preview-img"
+              alt="Crosshair icon preview"
+              width="128"
+              height="128"
+            />
+          </div>
+        </section>
+      </div>
+    </main>
+    <script src="js/point-icons.js"></script>
+    <script src="js/desktop-api.js"></script>
+    <script src="js/crosshair-icon.js"></script>
+  </body>
+</html>

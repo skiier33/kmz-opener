@@ -2,10 +2,13 @@
 
 from pathlib import Path
 
+import json
+
 from desktop.server import (
     import_custom_icon_png,
     list_custom_icons,
     resolve_custom_icon_path,
+    save_generated_crosshair_png,
     user_custom_icons_dir,
 )
 
@@ -77,6 +80,31 @@ def test_import_custom_icon_png_rejects_non_png(monkeypatch, tmp_path) -> None:
     """Non-PNG content is not written to the user icon folder."""
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     assert import_custom_icon_png(b"not-a-png", "bad.png") is None
+
+
+def test_save_generated_crosshair_png_writes_xhgen_and_manifest(tmp_path) -> None:
+    """Generated crosshairs are stored in custom-icons/xhgen and listed in the manifest."""
+    shipped = tmp_path / "custom-icons"
+    shipped.mkdir()
+    manifest = shipped / "manifest.json"
+    manifest.write_text('{"icons": ["png128/xh.png"]}\n', encoding="utf-8")
+    png = b"\x89PNG\r\n\x1a\n" + b"crosshair"
+    saved = save_generated_crosshair_png(str(tmp_path), png, "xh-ff0000-00aa00-w8-s128.png")
+    assert saved is not None
+    assert saved["name"] == "xhgen/xh-ff0000-00aa00-w8-s128.png"
+    dest = shipped / "xhgen" / "xh-ff0000-00aa00-w8-s128.png"
+    assert dest.read_bytes() == png
+    listed = json.loads(manifest.read_text(encoding="utf-8"))["icons"]
+    assert listed == ["png128/xh.png", "xhgen/xh-ff0000-00aa00-w8-s128.png"]
+    again = save_generated_crosshair_png(str(tmp_path), png, "xh-ff0000-00aa00-w8-s128.png")
+    assert again is not None
+    listed_again = json.loads(manifest.read_text(encoding="utf-8"))["icons"]
+    assert listed_again == listed
+    icons = list_custom_icons(str(tmp_path))
+    by_name = {row["name"]: row["url"] for row in icons}
+    assert by_name["xhgen/xh-ff0000-00aa00-w8-s128.png"] == (
+        "custom-icons/xhgen/xh-ff0000-00aa00-w8-s128.png"
+    )
 
 
 def test_user_custom_icons_dir_under_localappdata(monkeypatch, tmp_path) -> None:

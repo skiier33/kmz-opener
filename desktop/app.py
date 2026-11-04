@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import subprocess
 import sys
 from http.server import ThreadingHTTPServer
@@ -79,7 +81,9 @@ from desktop.server import (  # noqa: E402
     normalize_path,
     register_source,
     resolve_session_kmz_paths,
+    set_crosshair_icon_window_callback,
     set_scan_gps_window_callback,
+    set_tool_window_callback,
     start_server,
     user_custom_icons_dir,
 )
@@ -1046,6 +1050,132 @@ class DesktopApi:
             return result
         return {"ok": True}
 
+    def open_crosshair_icon_window(self) -> dict:
+        """
+        Open a dedicated window for generating custom crosshair PNG icons.
+
+        Returns:
+            Dict with ``ok`` when a window was created, or ``error`` when unavailable.
+        """
+        if not _VIEWER_BASE_URL:
+            return {"error": "Desktop window is not available."}
+        windows = webview.windows
+        if not windows:
+            return {"error": "Desktop window is not available."}
+        window = windows[0]
+        url = f"{_VIEWER_BASE_URL}crosshair-icon.html"
+
+        def _open() -> dict:
+            try:
+                webview.create_window(
+                    "Crosshair icon generator",
+                    url,
+                    width=720,
+                    height=640,
+                    min_size=(520, 480),
+                    js_api=DesktopApi(),
+                )
+            except (OSError, RuntimeError, TypeError, ValueError) as err:
+                return {"error": f"Could not open window: {err}"}
+            return {"ok": True}
+
+        result = _invoke_on_ui_always(window, _open)
+        if isinstance(result, dict):
+            return result
+        return {"ok": True}
+
+    def open_tool_window(self, tool: str) -> dict:
+        """
+        Open a Tools-menu feature in its own window.
+
+        Args:
+            tool: Tool id (csv-coords, point-chain, or kml-editor).
+
+        Returns:
+            Dict with ``ok`` when a window was created, or ``error`` when unavailable.
+        """
+        specs = {
+            "csv-coords": ("CSV Coordinates to KMZ File", 780, 840),
+            "point-chain": ("Point chain", 520, 780),
+            "kml-editor": ("KML editor", 560, 520),
+        }
+        spec = specs.get(str(tool or "").strip())
+        if spec is None or not _VIEWER_BASE_URL:
+            return {"error": "That tool window is not available."}
+        windows = webview.windows
+        if not windows:
+            return {"error": "Desktop window is not available."}
+        window = windows[0]
+        title, width, height = spec
+        url = f"{_VIEWER_BASE_URL}tool-window.html?tool={tool}"
+
+        def _open() -> dict:
+            try:
+                webview.create_window(
+                    title,
+                    url,
+                    width=width,
+                    height=height,
+                    min_size=(420, 360),
+                    js_api=DesktopApi(),
+                )
+            except (OSError, RuntimeError, TypeError, ValueError) as err:
+                return {"error": f"Could not open window: {err}"}
+            return {"ok": True}
+
+        result = _invoke_on_ui_always(window, _open)
+        if isinstance(result, dict):
+            return result
+        return {"ok": True}
+
+    def tool_dispatch(self, action: str, payload: object) -> object:
+        """
+        Run a tool-window command in the main viewer window.
+
+        Args:
+            action: KmzToolHost action name.
+            payload: JSON-compatible object passed to the viewer.
+
+        Returns:
+            Result object from the viewer, or an error dict.
+        """
+        if not isinstance(action, str) or re.fullmatch(r"[a-zA-Z0-9_-]+", action) is None:
+            return {"error": "Invalid tool action."}
+        if not isinstance(payload, dict):
+            payload = {}
+        viewer = None
+        for candidate in webview.windows:
+            title = str(getattr(candidate, "title", "") or "")
+            if title.startswith("KMZ GIS Viewer"):
+                viewer = candidate
+                break
+        if viewer is None:
+            return {"error": "The main viewer window is not open."}
+        script = (
+            "(function(){try{return window.KmzToolHost&&window.KmzToolHost.dispatch("
+            + json.dumps(action)
+            + ","
+            + json.dumps(payload)
+            + ");}catch(err){return {error:(err&&err.message)||String(err)};}})()"
+        )
+        evaluate = getattr(viewer, "evaluate_js", None)
+        if evaluate is None:
+            return {"error": "The viewer cannot run tool commands."}
+        try:
+            result = evaluate(script)
+        except (OSError, RuntimeError, TypeError, ValueError) as err:
+            return {"error": str(err)}
+        if isinstance(result, str):
+            try:
+                parsed = json.loads(result)
+            except json.JSONDecodeError:
+                return {"html": result}
+            if isinstance(parsed, dict):
+                return parsed
+        if isinstance(result, dict):
+            return result
+        return {"error": "The tool did not return a result."}
+
     def duplicate_window(
         self,
         source_paths: object,
@@ -1138,6 +1268,8 @@ def main() -> None:
         server, port = start_server(app_root())
         _VIEWER_BASE_URL = f"http://127.0.0.1:{port}/"
         set_scan_gps_window_callback(lambda: DesktopApi().open_scan_gps_window())
+        set_crosshair_icon_window_callback(lambda: DesktopApi().open_crosshair_icon_window())
+        set_tool_window_callback(lambda tool: DesktopApi().open_tool_window(tool))
         webview.create_window(
             "KMZ GIS Viewer",
             f"http://127.0.0.1:{port}/",

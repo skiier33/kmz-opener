@@ -24,13 +24,16 @@ PREFERRED_PORT = 47821
 MAX_UPLOAD_BYTES = 1024 * 1024 * 1024
 MAX_SCREENSHOT_BYTES = 50 * 1024 * 1024
 MAX_CUSTOM_ICON_BYTES = 5 * 1024 * 1024
-SHIPPED_ICON_SUBDIRS = ("png128", "NorthArrowsPNG128")
+SHIPPED_ICON_SUBDIRS = ("png128", "NorthArrowsPNG128", "xhgen")
+GENERATED_CROSSHAIR_SUBDIR = "xhgen"
 DESKTOP_TOKEN = secrets.token_urlsafe(24)
 OPENED_PATHS: Set[str] = set()
 EXPORT_PATHS: Set[str] = set()
 FILE_TOKENS: Dict[str, str] = {}
 STATE_LOCK = threading.Lock()
 _SCAN_GPS_WINDOW_CALLBACK: Optional[Callable[[], dict]] = None
+_CROSSHAIR_ICON_WINDOW_CALLBACK: Optional[Callable[[], dict]] = None
+_TOOL_WINDOW_CALLBACK: Optional[Callable[[str], dict]] = None
 
 
 def set_scan_gps_window_callback(callback: Optional[Callable[[], dict]]) -> None:
@@ -60,6 +63,67 @@ def invoke_scan_gps_window_callback() -> dict:
     if isinstance(result, dict):
         return result
     return {"error": "Parse GPS from Scan did not return a result."}
+
+
+def set_crosshair_icon_window_callback(callback: Optional[Callable[[], dict]]) -> None:
+    """
+    Register the function that opens the Crosshair icon generator window.
+
+    Args:
+        callback: Callable returning a result dict, or None to clear.
+    """
+    global _CROSSHAIR_ICON_WINDOW_CALLBACK
+    _CROSSHAIR_ICON_WINDOW_CALLBACK = callback
+
+
+def invoke_crosshair_icon_window_callback() -> dict:
+    """
+    Open the crosshair icon tool via the registered desktop callback.
+
+    Returns:
+        Result dict from the callback, or an error when unavailable.
+    """
+    if _CROSSHAIR_ICON_WINDOW_CALLBACK is None:
+        return {"error": "Crosshair icon generator is not available."}
+    try:
+        result = _CROSSHAIR_ICON_WINDOW_CALLBACK()
+    except (OSError, RuntimeError, TypeError, ValueError) as err:
+        return {"error": str(err)}
+    if isinstance(result, dict):
+        return result
+    return {"error": "Crosshair icon generator did not return a result."}
+
+
+def set_tool_window_callback(callback: Optional[Callable[[str], dict]]) -> None:
+    """
+    Register the function that opens a Tools-menu window.
+
+    Args:
+        callback: Callable taking a tool id and returning a result dict, or None to clear.
+    """
+    global _TOOL_WINDOW_CALLBACK
+    _TOOL_WINDOW_CALLBACK = callback
+
+
+def invoke_tool_window_callback(tool: str) -> dict:
+    """
+    Open a tool window via the registered desktop callback.
+
+    Args:
+        tool: Tool id such as ``point-chain`` or ``kml-editor``.
+
+    Returns:
+        Result dict from the callback, or an error when unavailable.
+    """
+    if _TOOL_WINDOW_CALLBACK is None:
+        return {"error": "That tool window is not available."}
+    try:
+        result = _TOOL_WINDOW_CALLBACK(str(tool or "").strip())
+    except (OSError, RuntimeError, TypeError, ValueError) as err:
+        return {"error": str(err)}
+    if isinstance(result, dict):
+        return result
+    return {"error": "That tool window did not return a result."}
 
 
 def user_custom_icons_dir() -> str:
@@ -201,6 +265,76 @@ def custom_icon_catalog_entry(name: str) -> Dict[str, str]:
     return {
         "name": safe,
         "url": f"/__desktop/custom-icon?name={quote(safe)}",
+    }
+
+
+def add_icon_to_shipped_manifest(viewer_root: str, catalog_name: str) -> None:
+    """
+    Add a catalog path to custom-icons/manifest.json when it is not already listed.
+
+    Args:
+        viewer_root: Folder that contains the custom-icons directory.
+        catalog_name: Manifest entry such as ``xhgen/xh-ff0000-00ff00-w8-s128.png``.
+
+    Raises:
+        OSError: When the manifest cannot be read or written.
+        ValueError: When the existing manifest is not a JSON object with an icons list.
+    """
+    manifest_path = os.path.join(viewer_root, "custom-icons", "manifest.json")
+    data: Dict[str, object] = {"icons": []}
+    if os.path.isfile(manifest_path):
+        try:
+            with open(manifest_path, encoding="utf-8") as handle:
+                parsed = json.load(handle)
+        except json.JSONDecodeError as err:
+            raise ValueError("custom-icons/manifest.json is not valid JSON.") from err
+        if not isinstance(parsed, dict) or not isinstance(parsed.get("icons"), list):
+            raise ValueError("custom-icons/manifest.json is missing an icons list.")
+        data = parsed
+    icons = data.get("icons")
+    if not isinstance(icons, list):
+        raise ValueError("custom-icons/manifest.json is missing an icons list.")
+    if catalog_name not in icons:
+        icons.append(catalog_name)
+    data["icons"] = icons
+    os.makedirs(os.path.dirname(manifest_path), exist_ok=True)
+    with open(manifest_path, "w", encoding="utf-8", newline="\n") as handle:
+        json.dump(data, handle, indent=2)
+        handle.write("\n")
+
+
+def save_generated_crosshair_png(
+    viewer_root: str,
+    data: bytes,
+    preferred_file_name: str = "",
+) -> Optional[Dict[str, str]]:
+    """
+    Write a generated crosshair PNG under custom-icons/xhgen and list it in the manifest.
+
+    Args:
+        viewer_root: Folder that contains the custom-icons directory.
+        data: Raw PNG file contents.
+        preferred_file_name: Basename to use inside the xhgen folder.
+
+    Returns:
+        Catalog metadata for the saved icon, or None when the bytes are not a PNG.
+    """
+    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return None
+    safe = _safe_png_basename(preferred_file_name or "xh.png")
+    if not safe:
+        return None
+    directory = os.path.join(viewer_root, "custom-icons", GENERATED_CROSSHAIR_SUBDIR)
+    os.makedirs(directory, exist_ok=True)
+    dest = os.path.join(directory, safe)
+    with open(dest, "wb") as handle:
+        handle.write(data)
+    catalog_name = f"{GENERATED_CROSSHAIR_SUBDIR}/{safe}"
+    add_icon_to_shipped_manifest(viewer_root, catalog_name)
+    return {
+        "name": catalog_name,
+        "url": _shipped_icon_url(catalog_name),
+        "path": dest,
     }
 
 
@@ -599,11 +733,20 @@ def _handler_class(viewer_root: str) -> type:
             if parsed.path == "/__desktop/import-custom-icon":
                 self._import_custom_icon()
                 return
+            if parsed.path == "/__desktop/save-generated-crosshair":
+                self._save_generated_crosshair()
+                return
             if parsed.path == "/__desktop/open-google-earth":
                 self._open_google_earth()
                 return
             if parsed.path == "/__desktop/open-scan-gps-tool":
                 self._open_scan_gps_tool()
+                return
+            if parsed.path == "/__desktop/open-crosshair-icon-tool":
+                self._open_crosshair_icon_tool()
+                return
+            if parsed.path == "/__desktop/open-tool-window":
+                self._open_tool_window(parsed.query)
                 return
             self._send_json(404, {"error": "Not found."})
 
@@ -613,6 +756,21 @@ def _handler_class(viewer_root: str) -> type:
                 self._send_json(403, {"error": "Desktop access was denied."})
                 return
             self._send_json(200, invoke_scan_gps_window_callback())
+
+        def _open_crosshair_icon_tool(self) -> None:
+            """Open the Crosshair icon generator in a new native window."""
+            if not token_ok(self.headers.get("X-Desktop-Token")):
+                self._send_json(403, {"error": "Desktop access was denied."})
+                return
+            self._send_json(200, invoke_crosshair_icon_window_callback())
+
+        def _open_tool_window(self, query: str) -> None:
+            """Open a Tools-menu feature in a new native window."""
+            if not token_ok(self.headers.get("X-Desktop-Token")):
+                self._send_json(403, {"error": "Desktop access was denied."})
+                return
+            tool = parse_qs(query).get("tool", [""])[0]
+            self._send_json(200, invoke_tool_window_callback(tool))
 
         def _serve_source(self, query: str) -> None:
             """Return the bytes of a file registered by the desktop API."""
@@ -844,6 +1002,35 @@ def _handler_class(viewer_root: str) -> type:
                 self._send_json(400, {"error": "The upload was incomplete."})
                 return
             saved = import_custom_icon_png(data, preferred)
+            if not saved:
+                self._send_json(400, {"error": "Expected a PNG image."})
+                return
+            self._send_json(200, {"ok": True, **saved})
+
+        def _save_generated_crosshair(self) -> None:
+            """Save a generated crosshair PNG into custom-icons/xhgen and the manifest."""
+            if not token_ok(self.headers.get("X-Desktop-Token")):
+                self._send_json(403, {"error": "Desktop access was denied."})
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0") or "0")
+            except ValueError:
+                self._send_json(400, {"error": "Invalid upload size."})
+                return
+            if length <= 0 or length > MAX_CUSTOM_ICON_BYTES:
+                self._send_json(400, {"error": "The icon is empty or too large."})
+                return
+            raw_preferred = unquote(self.headers.get("X-Preferred-Filename") or "")
+            preferred = sanitize_png_file_name(raw_preferred or "xh.png")
+            data = self.rfile.read(length)
+            if len(data) != length:
+                self._send_json(400, {"error": "The upload was incomplete."})
+                return
+            try:
+                saved = save_generated_crosshair_png(self.directory or "", data, preferred)
+            except (OSError, ValueError) as err:
+                self._send_json(500, {"error": str(err) or "Could not save the icon."})
+                return
             if not saved:
                 self._send_json(400, {"error": "Expected a PNG image."})
                 return

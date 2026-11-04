@@ -28,6 +28,7 @@
   var fullPreviewCloseBtn = null;
   var fullPreviewDismissBtn = null;
   var fullPreviewSaveBtn = null;
+  var fullPreviewPanelController = null;
   var fullPreviewIndex = null;
   var showScaleToggle = null;
   var showNorthToggle = null;
@@ -990,6 +991,9 @@
     if (fullPreviewDialog) {
       fullPreviewDialog.classList.remove("hidden");
       fullPreviewDialog.setAttribute("aria-hidden", "false");
+    }
+    if (fullPreviewPanelController) {
+      fullPreviewPanelController.ensure();
     }
     syncFullPreviewSaveButton();
   }
@@ -2017,6 +2021,21 @@
   function bindFullPreviewDialog() {
     if (!fullPreviewDialog) {
       return;
+    }
+    var fullPreviewPanel = fullPreviewDialog.querySelector(".borehole-images-full-preview-panel");
+    var fullPreviewHeader = fullPreviewPanel
+      ? fullPreviewPanel.querySelector(".borehole-images-full-preview-header")
+      : null;
+    if (global.FloatingPanel && fullPreviewPanel && fullPreviewHeader) {
+      fullPreviewPanelController = global.FloatingPanel.bind({
+        backdrop: fullPreviewDialog,
+        panel: fullPreviewPanel,
+        dragHandle: fullPreviewHeader,
+        minWidth: 320,
+        minHeight: 260,
+        maxWidthPx: 1400,
+        maxHeightPx: 980,
+      });
     }
     if (fullPreviewCloseBtn) {
       fullPreviewCloseBtn.addEventListener("click", closeFullPreviewDialog);

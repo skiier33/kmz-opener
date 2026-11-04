@@ -99,9 +99,77 @@
     });
   }
 
+  /**
+   * Open the Crosshair icon generator tool window.
+   *
+   * @returns {Promise<object|null>} Result dict or null when not in desktop app.
+   */
+  function openCrosshairIconWindow() {
+    return ensureDesktopSession().then(function (session) {
+      if (!session) {
+        return null;
+      }
+      if (typeof session.api.open_crosshair_icon_window === "function") {
+        return Promise.resolve(session.api.open_crosshair_icon_window());
+      }
+      return global
+        .fetch("/__desktop/open-crosshair-icon-tool", {
+          method: "POST",
+          headers: { "X-Desktop-Token": session.token },
+        })
+        .then(function (response) {
+          return response.json();
+        });
+    });
+  }
+
+  /**
+   * Open a Tools-menu feature in its own window.
+   *
+   * @param {string} tool Tool id: csv-coords, point-chain, or kml-editor.
+   * @returns {Promise<object|null>} Result dict or null when not in the desktop app.
+   */
+  function openToolWindow(tool) {
+    return ensureDesktopSession().then(function (session) {
+      if (!session) {
+        return null;
+      }
+      if (typeof session.api.open_tool_window === "function") {
+        return Promise.resolve(session.api.open_tool_window(tool));
+      }
+      return global
+        .fetch("/__desktop/open-tool-window?tool=" + encodeURIComponent(tool), {
+          method: "POST",
+          headers: { "X-Desktop-Token": session.token },
+        })
+        .then(function (response) {
+          return response.json();
+        });
+    });
+  }
+
+  /**
+   * Ask the main viewer to run a tool command.
+   *
+   * @param {string} action KmzToolHost action name.
+   * @param {object} payload Action payload.
+   * @returns {Promise<object>}
+   */
+  function toolDispatch(action, payload) {
+    return ensureDesktopSession().then(function (session) {
+      if (!session || typeof session.api.tool_dispatch !== "function") {
+        return { error: "Open this tool from the KMZ GIS Viewer." };
+      }
+      return Promise.resolve(session.api.tool_dispatch(action, payload || {}));
+    });
+  }
+
   global.DesktopBridge = {
     whenDesktopApiReady: whenDesktopApiReady,
     ensureDesktopSession: ensureDesktopSession,
     openScanGpsWindow: openScanGpsWindow,
+    openCrosshairIconWindow: openCrosshairIconWindow,
+    openToolWindow: openToolWindow,
+    toolDispatch: toolDispatch,
   };
 })(window);
