@@ -10,6 +10,14 @@
   var scaleSelect = null;
   var widthInput = null;
   var heightInput = null;
+  var widthLabel = null;
+  var heightLabel = null;
+  var dimensionUnitSelect = null;
+  var BOREHOLE_DPI = 96;
+  var DEFAULT_BOREHOLE_WIDTH_PX = 954;
+  var DEFAULT_BOREHOLE_HEIGHT_PX = 615;
+  var DEFAULT_BOREHOLE_WIDTH_IN = DEFAULT_BOREHOLE_WIDTH_PX / BOREHOLE_DPI;
+  var DEFAULT_BOREHOLE_HEIGHT_IN = DEFAULT_BOREHOLE_HEIGHT_PX / BOREHOLE_DPI;
   var dirInput = null;
   var browseBtn = null;
   var placemarkPanel = null;
@@ -128,6 +136,7 @@
         STORAGE_KEY,
         JSON.stringify({
           scale: scaleSelect ? scaleSelect.value : "",
+          dimensionUnit: dimensionUnit(),
           width: widthInput ? widthInput.value : "",
           height: heightInput ? heightInput.value : "",
           directory: dirInput ? dirInput.value : "",
@@ -167,22 +176,81 @@
   }
 
   function defaultWidthPx() {
-    if (global.MapScreenshot && typeof MapScreenshot.defaultWidthPx === "function") {
-      return MapScreenshot.defaultWidthPx();
-    }
-    return 1920;
+    return DEFAULT_BOREHOLE_WIDTH_PX;
   }
 
   function defaultHeightPx() {
-    if (global.MapScreenshot && typeof MapScreenshot.defaultHeightPx === "function") {
-      return MapScreenshot.defaultHeightPx();
+    return DEFAULT_BOREHOLE_HEIGHT_PX;
+  }
+
+  function dimensionUnit() {
+    if (!dimensionUnitSelect) {
+      return "px";
     }
-    return 1080;
+    return dimensionUnitSelect.value === "in" ? "in" : "px";
+  }
+
+  function formatInches(value) {
+    var rounded = Math.round(value * 1000) / 1000;
+    var text = String(rounded);
+    if (text.indexOf(".") >= 0) {
+      text = text.replace(/\.?0+$/, "");
+    }
+    return text;
+  }
+
+  function setDimensionInputsFromPx(pxDims, unit) {
+    if (!widthInput || !heightInput) {
+      return;
+    }
+    unit = unit || dimensionUnit();
+    if (unit === "in") {
+      widthInput.value = formatInches(pxDims.width / BOREHOLE_DPI);
+      heightInput.value = formatInches(pxDims.height / BOREHOLE_DPI);
+      return;
+    }
+    widthInput.value = String(pxDims.width);
+    heightInput.value = String(pxDims.height);
+  }
+
+  function syncDimensionFieldUi() {
+    var unit = dimensionUnit();
+    if (widthLabel) {
+      widthLabel.textContent = unit === "in" ? "Width (in)" : "Width (px)";
+    }
+    if (heightLabel) {
+      heightLabel.textContent = unit === "in" ? "Height (in)" : "Height (px)";
+    }
+    if (widthInput) {
+      widthInput.min = unit === "in" ? "1" : String(MIN_DIM);
+      widthInput.max = unit === "in" ? String(MAX_DIM / BOREHOLE_DPI) : String(MAX_DIM);
+      widthInput.step = unit === "in" ? "0.01" : "1";
+    }
+    if (heightInput) {
+      heightInput.min = unit === "in" ? "1" : String(MIN_DIM);
+      heightInput.max = unit === "in" ? String(MAX_DIM / BOREHOLE_DPI) : String(MAX_DIM);
+      heightInput.step = unit === "in" ? "0.01" : "1";
+    }
+  }
+
+  function onDimensionUnitChange() {
+    if (!dimensionUnitSelect) {
+      return;
+    }
+    var from = dimensionUnitSelect.dataset.lastUnit || "px";
+    var to = dimensionUnit();
+    if (from !== to) {
+      var pxDims = outputDimensionsForUnit(from);
+      setDimensionInputsFromPx(pxDims, to);
+    }
+    dimensionUnitSelect.dataset.lastUnit = to;
+    syncDimensionFieldUi();
+    onCaptureSettingsChange();
   }
 
   function dimensionToPx(raw, fallbackPx) {
     if (global.MapScreenshot && typeof MapScreenshot.dimensionInputToPx === "function") {
-      return MapScreenshot.dimensionInputToPx(raw, "in", fallbackPx);
+      return MapScreenshot.dimensionInputToPx(raw, dimensionUnit(), fallbackPx);
     }
     var n = parseInt(String(raw || "").trim(), 10);
     if (!n || n < MIN_DIM) {
@@ -191,7 +259,7 @@
     return Math.min(MAX_DIM, n);
   }
 
-  function outputDimensions() {
+  function outputDimensionsForUnit(unit) {
     var fallbackW = defaultWidthPx();
     var fallbackH = defaultHeightPx();
     var hasBoreholeWidth = widthInput && String(widthInput.value || "").trim();
@@ -201,10 +269,21 @@
         return MapScreenshot.readOutputDimensions();
       }
     }
+    unit = unit || dimensionUnit();
+    if (global.MapScreenshot && typeof MapScreenshot.dimensionInputToPx === "function") {
+      return {
+        width: MapScreenshot.dimensionInputToPx(widthInput && widthInput.value, unit, fallbackW),
+        height: MapScreenshot.dimensionInputToPx(heightInput && heightInput.value, unit, fallbackH),
+      };
+    }
     return {
       width: dimensionToPx(widthInput && widthInput.value, fallbackW),
       height: dimensionToPx(heightInput && heightInput.value, fallbackH),
     };
+  }
+
+  function outputDimensions() {
+    return outputDimensionsForUnit(dimensionUnit());
   }
 
   function thumbDimensions(outW, outH) {
@@ -2141,11 +2220,26 @@
     ) {
       stored = Object.assign({}, MapExportChrome.readStoredSettings() || {}, stored);
     }
+    var legacyStored = !stored.dimensionUnit && (stored.width || stored.height);
+    var unit = stored.dimensionUnit === "in" || legacyStored ? "in" : "px";
+    if (dimensionUnitSelect) {
+      dimensionUnitSelect.value = unit;
+      dimensionUnitSelect.dataset.lastUnit = unit;
+    }
+    syncDimensionFieldUi();
     if (widthInput) {
-      widthInput.value = stored.width ? String(stored.width) : "20";
+      widthInput.value = stored.width
+        ? String(stored.width)
+        : unit === "in"
+          ? formatInches(DEFAULT_BOREHOLE_WIDTH_IN)
+          : String(DEFAULT_BOREHOLE_WIDTH_PX);
     }
     if (heightInput) {
-      heightInput.value = stored.height ? String(stored.height) : "11.25";
+      heightInput.value = stored.height
+        ? String(stored.height)
+        : unit === "in"
+          ? formatInches(DEFAULT_BOREHOLE_HEIGHT_IN)
+          : String(DEFAULT_BOREHOLE_HEIGHT_PX);
     }
     if (dirInput && stored.directory) {
       dirInput.value = stored.directory;
@@ -2259,6 +2353,9 @@
     scaleSelect = document.getElementById("borehole-images-scale");
     widthInput = document.getElementById("borehole-images-width");
     heightInput = document.getElementById("borehole-images-height");
+    widthLabel = document.getElementById("borehole-images-width-label");
+    heightLabel = document.getElementById("borehole-images-height-label");
+    dimensionUnitSelect = document.getElementById("borehole-images-dimension-unit");
     dirInput = document.getElementById("borehole-images-directory");
     browseBtn = document.getElementById("borehole-images-browse-dir");
     placemarkPanel = document.getElementById("borehole-images-placemark-panel");
@@ -2336,6 +2433,9 @@
     }
     if (heightInput) {
       heightInput.addEventListener("change", onCaptureSettingsChange);
+    }
+    if (dimensionUnitSelect) {
+      dimensionUnitSelect.addEventListener("change", onDimensionUnitChange);
     }
     if (dirInput) {
       dirInput.addEventListener("change", writeSettings);

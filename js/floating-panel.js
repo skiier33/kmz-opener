@@ -1,12 +1,23 @@
 (function (global) {
   "use strict";
 
+  var CORNER_SPECS = [
+    { key: "nw", east: false, south: false, cursor: "nwse-resize" },
+    { key: "ne", east: true, south: false, cursor: "nesw-resize" },
+    { key: "sw", east: false, south: true, cursor: "nesw-resize" },
+    { key: "se", east: true, south: true, cursor: "nwse-resize" },
+  ];
+
   function clamp(value, min, max) {
     return Math.min(max, Math.max(min, value));
   }
 
+  function isFloatingPanelResizeNode(node) {
+    return !!(node && node.classList && node.classList.contains("floating-panel-resize"));
+  }
+
   /**
-   * Make a dialog panel draggable (via header) and resizable (SE handle).
+   * Make a dialog panel draggable (via header) and resizable (corner handles).
    *
    * @param {object} options
    * @param {HTMLElement} options.backdrop Full-screen dialog root
@@ -14,6 +25,8 @@
    * @param {HTMLElement} [options.dragHandle] Header used as drag handle
    * @param {number} [options.minWidth]
    * @param {number} [options.minHeight]
+   * @param {number} [options.defaultWidth] Preferred width on reset
+   * @param {number} [options.defaultHeight] Preferred height on reset
    * @param {number} [options.maxWidthFraction] Max width as fraction of viewport
    * @param {number} [options.maxHeightFraction] Max height as fraction of viewport
    * @param {number} [options.maxWidthPx] Absolute max width cap
@@ -26,6 +39,8 @@
     var dragHandle = options.dragHandle;
     var minWidth = options.minWidth != null ? options.minWidth : 280;
     var minHeight = options.minHeight != null ? options.minHeight : 200;
+    var defaultWidth = options.defaultWidth;
+    var defaultHeight = options.defaultHeight;
     var maxWidthFraction = options.maxWidthFraction != null ? options.maxWidthFraction : 0.96;
     var maxHeightFraction = options.maxHeightFraction != null ? options.maxHeightFraction : 0.92;
     var maxWidthPx = options.maxWidthPx != null ? options.maxWidthPx : 1400;
@@ -50,14 +65,22 @@
       dragHandle.classList.add("floating-panel-drag-handle");
     }
 
-    var resizeHandle = panel.querySelector(".floating-panel-resize");
-    if (!resizeHandle) {
-      resizeHandle = global.document.createElement("div");
-      resizeHandle.className = "floating-panel-resize";
-      resizeHandle.setAttribute("role", "presentation");
-      resizeHandle.setAttribute("aria-hidden", "true");
-      panel.appendChild(resizeHandle);
+    var legacyResize = panel.querySelector(".floating-panel-resize");
+    if (legacyResize && !legacyResize.classList.contains("floating-panel-resize--se")) {
+      legacyResize.classList.add("floating-panel-resize--se");
     }
+    CORNER_SPECS.forEach(function (spec) {
+      var handle = panel.querySelector(".floating-panel-resize--" + spec.key);
+      if (handle) {
+        return;
+      }
+      handle = global.document.createElement("div");
+      handle.className = "floating-panel-resize floating-panel-resize--" + spec.key;
+      handle.style.cursor = spec.cursor;
+      handle.setAttribute("role", "presentation");
+      handle.setAttribute("aria-hidden", "true");
+      panel.appendChild(handle);
+    });
 
     var layoutInitialized = false;
     var dragState = null;
@@ -68,6 +91,12 @@
       var vh = global.innerHeight;
       var maxW = Math.min(vw * maxWidthFraction, maxWidthPx);
       var maxH = Math.min(vh * maxHeightFraction, maxHeightPx);
+      if (defaultWidth != null && defaultHeight != null) {
+        return {
+          width: clamp(defaultWidth, minWidth, Math.min(maxW, vw - viewportPad * 2)),
+          height: clamp(defaultHeight, minHeight, Math.min(maxH, vh - viewportPad * 2)),
+        };
+      }
       return {
         width: clamp(maxW, minWidth, vw - viewportPad * 2),
         height: clamp(maxH, minHeight, vh - viewportPad * 2),
@@ -99,6 +128,24 @@
       panel.style.top = Math.round(t) + "px";
     }
 
+    function applyPanelResizeGeometry(left, top, width, height, east, south) {
+      var vw = global.innerWidth;
+      var vh = global.innerHeight;
+      var maxW = Math.min(vw - viewportPad * 2, maxWidthPx);
+      var maxH = Math.min(vh - viewportPad * 2, maxHeightPx);
+      var w = clamp(width, minWidth, maxW);
+      var h = clamp(height, minHeight, maxH);
+      var l = left;
+      var t = top;
+      if (!east) {
+        l = left + (width - w);
+      }
+      if (!south) {
+        t = top + (height - h);
+      }
+      applyPanelGeometry(l, t, w, h);
+    }
+
     function resetLayout(force) {
       if (layoutInitialized && !force) {
         return;
@@ -116,8 +163,18 @@
     }
 
     function ensureLayout() {
-      if (!layoutInitialized || !panel.style.width) {
+      if (!layoutInitialized) {
         resetLayout(false);
+        return;
+      }
+      if (!panel.style.width || !panel.style.height) {
+        var missingSizeRect = readPanelRect();
+        applyPanelGeometry(
+          missingSizeRect.left,
+          missingSizeRect.top,
+          missingSizeRect.width,
+          missingSizeRect.height
+        );
         return;
       }
       var rect = readPanelRect();
@@ -195,7 +252,7 @@
       if (!resizeState) {
         return;
       }
-      resizeHandle.classList.remove("is-dragging");
+      resizeState.handle.classList.remove("is-dragging");
       global.document.body.classList.remove("floating-panel-resizing");
       resizeState = null;
     }
@@ -206,12 +263,23 @@
       }
       var dx = event.clientX - resizeState.startX;
       var dy = event.clientY - resizeState.startY;
-      applyPanelGeometry(
-        resizeState.startLeft,
-        resizeState.startTop,
-        resizeState.startWidth + dx,
-        resizeState.startHeight + dy
-      );
+      var width = resizeState.startWidth;
+      var height = resizeState.startHeight;
+      var left = resizeState.startLeft;
+      var top = resizeState.startTop;
+      if (resizeState.east) {
+        width = resizeState.startWidth + dx;
+      } else {
+        width = resizeState.startWidth - dx;
+        left = resizeState.startLeft + dx;
+      }
+      if (resizeState.south) {
+        height = resizeState.startHeight + dy;
+      } else {
+        height = resizeState.startHeight - dy;
+        top = resizeState.startTop + dy;
+      }
+      applyPanelResizeGeometry(left, top, width, height, resizeState.east, resizeState.south);
     }
 
     function onResizePointerUp() {
@@ -224,28 +292,38 @@
       global.window.removeEventListener("pointercancel", onResizePointerUp);
     }
 
-    resizeHandle.addEventListener("pointerdown", function (event) {
-      if (event.button !== 0) {
+    CORNER_SPECS.forEach(function (spec) {
+      var handle = panel.querySelector(".floating-panel-resize--" + spec.key);
+      if (!handle || handle.dataset.floatingPanelResizeBound === "1") {
         return;
       }
-      event.preventDefault();
-      event.stopPropagation();
-      ensureLayout();
-      var rect = readPanelRect();
-      resizeState = {
-        startX: event.clientX,
-        startY: event.clientY,
-        startLeft: rect.left,
-        startTop: rect.top,
-        startWidth: rect.width,
-        startHeight: rect.height,
-      };
-      resizeHandle.classList.add("is-dragging");
-      global.document.body.classList.add("floating-panel-resizing");
-      resizeHandle.setPointerCapture(event.pointerId);
-      global.window.addEventListener("pointermove", onResizePointerMove);
-      global.window.addEventListener("pointerup", onResizePointerUp);
-      global.window.addEventListener("pointercancel", onResizePointerUp);
+      handle.dataset.floatingPanelResizeBound = "1";
+      handle.addEventListener("pointerdown", function (event) {
+        if (event.button !== 0) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        ensureLayout();
+        var rect = readPanelRect();
+        resizeState = {
+          handle: handle,
+          east: spec.east,
+          south: spec.south,
+          startX: event.clientX,
+          startY: event.clientY,
+          startLeft: rect.left,
+          startTop: rect.top,
+          startWidth: rect.width,
+          startHeight: rect.height,
+        };
+        handle.classList.add("is-dragging");
+        global.document.body.classList.add("floating-panel-resizing");
+        handle.setPointerCapture(event.pointerId);
+        global.window.addEventListener("pointermove", onResizePointerMove);
+        global.window.addEventListener("pointerup", onResizePointerUp);
+        global.window.addEventListener("pointercancel", onResizePointerUp);
+      });
     });
 
     global.window.addEventListener("resize", function () {
@@ -267,10 +345,7 @@
         parseFloat(bodyStyle.paddingTop) + parseFloat(bodyStyle.paddingBottom);
       var chromeH = 0;
       Array.prototype.forEach.call(panel.children, function (child) {
-        if (
-          child === body
-          || child.classList.contains("floating-panel-resize")
-        ) {
+        if (child === body || isFloatingPanelResizeNode(child)) {
           return;
         }
         chromeH += child.offsetHeight;

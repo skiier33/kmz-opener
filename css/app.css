@@ -1892,6 +1892,17 @@ body.sidebar-panel-resizing * {
   min-width: 0;
 }
 
+.layers-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.layers-toggle-inspect-btn[aria-pressed="false"] {
+  opacity: 0.55;
+}
+
 .layers-add-btn {
   display: inline-flex;
   align-items: center;
@@ -2025,9 +2036,17 @@ body.sidebar-panel-resizing * {
 
 .borehole-images-hint,
 .borehole-images-field-wide,
+.borehole-images-size-row,
 .borehole-images-file-row,
 .borehole-images-toggle {
   grid-column: 1 / -1;
+}
+
+.borehole-images-size-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr minmax(72px, 0.65fr);
+  gap: 8px;
+  align-items: end;
 }
 
 .borehole-images-toggle {
@@ -2494,16 +2513,37 @@ body.floating-panel-dragging {
 
 .floating-panel-resize {
   position: absolute;
-  right: 0;
-  bottom: 0;
-  width: 18px;
-  height: 18px;
-  cursor: nwse-resize;
+  width: 16px;
+  height: 16px;
   touch-action: none;
-  z-index: 2;
+  z-index: 3;
 }
 
-.floating-panel-resize::after {
+.floating-panel-resize--nw {
+  left: 0;
+  top: 0;
+  cursor: nwse-resize;
+}
+
+.floating-panel-resize--ne {
+  right: 0;
+  top: 0;
+  cursor: nesw-resize;
+}
+
+.floating-panel-resize--sw {
+  left: 0;
+  bottom: 0;
+  cursor: nesw-resize;
+}
+
+.floating-panel-resize--se {
+  right: 0;
+  bottom: 0;
+  cursor: nwse-resize;
+}
+
+.floating-panel-resize--se::after {
   content: "";
   position: absolute;
   right: 4px;
@@ -4343,6 +4383,7 @@ body.icon-picker-scroll-resizing * {
   max-width: none;
   max-height: none;
   overflow: hidden;
+  box-sizing: border-box;
 }
 
 .node-map-label-dialog.node-map-label-dialog--bulk .feature-properties-header {
@@ -4378,8 +4419,7 @@ body.icon-picker-scroll-resizing * {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  min-height: 120px;
-  flex: 1;
+  flex: 0 0 auto;
   min-width: 0;
 }
 
@@ -4387,13 +4427,71 @@ body.icon-picker-scroll-resizing * {
   display: none;
 }
 
+.node-map-label-per-point-list {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
 .node-map-label-per-point-scroll {
-  flex: 1;
-  min-height: 0;
+  flex-shrink: 0;
   overflow: auto;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 6px 6px 0 0;
   background: var(--panel-2);
+  max-height: 132px;
+  overscroll-behavior: contain;
+}
+
+.node-map-label-per-point-scroll.is-height-custom {
+  min-height: 88px;
+  max-height: 480px;
+}
+
+.node-map-label-per-point-resize {
+  flex-shrink: 0;
+  height: 7px;
+  margin: 0;
+  cursor: row-resize;
+  touch-action: none;
+  position: relative;
+  z-index: 1;
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 6px 6px;
+  background: var(--panel-2);
+}
+
+.node-map-label-per-point-resize::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 3px;
+  height: 1px;
+  background: var(--border);
+  transition: background 0.12s ease, height 0.12s ease;
+}
+
+.node-map-label-per-point-resize:hover::before,
+.node-map-label-per-point-resize:focus-visible::before,
+.node-map-label-per-point-resize.is-dragging::before {
+  top: 2px;
+  height: 3px;
+  background: var(--accent);
+}
+
+.node-map-label-per-point-resize:focus-visible {
+  outline: none;
+}
+
+body.node-map-label-per-point-scroll-resizing {
+  cursor: row-resize !important;
+  user-select: none;
+}
+
+body.node-map-label-per-point-scroll-resizing * {
+  cursor: row-resize !important;
 }
 
 .node-map-label-per-point-table {

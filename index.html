@@ -545,28 +545,43 @@
                 <span class="borehole-images-label">Map scale</span>
                 <select id="borehole-images-scale" aria-label="Map scale for borehole screenshots"></select>
               </label>
-              <label class="borehole-images-field">
-                <span class="borehole-images-label">Width (in)</span>
-                <input
-                  id="borehole-images-width"
-                  type="text"
-                  value="20"
-                  spellcheck="false"
-                  autocomplete="off"
-                  title="Optional px or in prefix (e.g. px800, in10). Without a prefix, values are inches."
-                />
-              </label>
-              <label class="borehole-images-field">
-                <span class="borehole-images-label">Height (in)</span>
-                <input
-                  id="borehole-images-height"
-                  type="text"
-                  value="11.25"
-                  spellcheck="false"
-                  autocomplete="off"
-                  title="Optional px or in prefix (e.g. px800, in10). Without a prefix, values are inches."
-                />
-              </label>
+              <div class="borehole-images-size-row">
+                <label class="borehole-images-field">
+                  <span id="borehole-images-width-label" class="borehole-images-label">Width (px)</span>
+                  <input
+                    id="borehole-images-width"
+                    type="number"
+                    min="64"
+                    max="8192"
+                    step="1"
+                    value="954"
+                    spellcheck="false"
+                    autocomplete="off"
+                    aria-label="Capture width in selected units"
+                  />
+                </label>
+                <label class="borehole-images-field">
+                  <span id="borehole-images-height-label" class="borehole-images-label">Height (px)</span>
+                  <input
+                    id="borehole-images-height"
+                    type="number"
+                    min="64"
+                    max="8192"
+                    step="1"
+                    value="615"
+                    spellcheck="false"
+                    autocomplete="off"
+                    aria-label="Capture height in selected units"
+                  />
+                </label>
+                <label class="borehole-images-field">
+                  <span class="borehole-images-label">Unit</span>
+                  <select id="borehole-images-dimension-unit" aria-label="Width and height unit">
+                    <option value="px" selected>px</option>
+                    <option value="in">inch</option>
+                  </select>
+                </label>
+              </div>
               <label class="borehole-images-toggle borehole-images-field-wide">
                 <input id="borehole-images-show-scale" type="checkbox" />
                 Show scale legend on captures
@@ -1409,11 +1424,21 @@
                   <p class="muted icon-picker-hint">
                     Override position and style for individual points. Preview to see changes on the map.
                   </p>
-                  <div class="node-map-label-per-point-scroll">
-                    <table class="node-map-label-per-point-table" id="node-map-label-per-point-table">
-                      <thead id="node-map-label-per-point-head"></thead>
-                      <tbody id="node-map-label-per-point-body"></tbody>
-                    </table>
+                  <div class="node-map-label-per-point-list">
+                    <div class="node-map-label-per-point-scroll" id="node-map-label-per-point-scroll">
+                      <table class="node-map-label-per-point-table" id="node-map-label-per-point-table">
+                        <thead id="node-map-label-per-point-head"></thead>
+                        <tbody id="node-map-label-per-point-body"></tbody>
+                      </table>
+                    </div>
+                    <div
+                      id="node-map-label-per-point-resize"
+                      class="node-map-label-per-point-resize"
+                      role="separator"
+                      aria-orientation="horizontal"
+                      aria-label="Drag to resize per-point list height"
+                      tabindex="0"
+                    ></div>
                   </div>
                 </div>
                 <label
@@ -1551,17 +1576,34 @@
             <section class="sidebar-section sidebar-layers">
               <div class="sidebar-layers-head">
                 <h2>Layers</h2>
-                <button
-                  type="button"
-                  class="layers-add-btn"
-                  id="layers-add"
-                  title="Add KMZ or KML files to the map"
-                  aria-label="Add KMZ or KML files"
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
-                  </svg>
-                </button>
+                <div class="layers-head-actions">
+                  <button
+                    type="button"
+                    class="layers-add-btn layers-toggle-inspect-btn"
+                    id="layers-toggle-inspect"
+                    aria-pressed="true"
+                    title="Hide Inspect panel"
+                    aria-label="Hide Inspect panel"
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path
+                        fill="currentColor"
+                        d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14H5v-2h7v2zm0-4H5v-2h7v2zm0-4H5V7h7v2zm7 10h-2v-2h2v2zm0-4h-2v-2h2v2zm0-4h-2V7h2v2z"
+                      />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    class="layers-add-btn"
+                    id="layers-add"
+                    title="Add KMZ or KML files to the map"
+                    aria-label="Add KMZ or KML files"
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
+                    </svg>
+                  </button>
+                </div>
               </div>
               <div class="layers-bulk-labels">
                 <button

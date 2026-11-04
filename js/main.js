@@ -75,7 +75,9 @@
   var layersHideBtn = document.getElementById("layers-hide");
   var layersSortBtn = document.getElementById("layers-sort");
   var layersAddBtn = document.getElementById("layers-add");
+  var layersInspectToggleBtn = document.getElementById("layers-toggle-inspect");
   var layersAddLabelsBtn = document.getElementById("layers-add-labels");
+  var SIDEBAR_INSPECT_SECTION_SLUG = "inspect";
   var fileSaveBtn = document.getElementById("file-save-copy");
   var fileEditKmlBtn = document.getElementById("file-edit-kml-external");
   var toolbarEditKmlBtn = document.getElementById("btn-edit-kml-external");
@@ -119,6 +121,10 @@
   var ICON_PICKER_SCROLL_MIN_H = 72;
   var ICON_PICKER_SCROLL_MAX_H = 520;
   var ICON_PICKER_SCROLL_DEFAULT_MAX_H = 168;
+  var NODE_MAP_LABEL_PER_POINT_SCROLL_HEIGHT_KEY = "kmz-node-map-label-per-point-scroll-height";
+  var NODE_MAP_LABEL_PER_POINT_SCROLL_MIN_H = 88;
+  var NODE_MAP_LABEL_PER_POINT_SCROLL_MAX_H = 480;
+  var NODE_MAP_LABEL_PER_POINT_VISIBLE_ROWS = 3;
   var SIDEBAR_WIDTH_MIN = 220;
   var SIDEBAR_WIDTH_MAX = 560;
   var sidebarWidthInvalidateTimer = null;
@@ -233,6 +239,17 @@
     return sidebarSectionHiddenState[slug] === true;
   }
 
+  function syncLayersInspectToggleButton() {
+    if (!layersInspectToggleBtn) {
+      return;
+    }
+    var visible = !isSidebarSectionUserHidden(SIDEBAR_INSPECT_SECTION_SLUG);
+    layersInspectToggleBtn.setAttribute("aria-pressed", visible ? "true" : "false");
+    var label = visible ? "Hide Inspect panel" : "Show Inspect panel";
+    layersInspectToggleBtn.title = label;
+    layersInspectToggleBtn.setAttribute("aria-label", label);
+  }
+
   function applySidebarSectionUserHidden(section, slug, hidden) {
     section.classList.toggle("sidebar-section-user-hidden", hidden);
     var entry = findSidebarSectionEntry(slug);
@@ -241,6 +258,9 @@
     }
     if (entry && entry.toolsMenuItem) {
       entry.toolsMenuItem.setAttribute("aria-checked", hidden ? "false" : "true");
+    }
+    if (slug === SIDEBAR_INSPECT_SECTION_SLUG) {
+      syncLayersInspectToggleButton();
     }
     syncSidebarInspectSplitHandle();
   }
@@ -1006,6 +1026,7 @@
   var layerTreeContextMenuPlacemarksOnlyBtn = null;
   var layerTreeContextMenuAddLabelBtn = null;
   var layerTreeContextMenuBulkLabelsBtn = null;
+  var layerTreeContextMenuInspectBtn = null;
   var layerTreeIconIncludeChildren = true;
   var layerTreeIconPlacemarksOnly = false;
   var layerNodeIconDialog = document.getElementById("layer-node-icon-dialog");
@@ -4319,6 +4340,165 @@
     nodeMapLabelSubtitle.textContent = subtitle;
   }
 
+  function clampNodeMapLabelPerPointScrollHeight(px) {
+    return Math.min(
+      NODE_MAP_LABEL_PER_POINT_SCROLL_MAX_H,
+      Math.max(NODE_MAP_LABEL_PER_POINT_SCROLL_MIN_H, px)
+    );
+  }
+
+  function readNodeMapLabelPerPointScrollHeight() {
+    try {
+      var raw = localStorage.getItem(NODE_MAP_LABEL_PER_POINT_SCROLL_HEIGHT_KEY);
+      if (raw == null || raw === "") {
+        return null;
+      }
+      var parsed = Number(raw);
+      if (!Number.isFinite(parsed)) {
+        return null;
+      }
+      return clampNodeMapLabelPerPointScrollHeight(parsed);
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function writeNodeMapLabelPerPointScrollHeight(px) {
+    try {
+      localStorage.setItem(NODE_MAP_LABEL_PER_POINT_SCROLL_HEIGHT_KEY, String(px));
+    } catch (err) {
+      /* ignore quota / private mode */
+    }
+  }
+
+  function measureNodeMapLabelPerPointScrollDefaultHeight(scroller) {
+    if (!scroller) {
+      return NODE_MAP_LABEL_PER_POINT_SCROLL_MIN_H;
+    }
+    var table = scroller.querySelector(".node-map-label-per-point-table");
+    if (!table) {
+      return NODE_MAP_LABEL_PER_POINT_SCROLL_MIN_H;
+    }
+    var headerRow = table.querySelector("thead tr");
+    var bodyRow = table.querySelector("tbody tr");
+    var headerHeight = headerRow ? headerRow.offsetHeight : 28;
+    var rowHeight = bodyRow ? bodyRow.offsetHeight : 28;
+    return clampNodeMapLabelPerPointScrollHeight(
+      headerHeight + rowHeight * NODE_MAP_LABEL_PER_POINT_VISIBLE_ROWS + 2
+    );
+  }
+
+  function applyNodeMapLabelPerPointScrollHeight(scroller, px, persist) {
+    if (!scroller || px == null || !Number.isFinite(px)) {
+      return;
+    }
+    var clamped = clampNodeMapLabelPerPointScrollHeight(px);
+    scroller.classList.add("is-height-custom");
+    scroller.style.height = Math.round(clamped) + "px";
+    scroller.style.maxHeight = Math.round(clamped) + "px";
+    if (persist) {
+      writeNodeMapLabelPerPointScrollHeight(clamped);
+    }
+  }
+
+  function syncNodeMapLabelPerPointScrollHeight(scroller) {
+    if (!scroller) {
+      return;
+    }
+    var stored = readNodeMapLabelPerPointScrollHeight();
+    if (stored !== null) {
+      applyNodeMapLabelPerPointScrollHeight(scroller, stored, false);
+      return;
+    }
+    applyNodeMapLabelPerPointScrollHeight(
+      scroller,
+      measureNodeMapLabelPerPointScrollDefaultHeight(scroller),
+      false
+    );
+  }
+
+  function bindNodeMapLabelPerPointScrollResize() {
+    var handle = document.getElementById("node-map-label-per-point-resize");
+    var scroller = document.getElementById("node-map-label-per-point-scroll");
+    if (!handle || !scroller || handle.dataset.resizeBound === "1") {
+      return;
+    }
+    handle.dataset.resizeBound = "1";
+
+    var stored = readNodeMapLabelPerPointScrollHeight();
+    if (stored !== null) {
+      applyNodeMapLabelPerPointScrollHeight(scroller, stored, false);
+    }
+
+    var drag = null;
+
+    function finishDrag() {
+      if (!drag) {
+        return;
+      }
+      handle.classList.remove("is-dragging");
+      document.body.classList.remove("node-map-label-per-point-scroll-resizing");
+      drag = null;
+    }
+
+    function onPointerMove(event) {
+      if (!drag) {
+        return;
+      }
+      var delta = event.clientY - drag.startY;
+      applyNodeMapLabelPerPointScrollHeight(scroller, drag.startHeight + delta, false);
+    }
+
+    function onPointerUp() {
+      if (!drag) {
+        return;
+      }
+      var current = scroller.offsetHeight;
+      if (Number.isFinite(current)) {
+        applyNodeMapLabelPerPointScrollHeight(scroller, current, true);
+      }
+      finishDrag();
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
+    }
+
+    handle.addEventListener("pointerdown", function (event) {
+      if (event.button !== 0) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      if (!scroller.classList.contains("is-height-custom")) {
+        syncNodeMapLabelPerPointScrollHeight(scroller);
+      }
+      drag = { startY: event.clientY, startHeight: scroller.offsetHeight };
+      handle.classList.add("is-dragging");
+      document.body.classList.add("node-map-label-per-point-scroll-resizing");
+      handle.setPointerCapture(event.pointerId);
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", onPointerUp);
+      window.addEventListener("pointercancel", onPointerUp);
+    });
+
+    handle.addEventListener("keydown", function (event) {
+      var step = event.shiftKey ? 24 : 8;
+      var dir = 0;
+      if (event.key === "ArrowDown") {
+        dir = 1;
+      } else if (event.key === "ArrowUp") {
+        dir = -1;
+      } else {
+        return;
+      }
+      event.preventDefault();
+      if (!scroller.classList.contains("is-height-custom")) {
+        syncNodeMapLabelPerPointScrollHeight(scroller);
+      }
+      applyNodeMapLabelPerPointScrollHeight(scroller, scroller.offsetHeight + dir * step, true);
+    });
+  }
+
   function setNodeMapLabelPerPointPanelOpen(open) {
     var session = nodeMapLabelSession;
     var panel = document.getElementById("node-map-label-per-point-panel");
@@ -4336,6 +4516,10 @@
     }
     if (open) {
       renderNodeMapLabelPerPointTable();
+      var scroller = document.getElementById("node-map-label-per-point-scroll");
+      if (scroller) {
+        syncNodeMapLabelPerPointScrollHeight(scroller);
+      }
       if (nodeMapLabelFloatingController && nodeMapLabelFloatingController.ensure) {
         nodeMapLabelFloatingController.ensure();
       }
@@ -4518,6 +4702,12 @@
       tbody.appendChild(tr);
       syncPerPointRowBgControls(tr);
     });
+    if (session.perPointOpen) {
+      var perPointScroller = document.getElementById("node-map-label-per-point-scroll");
+      if (perPointScroller) {
+        syncNodeMapLabelPerPointScrollHeight(perPointScroller);
+      }
+    }
   }
 
   function onNodeMapLabelSourceChanged() {
@@ -5014,6 +5204,20 @@
       clearTimeout(popupTimer);
       popupTimer = null;
     }
+  }
+
+  function showLayerNodeInInspectPanel(nodeId, revealPanel) {
+    if (!nodeId) {
+      return;
+    }
+    if (
+      revealPanel
+      && isSidebarSectionUserHidden(SIDEBAR_INSPECT_SECTION_SLUG)
+    ) {
+      setSidebarSectionUserHidden(SIDEBAR_INSPECT_SECTION_SLUG, false);
+    }
+    cancelInspectPopup();
+    GisMap.selectFeature(nodeId, false, "layers");
   }
 
   function scheduleInspectPopup(id) {
@@ -6997,6 +7201,9 @@
         ? "Apply label styles to every point in this file"
         : "This file has no point placemarks";
     }
+    if (layerTreeContextMenuInspectBtn) {
+      layerTreeContextMenuInspectBtn.disabled = !focusId;
+    }
   }
 
   function createLayerTreeContextMenu() {
@@ -7018,6 +7225,19 @@
       if (sourceId) {
         saveSourceFromLayerTree(sourceId);
       }
+    });
+
+    layerTreeContextMenuInspectBtn = document.createElement("button");
+    layerTreeContextMenuInspectBtn.type = "button";
+    layerTreeContextMenuInspectBtn.className = "map-context-menu-item";
+    layerTreeContextMenuInspectBtn.setAttribute("role", "menuitem");
+    layerTreeContextMenuInspectBtn.textContent = "Inspect";
+    layerTreeContextMenuInspectBtn.addEventListener("click", function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      var id = focusId;
+      hideLayerTreeContextMenu();
+      showLayerNodeInInspectPanel(id, true);
     });
 
     layerTreeContextMenuGotoBtn = document.createElement("button");
@@ -7160,6 +7380,7 @@
       }
     );
 
+    layerTreeContextMenu.appendChild(layerTreeContextMenuInspectBtn);
     layerTreeContextMenu.appendChild(layerTreeContextMenuGotoBtn);
     layerTreeContextMenu.appendChild(layerTreeContextMenuSaveBtn);
     layerTreeContextMenu.appendChild(layerTreeContextMenuDeleteBtn);
@@ -7754,10 +7975,13 @@
         dragHandle: header,
         minWidth: 420,
         minHeight: 360,
+        defaultWidth: 520,
+        defaultHeight: 620,
         maxWidthPx: 1200,
         maxHeightPx: 920,
       });
     }
+    bindNodeMapLabelPerPointScrollResize();
     var closeBtn = document.getElementById("node-map-label-close");
     var cancelBtn = document.getElementById("node-map-label-cancel");
     if (closeBtn) {
@@ -10186,6 +10410,12 @@
   document.getElementById("btn-open").addEventListener("click", promptOpenFile);
   if (layersAddBtn) {
     layersAddBtn.addEventListener("click", promptLayerFilePicker);
+  }
+  if (layersInspectToggleBtn) {
+    syncLayersInspectToggleButton();
+    layersInspectToggleBtn.addEventListener("click", function () {
+      toggleSidebarSectionUserHidden(SIDEBAR_INSPECT_SECTION_SLUG);
+    });
   }
   function openMapPopoutBrowserWindow() {
     var url = new URL(location.href);
