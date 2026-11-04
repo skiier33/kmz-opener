@@ -267,6 +267,52 @@
     return rows;
   }
 
+  function extendedDataFieldKey(fieldName) {
+    return String(fieldName || "")
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "");
+  }
+
+  var BOREHOLE_ID_FIELD_KEYS = {
+    BHID: true,
+    BH: true,
+    BOREHOLE: true,
+    BOREHOLEID: true,
+    BORING: true,
+    BORINGID: true,
+    BOREID: true,
+    POINTID: true,
+  };
+
+  var LATITUDE_FIELD_KEYS = {
+    LAT: true,
+    LATITUDE: true,
+    LATITUDEN: true,
+    LATN: true,
+    NLAT: true,
+    GPSN: true,
+    NORTH: true,
+    NORTHING: true,
+    Y: true,
+  };
+
+  var LONGITUDE_FIELD_KEYS = {
+    LONG: true,
+    LON: true,
+    LONGITUDE: true,
+    LONGITUDEW: true,
+    LONGW: true,
+    LNG: true,
+    LONW: true,
+    WLON: true,
+    GPSW: true,
+    WEST: true,
+    WESTING: true,
+    EASTING: true,
+    X: true,
+  };
+
   function extendedDataValue(rows, fieldName) {
     if (!rows || !rows.length || !fieldName) {
       return "";
@@ -280,6 +326,42 @@
     return "";
   }
 
+  function extendedDataBoreholeId(rows) {
+    if (!rows || !rows.length) {
+      return "";
+    }
+    var i;
+    for (i = 0; i < rows.length; i += 1) {
+      var key = extendedDataFieldKey(rows[i].name);
+      if (BOREHOLE_ID_FIELD_KEYS[key]) {
+        return String(rows[i].value || "").trim();
+      }
+    }
+    return "";
+  }
+
+  function extendedDataHasCoordinateFields(rows) {
+    if (!rows || !rows.length) {
+      return false;
+    }
+    var hasLat = false;
+    var hasLong = false;
+    var i;
+    for (i = 0; i < rows.length; i += 1) {
+      var key = extendedDataFieldKey(rows[i].name);
+      if (LATITUDE_FIELD_KEYS[key]) {
+        hasLat = true;
+      }
+      if (LONGITUDE_FIELD_KEYS[key]) {
+        hasLong = true;
+      }
+      if (hasLat && hasLong) {
+        return true;
+      }
+    }
+    return hasLat || hasLong;
+  }
+
   function placemarkBhId(placemarkEl, rows) {
     var match = placemarkCsvMatchId(placemarkEl, rows);
     return match.id;
@@ -290,7 +372,7 @@
       return { id: "", idSource: "" };
     }
     rows = rows && rows.length ? rows : parseExtendedData(placemarkEl);
-    var fromExtended = extendedDataValue(rows, "BH_ID");
+    var fromExtended = extendedDataBoreholeId(rows);
     if (fromExtended) {
       return { id: fromExtended, idSource: "extended" };
     }
@@ -324,11 +406,7 @@
     if (!rows || !rows.length) {
       return false;
     }
-    return !!(
-      extendedDataValue(rows, "BH_ID") ||
-      extendedDataValue(rows, "LAT") ||
-      extendedDataValue(rows, "LONG")
-    );
+    return !!(extendedDataBoreholeId(rows) || extendedDataHasCoordinateFields(rows));
   }
 
   function parseGeometry(el, geometries) {
@@ -641,6 +719,11 @@
     kmlColorToCss: kmlColorToCss,
     parseExtendedData: parseExtendedData,
     extendedDataValue: extendedDataValue,
+    extendedDataFieldKey: extendedDataFieldKey,
+    extendedDataBoreholeId: extendedDataBoreholeId,
+    extendedDataHasCoordinateFields: extendedDataHasCoordinateFields,
+    LATITUDE_FIELD_KEYS: LATITUDE_FIELD_KEYS,
+    LONGITUDE_FIELD_KEYS: LONGITUDE_FIELD_KEYS,
     placemarkBhId: placemarkBhId,
     placemarkCsvMatchId: placemarkCsvMatchId,
     placemarkHasPointCoordinates: placemarkHasPointCoordinates,

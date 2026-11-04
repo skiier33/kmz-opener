@@ -14,7 +14,9 @@ from desktop.geg_appendix_excel import (
     list_appendix_preview,
     list_screenshot_pngs,
     validate_screenshot_directory,
+    validate_template_path,
 )
+from PIL import Image
 
 
 class TestGegAppendixExcel(unittest.TestCase):
@@ -54,10 +56,23 @@ class TestGegAppendixExcel(unittest.TestCase):
     def test_list_appendix_preview(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             for i in range(3):
-                open(os.path.join(tmp, f"b{i}.png"), "wb").close()
+                path = os.path.join(tmp, f"b{i}.png")
+                Image.new("RGB", (40, 20), color=(i * 40, 80, 120)).save(path)
             preview = list_appendix_preview(tmp, limit=2)
             self.assertEqual(preview["count"], 3)
             self.assertEqual(len(preview["names"]), 2)
+            self.assertEqual(len(preview["sheets"]), 3)
+            self.assertTrue(preview["sheets"][0]["thumbJpegB64"])
+
+    def test_validate_template_path(self) -> None:
+        self.assertIsNotNone(validate_template_path(""))
+        with tempfile.TemporaryDirectory() as tmp:
+            xlsx = os.path.join(tmp, "t.xlsx")
+            open(xlsx, "wb").close()
+            self.assertIsNotNone(validate_template_path(xlsx))
+            xlsm = os.path.join(tmp, "t.xlsm")
+            open(xlsm, "wb").close()
+            self.assertIsNone(validate_template_path(xlsm))
 
 
 if __name__ == "__main__":

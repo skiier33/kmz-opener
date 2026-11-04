@@ -98,6 +98,18 @@ def test_embed_and_read_round_trip() -> None:
             "extendedData": {"BH_ID": "B6A"},
             "kmlTags": [{"path": "name", "tag": "name", "value": "B6A"}],
         },
+        "visiblePlacemarks": [
+            {
+                "nodeId": "src:node1",
+                "sourceId": "src",
+                "name": "B6A",
+                "lat": 33.1,
+                "lng": -117.2,
+                "imageX": 960.0,
+                "imageY": 540.0,
+                "nameShown": True,
+            }
+        ],
     }
     embedded = embed_screenshot_metadata(_MINIMAL_PNG, metadata)
     assert len(embedded) > len(_MINIMAL_PNG)

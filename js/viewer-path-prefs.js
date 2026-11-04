@@ -99,10 +99,23 @@
     syncScreenshotSettingsDirectory(trimmed);
   }
 
+  function getAppendixTemplatePath() {
+    var stored = readRaw();
+    return stored && stored.appendixTemplatePath
+      ? String(stored.appendixTemplatePath).trim()
+      : "";
+  }
+
+  function setAppendixTemplatePath(path) {
+    writeRaw({ appendixTemplatePath: path || "" });
+  }
+
   global.ViewerPathPrefs = {
     getProjectRoot: getProjectRoot,
     setProjectRoot: setProjectRoot,
     getScreenshotFolder: getScreenshotFolder,
     setScreenshotFolder: setScreenshotFolder,
+    getAppendixTemplatePath: getAppendixTemplatePath,
+    setAppendixTemplatePath: setAppendixTemplatePath,
   };
 })(window);

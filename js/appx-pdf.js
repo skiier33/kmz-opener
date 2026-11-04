@@ -4,18 +4,22 @@
   var STORAGE_KEY = "kmz-sidebar-mode";
   var MODE_MAP = "map";
   var MODE_APPX = "appx";
+  var REFRESH_DEBOUNCE_MS = 350;
 
   var sidebarLeft = null;
   var tabMap = null;
   var tabAppx = null;
   var dirInput = null;
   var templateInput = null;
+  var browseDirBtn = null;
+  var browseTemplateBtn = null;
   var countEl = null;
-  var fileListEl = null;
+  var sheetPreviewsEl = null;
   var buildBtn = null;
   var statusEl = null;
   var setMessageFn = null;
   var building = false;
+  var refreshTimer = null;
 
   function desktopApi() {
     var desktop = global.pywebview;
@@ -27,10 +31,11 @@
     return !!(api && typeof api.build_geg_appendix_pdf === "function");
   }
 
-  function screenshotDirectory() {
-    if (dirInput && String(dirInput.value || "").trim()) {
-      return String(dirInput.value).trim();
-    }
+  function jpegDataUrl(b64) {
+    return b64 ? "data:image/jpeg;base64," + b64 : "";
+  }
+
+  function defaultScreenshotDirectory() {
     var shotDir = global.document.getElementById("screenshot-directory");
     if (shotDir && String(shotDir.value || "").trim()) {
       return String(shotDir.value).trim();
@@ -41,11 +46,62 @@
     return "";
   }
 
-  function syncDirectoryField() {
-    if (!dirInput) {
+  function screenshotDirectory() {
+    if (dirInput && String(dirInput.value || "").trim()) {
+      return String(dirInput.value).trim();
+    }
+    return defaultScreenshotDirectory();
+  }
+
+  function templatePath() {
+    if (templateInput && String(templateInput.value || "").trim()) {
+      return String(templateInput.value).trim();
+    }
+    if (global.ViewerPathPrefs && typeof ViewerPathPrefs.getAppendixTemplatePath === "function") {
+      return ViewerPathPrefs.getAppendixTemplatePath() || "";
+    }
+    return "";
+  }
+
+  function persistPaths() {
+    var directory = dirInput ? String(dirInput.value || "").trim() : "";
+    var template = templateInput ? String(templateInput.value || "").trim() : "";
+    if (global.ViewerPathPrefs) {
+      if (typeof ViewerPathPrefs.setScreenshotFolder === "function" && directory) {
+        ViewerPathPrefs.setScreenshotFolder(directory);
+      }
+      if (typeof ViewerPathPrefs.setAppendixTemplatePath === "function") {
+        ViewerPathPrefs.setAppendixTemplatePath(template);
+      }
+    }
+  }
+
+  function syncDirectoryFieldFromPrefs() {
+    if (!dirInput || String(dirInput.value || "").trim()) {
       return;
     }
-    dirInput.value = screenshotDirectory();
+    var folder = defaultScreenshotDirectory();
+    if (folder) {
+      dirInput.value = folder;
+    }
+  }
+
+  function syncTemplateFieldFromPrefs() {
+    if (!templateInput) {
+      return;
+    }
+    if (String(templateInput.value || "").trim()) {
+      return;
+    }
+    if (
+      global.ViewerPathPrefs
+      && typeof ViewerPathPrefs.getAppendixTemplatePath === "function"
+    ) {
+      var stored = ViewerPathPrefs.getAppendixTemplatePath();
+      if (stored) {
+        templateInput.value = stored;
+      }
+    }
   }
 
   function setStatus(text, isError) {
@@ -88,6 +144,8 @@
       var raw = localStorage.getItem(STORAGE_KEY);
       if (raw === MODE_APPX) {
         stored = MODE_APPX;
+      } else if (raw === "scan") {
+        stored = MODE_MAP;
       }
     } catch (err) {
       /* ignore */
@@ -95,64 +153,131 @@
     setSidebarMode(stored);
   }
 
+  function updateBuildEnabled(data) {
+    if (!buildBtn) {
+      return;
+    }
+    var count = data && !data.error ? data.count || 0 : 0;
+    buildBtn.disabled = building || !isDesktopBuildAvailable() || count < 1;
+  }
+
+  function renderSheetPreviews(data) {
+    if (!sheetPreviewsEl) {
+      return;
+    }
+    sheetPreviewsEl.innerHTML = "";
+    if (!data || data.error) {
+      var errBlock = global.document.createElement("p");
+      errBlock.className = "muted appx-pdf-preview-empty";
+      errBlock.textContent = (data && data.error) || "Set screenshot folder and template to preview sheets.";
+      sheetPreviewsEl.appendChild(errBlock);
+      updateBuildEnabled(data);
+      return;
+    }
+    var sheets = data.sheets || [];
+    if (!sheets.length) {
+      var empty = global.document.createElement("p");
+      empty.className = "muted appx-pdf-preview-empty";
+      empty.textContent = "No PNG files in this folder.";
+      sheetPreviewsEl.appendChild(empty);
+      updateBuildEnabled(data);
+      return;
+    }
+    sheets.forEach(function (sheet) {
+      var card = global.document.createElement("article");
+      card.className = "appx-pdf-sheet-card";
+
+      var tab = global.document.createElement("div");
+      tab.className = "appx-pdf-sheet-tab";
+      tab.textContent = sheet.tabLabel || sheet.fileName || "Sheet";
+      tab.title = sheet.fileName || "";
+
+      var body = global.document.createElement("div");
+      body.className = "appx-pdf-sheet-body";
+
+      if (sheet.thumbJpegB64) {
+        var img = global.document.createElement("img");
+        img.className = "appx-pdf-sheet-img";
+        img.alt = "Preview for " + (sheet.fileName || "sheet");
+        img.src = jpegDataUrl(sheet.thumbJpegB64);
+        img.loading = "lazy";
+        body.appendChild(img);
+      } else {
+        var missing = global.document.createElement("p");
+        missing.className = "muted appx-pdf-sheet-missing";
+        missing.textContent = "Could not load image preview.";
+        body.appendChild(missing);
+      }
+
+      var caption = global.document.createElement("p");
+      caption.className = "appx-pdf-sheet-caption";
+      caption.textContent = sheet.fileName || "";
+
+      card.appendChild(tab);
+      card.appendChild(body);
+      card.appendChild(caption);
+      sheetPreviewsEl.appendChild(card);
+    });
+    if ((data.count || 0) > sheets.length) {
+      var more = global.document.createElement("p");
+      more.className = "muted appx-pdf-preview-more";
+      more.textContent = "… and " + (data.count - sheets.length) + " more sheet(s)";
+      sheetPreviewsEl.appendChild(more);
+    }
+    updateBuildEnabled(data);
+  }
+
   function renderPreview(data) {
-    if (!countEl || !fileListEl) {
+    if (!countEl) {
+      renderSheetPreviews(data);
       return;
     }
     if (!data || data.error) {
-      var errText = (data && data.error) || "Could not read screenshot folder.";
       countEl.textContent = "0 PNG files";
-      fileListEl.innerHTML = "";
-      var errItem = global.document.createElement("li");
-      errItem.className = "muted";
-      errItem.textContent = errText;
-      fileListEl.appendChild(errItem);
-      if (buildBtn) {
-        buildBtn.disabled = true;
-      }
+      renderSheetPreviews(data);
       return;
     }
     var count = data.count || 0;
     countEl.textContent = count === 1 ? "1 PNG file" : count + " PNG files";
-    fileListEl.innerHTML = "";
-    (data.names || []).forEach(function (name) {
-      var li = global.document.createElement("li");
-      li.textContent = name;
-      fileListEl.appendChild(li);
-    });
-    if (count > (data.names || []).length) {
-      var more = global.document.createElement("li");
-      more.className = "muted";
-      more.textContent = "… and " + (count - data.names.length) + " more";
-      fileListEl.appendChild(more);
-    }
-    if (buildBtn) {
-      buildBtn.disabled = building || !isDesktopBuildAvailable() || count < 1;
-    }
-    if (templateInput && data.templatePath) {
+    if (templateInput && data.templatePath && !String(templateInput.value || "").trim()) {
       templateInput.value = data.templatePath;
     }
+    renderSheetPreviews(data);
   }
 
-  function loadTemplatePath() {
+  function loadDefaultTemplatePath() {
     var api = desktopApi();
     if (!api || typeof api.geg_appendix_template_path !== "function") {
-      if (templateInput) {
-        templateInput.value = "";
-      }
       return Promise.resolve();
     }
     return Promise.resolve(api.geg_appendix_template_path()).then(function (data) {
-      if (templateInput && data && data.path) {
+      if (
+        templateInput
+        && data
+        && data.path
+        && !String(templateInput.value || "").trim()
+      ) {
         templateInput.value = data.path;
+        persistPaths();
       }
     });
   }
 
+  function scheduleRefreshPreview() {
+    if (refreshTimer) {
+      global.clearTimeout(refreshTimer);
+    }
+    refreshTimer = global.setTimeout(function () {
+      refreshTimer = null;
+      refreshPreview();
+    }, REFRESH_DEBOUNCE_MS);
+  }
+
   function refreshPreview() {
-    syncDirectoryField();
+    persistPaths();
     var api = desktopApi();
     var directory = screenshotDirectory();
+    var template = templatePath();
     if (!api || typeof api.list_appendix_screenshots !== "function") {
       renderPreview({
         error: isDesktopBuildAvailable()
@@ -161,9 +286,63 @@
       });
       return Promise.resolve();
     }
-    return Promise.resolve(api.list_appendix_screenshots(directory)).then(function (data) {
-      renderPreview(data);
-    });
+    return Promise.resolve(api.list_appendix_screenshots(directory, template))
+      .then(function (data) {
+        renderPreview(data);
+      })
+      .catch(function (err) {
+        renderPreview({
+          error: (err && err.message) || "Could not read screenshot folder.",
+        });
+      });
+  }
+
+  function onBrowseDirectory() {
+    var api = desktopApi();
+    if (!api || typeof api.choose_directory !== "function") {
+      setStatus("Folder browse is available in the desktop app only.", true);
+      return;
+    }
+    var initial = screenshotDirectory();
+    if (initial) {
+      initial = initial.replace(/[\\/][^\\/]*$/, "");
+    }
+    return Promise.resolve(api.choose_directory(initial))
+      .then(function (result) {
+        if (!result || !result.path || !dirInput) {
+          return;
+        }
+        dirInput.value = result.path;
+        persistPaths();
+        refreshPreview();
+      })
+      .catch(function (err) {
+        setStatus((err && err.message) || "Could not choose folder.", true);
+      });
+  }
+
+  function onBrowseTemplate() {
+    var api = desktopApi();
+    if (!api || typeof api.choose_geg_appendix_template !== "function") {
+      setStatus("Template browse is available in the desktop app only.", true);
+      return;
+    }
+    var initial = templatePath();
+    if (initial) {
+      initial = initial.replace(/[\\/][^\\/]*$/, "");
+    }
+    return Promise.resolve(api.choose_geg_appendix_template(initial))
+      .then(function (result) {
+        if (!result || !result.path || !templateInput) {
+          return;
+        }
+        templateInput.value = result.path;
+        persistPaths();
+        refreshPreview();
+      })
+      .catch(function (err) {
+        setStatus((err && err.message) || "Could not choose template.", true);
+      });
   }
 
   function onBuildClick() {
@@ -176,13 +355,14 @@
       return;
     }
     var directory = screenshotDirectory();
+    var template = templatePath();
     building = true;
     buildBtn.disabled = true;
     setStatus("Building workbook and PDF in Excel… This may take a minute.", false);
     if (setMessageFn) {
       setMessageFn("Building appendix PDF…");
     }
-    return Promise.resolve(api.build_geg_appendix_pdf(directory))
+    return Promise.resolve(api.build_geg_appendix_pdf(directory, template))
       .then(function (result) {
         if (!result || result.error) {
           var err = (result && result.error) || "Appendix build failed.";
@@ -220,6 +400,16 @@
       });
   }
 
+  function syncBrowseButtons() {
+    var api = desktopApi();
+    if (browseDirBtn) {
+      browseDirBtn.disabled = !(api && typeof api.choose_directory === "function");
+    }
+    if (browseTemplateBtn) {
+      browseTemplateBtn.disabled = !(api && typeof api.choose_geg_appendix_template === "function");
+    }
+  }
+
   function bindEvents() {
     if (tabMap) {
       tabMap.addEventListener("click", function () {
@@ -234,12 +424,40 @@
     if (buildBtn) {
       buildBtn.addEventListener("click", onBuildClick);
     }
+    if (browseDirBtn) {
+      browseDirBtn.addEventListener("click", onBrowseDirectory);
+    }
+    if (browseTemplateBtn) {
+      browseTemplateBtn.addEventListener("click", onBrowseTemplate);
+    }
+    if (dirInput) {
+      dirInput.addEventListener("change", function () {
+        persistPaths();
+        scheduleRefreshPreview();
+      });
+      dirInput.addEventListener("blur", function () {
+        persistPaths();
+        scheduleRefreshPreview();
+      });
+    }
+    if (templateInput) {
+      templateInput.addEventListener("change", function () {
+        persistPaths();
+        scheduleRefreshPreview();
+      });
+      templateInput.addEventListener("blur", function () {
+        persistPaths();
+        scheduleRefreshPreview();
+      });
+    }
     var shotDir = global.document.getElementById("screenshot-directory");
     if (shotDir) {
       shotDir.addEventListener("change", function () {
-        syncDirectoryField();
+        if (dirInput && !String(dirInput.value || "").trim()) {
+          dirInput.value = String(shotDir.value || "").trim();
+        }
         if (sidebarLeft && sidebarLeft.getAttribute("data-sidebar-mode") === MODE_APPX) {
-          refreshPreview();
+          scheduleRefreshPreview();
         }
       });
     }
@@ -254,20 +472,27 @@
     tabAppx = global.document.getElementById("sidebar-mode-appx-pdf");
     dirInput = global.document.getElementById("appx-pdf-directory");
     templateInput = global.document.getElementById("appx-pdf-template");
+    browseDirBtn = global.document.getElementById("appx-pdf-browse-dir");
+    browseTemplateBtn = global.document.getElementById("appx-pdf-browse-template");
     countEl = global.document.getElementById("appx-pdf-count");
-    fileListEl = global.document.getElementById("appx-pdf-file-list");
+    sheetPreviewsEl = global.document.getElementById("appx-pdf-sheet-previews");
     buildBtn = global.document.getElementById("appx-pdf-build");
     statusEl = global.document.getElementById("appx-pdf-status");
 
     bindEvents();
+    syncDirectoryFieldFromPrefs();
+    syncTemplateFieldFromPrefs();
     restoreSidebarMode();
-    syncDirectoryField();
-    loadTemplatePath();
-    refreshPreview();
+    syncBrowseButtons();
+    loadDefaultTemplatePath().then(function () {
+      refreshPreview();
+    });
 
     global.addEventListener("pywebviewready", function () {
-      loadTemplatePath();
-      refreshPreview();
+      syncBrowseButtons();
+      loadDefaultTemplatePath().then(function () {
+        refreshPreview();
+      });
     });
   }
 

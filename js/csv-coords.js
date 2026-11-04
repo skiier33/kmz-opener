@@ -1,20 +1,172 @@
 (function (global) {
   "use strict";
 
-  var REQUIRED = ["BH_ID", "LAT", "LONG"];
+  var REQUIRED_FIELDS = ["BH_ID", "LAT", "LONG"];
 
-  function normalizeHeader(name) {
-    var key = String(name || "")
+  var FIELD_LABELS = {
+    BH_ID: "borehole id",
+    LAT: "latitude",
+    LONG: "longitude",
+  };
+
+  var FIELD_EXAMPLE_HEADERS = {
+    BH_ID: "BH_ID, Borehole, boring_id",
+    LAT: "LAT, Latitude, latitude_n",
+    LONG: "LONG, Longitude, longitude_w",
+  };
+
+  /**
+   * Collapse header text for alias lookup (case, spaces, punctuation).
+   *
+   * @param {string} name - Raw CSV header cell.
+   * @returns {string} Comparison key.
+   */
+  function headerComparisonKey(name) {
+    return String(name || "")
       .trim()
       .replace(/^\uFEFF/, "")
-      .toUpperCase();
-    if (key === "LON" || key === "LONGITUDE") {
-      return "LONG";
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "");
+  }
+
+  var HEADER_ALIASES = {
+    BH_ID: [
+      "BH_ID",
+      "BHID",
+      "BH",
+      "BOREHOLE",
+      "BOREHOLEID",
+      "BOREHOLE_ID",
+      "BORE HOLE",
+      "BORE-HOLE",
+      "BOREHOLE ID",
+      "BOREHOLE_ID",
+      "BORING",
+      "BORINGID",
+      "BORING_ID",
+      "BORING ID",
+      "BORE_ID",
+      "BOREID",
+      "POINTID",
+      "POINT_ID",
+    ],
+    LAT: [
+      "LAT",
+      "LATITUDE",
+      "LATITUDEN",
+      "LATITUDE_N",
+      "LATITUDE N",
+      "LAT_N",
+      "LAT N",
+      "LATN",
+      "NLAT",
+      "N_LAT",
+      "GPSN",
+      "GPS_N",
+      "GPS N",
+      "NORTH",
+      "NORTHING",
+      "Y",
+    ],
+    LONG: [
+      "LONG",
+      "LON",
+      "LONGITUDE",
+      "LONGITUDEW",
+      "LONGITUDE_W",
+      "LONGITUDE W",
+      "LONG_W",
+      "LONG W",
+      "LONGW",
+      "LNG",
+      "LONW",
+      "WLON",
+      "W_LON",
+      "W LON",
+      "GPSW",
+      "GPS_W",
+      "GPS W",
+      "WEST",
+      "WESTING",
+      "EASTING",
+      "X",
+    ],
+  };
+
+  function buildHeaderAliasLookup() {
+    var lookup = {};
+    REQUIRED_FIELDS.forEach(function (field) {
+      (HEADER_ALIASES[field] || []).forEach(function (alias) {
+        var key = headerComparisonKey(alias);
+        if (key) {
+          lookup[key] = field;
+        }
+      });
+    });
+    return lookup;
+  }
+
+  var HEADER_ALIAS_LOOKUP = buildHeaderAliasLookup();
+
+  /**
+   * Map a raw header cell to a canonical coordinate field name.
+   *
+   * @param {string} rawHeader - Header label from the CSV.
+   * @returns {string} BH_ID, LAT, LONG, or empty when unrecognized.
+   */
+  function resolveHeaderToField(rawHeader) {
+    var key = headerComparisonKey(rawHeader);
+    if (!key) {
+      return "";
     }
-    if (key === "LATITUDE") {
-      return "LAT";
+    return HEADER_ALIAS_LOOKUP[key] || "";
+  }
+
+  /**
+   * Resolve CSV header row to column indexes for each required field.
+   *
+   * @param {string[]} rawHeaders - First row of the CSV.
+   * @returns {{ indexByField: Object, errors: string[] }}
+   */
+  function mapBhCoordHeaderColumns(rawHeaders) {
+    var indexByField = {};
+    var labelByField = {};
+    var errors = [];
+    (rawHeaders || []).forEach(function (raw, index) {
+      var field = resolveHeaderToField(raw);
+      if (!field) {
+        return;
+      }
+      if (indexByField[field] !== undefined) {
+        errors.push(
+          "Duplicate " +
+            FIELD_LABELS[field] +
+            ' column: "' +
+            labelByField[field] +
+            '" and "' +
+            String(raw || "").trim() +
+            '".'
+        );
+        return;
+      }
+      indexByField[field] = index;
+      labelByField[field] = String(raw || "").trim();
+    });
+    var missing = REQUIRED_FIELDS.filter(function (field) {
+      return indexByField[field] === undefined;
+    });
+    if (missing.length) {
+      missing.forEach(function (field) {
+        errors.push(
+          "Missing " +
+            FIELD_LABELS[field] +
+            " column (e.g. " +
+            FIELD_EXAMPLE_HEADERS[field] +
+            ")."
+        );
+      });
     }
-    return key;
+    return { indexByField: indexByField, errors: errors };
   }
 
   function parseCsvRows(text) {
@@ -73,31 +225,26 @@
     if (!rows.length) {
       return { byId: {}, errors: ["The CSV file is empty."] };
     }
-    var header = rows[0].map(normalizeHeader);
-    var indexByField = {};
-    header.forEach(function (name, index) {
-      if (name) {
-        indexByField[name] = index;
-      }
-    });
-    var missing = REQUIRED.filter(function (name) {
-      return indexByField[name] === undefined;
-    });
-    if (missing.length) {
+    var headerMap = mapBhCoordHeaderColumns(rows[0]);
+    if (headerMap.errors.length) {
       return {
         byId: {},
-        errors: ["Missing required column(s): " + missing.join(", ") + "."],
+        errors: headerMap.errors,
       };
     }
+    var indexByField = headerMap.indexByField;
     var byId = {};
     var errors = [];
     var dataRows = 0;
     var i;
     for (i = 1; i < rows.length; i += 1) {
       var cells = rows[i];
-      if (!cells.length || cells.every(function (cell) {
-        return !String(cell || "").trim();
-      })) {
+      if (
+        !cells.length ||
+        cells.every(function (cell) {
+          return !String(cell || "").trim();
+        })
+      ) {
         continue;
       }
       dataRows += 1;
@@ -105,15 +252,15 @@
       var lat = parseFloat(String(cells[indexByField.LAT] || "").trim());
       var lng = parseFloat(String(cells[indexByField.LONG] || "").trim());
       if (!bhId) {
-        errors.push("Row " + (i + 1) + ": BH_ID is empty.");
+        errors.push("Row " + (i + 1) + ": borehole id is empty.");
         continue;
       }
       if (Number.isNaN(lat) || Number.isNaN(lng)) {
-        errors.push("Row " + (i + 1) + " (" + bhId + "): LAT and LONG must be numbers.");
+        errors.push("Row " + (i + 1) + " (" + bhId + "): latitude and longitude must be numbers.");
         continue;
       }
       if (byId[bhId]) {
-        errors.push("Duplicate BH_ID in CSV: " + bhId + ".");
+        errors.push("Duplicate borehole id in CSV: " + bhId + ".");
       }
       byId[bhId] = { lat: lat, lng: lng };
     }
@@ -148,5 +295,7 @@
   global.CsvCoords = {
     parseBhCoordCsv: parseBhCoordCsv,
     resolveBhCoordRow: resolveBhCoordRow,
+    resolveHeaderToField: resolveHeaderToField,
+    mapBhCoordHeaderColumns: mapBhCoordHeaderColumns,
   };
 })(window);

@@ -14,7 +14,7 @@ import tempfile
 import threading
 from datetime import datetime
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from desktop.google_earth import launch_google_earth
@@ -30,6 +30,36 @@ OPENED_PATHS: Set[str] = set()
 EXPORT_PATHS: Set[str] = set()
 FILE_TOKENS: Dict[str, str] = {}
 STATE_LOCK = threading.Lock()
+_SCAN_GPS_WINDOW_CALLBACK: Optional[Callable[[], dict]] = None
+
+
+def set_scan_gps_window_callback(callback: Optional[Callable[[], dict]]) -> None:
+    """
+    Register the function that opens the Parse GPS from Scan tool window.
+
+    Args:
+        callback: Callable returning a result dict, or None to clear.
+    """
+    global _SCAN_GPS_WINDOW_CALLBACK
+    _SCAN_GPS_WINDOW_CALLBACK = callback
+
+
+def invoke_scan_gps_window_callback() -> dict:
+    """
+    Open the scan GPS tool via the registered desktop callback.
+
+    Returns:
+        Result dict from the callback, or an error when unavailable.
+    """
+    if _SCAN_GPS_WINDOW_CALLBACK is None:
+        return {"error": "Parse GPS from Scan is not available."}
+    try:
+        result = _SCAN_GPS_WINDOW_CALLBACK()
+    except (OSError, RuntimeError, TypeError, ValueError) as err:
+        return {"error": str(err)}
+    if isinstance(result, dict):
+        return result
+    return {"error": "Parse GPS from Scan did not return a result."}
 
 
 def user_custom_icons_dir() -> str:
@@ -572,7 +602,17 @@ def _handler_class(viewer_root: str) -> type:
             if parsed.path == "/__desktop/open-google-earth":
                 self._open_google_earth()
                 return
+            if parsed.path == "/__desktop/open-scan-gps-tool":
+                self._open_scan_gps_tool()
+                return
             self._send_json(404, {"error": "Not found."})
+
+        def _open_scan_gps_tool(self) -> None:
+            """Open the Parse GPS from Scan tool in a new native window."""
+            if not token_ok(self.headers.get("X-Desktop-Token")):
+                self._send_json(403, {"error": "Desktop access was denied."})
+                return
+            self._send_json(200, invoke_scan_gps_window_callback())
 
         def _serve_source(self, query: str) -> None:
             """Return the bytes of a file registered by the desktop API."""

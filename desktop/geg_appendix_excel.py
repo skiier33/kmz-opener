@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import base64
+import io
 import os
 import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+from PIL import Image
 
 TEMPLATE_BASENAME = "GEG Site and Boring Location Diagram AK TEMPLATE.xlsm"
 AUTOMATION_MODULE = "GegAppendixAutomation"
@@ -305,23 +309,91 @@ def build_appendix_from_screenshots(
     }
 
 
-def list_appendix_preview(directory: str, limit: int = 20) -> Dict[str, Any]:
+def _png_file_thumb_jpeg_b64(path: str, max_width: int = 320) -> Optional[str]:
     """
-    Return PNG count and a preview list for the Appx PDF UI.
+    Encode a PNG file as JPEG base64 for UI thumbnails.
+
+    Args:
+        path: Absolute path to a PNG file.
+        max_width: Maximum thumbnail width in pixels.
+
+    Returns:
+        Base64 JPEG payload, or None when the image cannot be read.
+    """
+    try:
+        with Image.open(path) as img:
+            copy = img.convert("RGB")
+    except OSError:
+        return None
+    if copy.width > max_width:
+        ratio = max_width / float(copy.width)
+        copy = copy.resize(
+            (max_width, max(1, int(copy.height * ratio))),
+            Image.Resampling.LANCZOS,
+        )
+    buf = io.BytesIO()
+    try:
+        copy.save(buf, format="JPEG", quality=82, optimize=True)
+    except OSError:
+        return None
+    return base64.standard_b64encode(buf.getvalue()).decode("ascii")
+
+
+def validate_template_path(template_path: str) -> Optional[str]:
+    """
+    Return an error message when the template workbook path is not usable.
+
+    Args:
+        template_path: Path to a GEG .xlsm template.
+
+    Returns:
+        Error text, or None when valid.
+    """
+    path = str(template_path or "").strip()
+    if not path:
+        return "Choose an Excel template (.xlsm)."
+    if not path.lower().endswith(".xlsm"):
+        return "The template must be a macro-enabled workbook (.xlsm)."
+    if not os.path.isfile(path):
+        return "Template workbook was not found."
+    return None
+
+
+def list_appendix_preview(
+    directory: str,
+    limit: int = 20,
+    sheet_preview_limit: int = 50,
+) -> Dict[str, Any]:
+    """
+    Return PNG count and sheet previews for the Appx PDF UI.
 
     Args:
         directory: Screenshot save folder.
         limit: Maximum number of file names to return.
+        sheet_preview_limit: Maximum sheets to include with thumbnails.
 
     Returns:
-        Dict with directory, count, and names list.
+        Dict with directory, count, names, and sheets list.
     """
     paths = list_screenshot_pngs(directory)
     names = [os.path.basename(p) for p in paths]
+    sheets: List[Dict[str, Any]] = []
+    for index, png_path in enumerate(paths[: max(0, sheet_preview_limit)]):
+        base = os.path.basename(png_path)
+        stem, _ext = os.path.splitext(base)
+        sheets.append(
+            {
+                "index": index + 1,
+                "fileName": base,
+                "tabLabel": stem or f"Sheet {index + 1}",
+                "thumbJpegB64": _png_file_thumb_jpeg_b64(png_path),
+            }
+        )
     return {
         "directory": os.path.abspath(directory) if directory else "",
         "count": len(names),
         "names": names[: max(0, limit)],
+        "sheets": sheets,
     }
 
 

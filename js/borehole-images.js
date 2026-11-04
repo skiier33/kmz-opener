@@ -16,6 +16,9 @@
   var placemarkList = null;
   var placemarkSubtitle = null;
   var selectAllToggle = null;
+  var linkLayersToggle = null;
+  var linkLayersSourceSelect = null;
+  var linkLayersSourceWrap = null;
   var saveBtn = null;
   var generatePreviewsBtn = null;
   var fullPreviewDialog = null;
@@ -150,6 +153,8 @@
           accent: northColorInput ? northColorInput.value : "",
           showScaleRatio: showScaleRatioToggle ? showScaleRatioToggle.checked : true,
           plateBackground: chromePlateToggle ? chromePlateToggle.checked : true,
+          linkLayers: linkLayersToggle ? linkLayersToggle.checked : true,
+          linkMirrorSourceId: linkLayersSourceSelect ? linkLayersSourceSelect.value : "",
         })
       );
       if (global.MapExportChrome && typeof MapExportChrome.writeStoredSettings === "function") {
@@ -281,7 +286,11 @@
       var opt = document.createElement("option");
       opt.value = source.id;
       var count = GisMap.countSourcePointPlacemarks(source.id);
-      opt.textContent = (source.label || source.id) + " (" + count + " points)";
+      var label = source.label || source.id;
+      if (source.bhAlignmentOverlay) {
+        label = label + " (alignment)";
+      }
+      opt.textContent = label + " (" + count + " points)";
       sourceSelect.appendChild(opt);
     });
     if (previous && sourceSelect.querySelector('option[value="' + previous + '"]')) {
@@ -291,6 +300,129 @@
 
   function selectedSourceId() {
     return sourceSelect ? String(sourceSelect.value || "").trim() : "";
+  }
+
+  function loadedSourcesForMirror() {
+    if (!listSourcesFn) {
+      return [];
+    }
+    return listSourcesFn() || [];
+  }
+
+  function refreshLinkLayersSourceSelect() {
+    if (!linkLayersSourceSelect) {
+      return;
+    }
+    var previous = linkLayersSourceSelect.value;
+    var sources = loadedSourcesForMirror();
+    linkLayersSourceSelect.innerHTML = "";
+    if (!sources.length) {
+      var emptyOpt = document.createElement("option");
+      emptyOpt.value = "";
+      emptyOpt.textContent = "Load a KMZ or KML file…";
+      linkLayersSourceSelect.appendChild(emptyOpt);
+      linkLayersSourceSelect.disabled = true;
+      return;
+    }
+    sources.forEach(function (source) {
+      var opt = document.createElement("option");
+      opt.value = source.id;
+      opt.textContent = source.label || source.id;
+      linkLayersSourceSelect.appendChild(opt);
+    });
+    linkLayersSourceSelect.disabled = !isLinkLayersEnabled();
+    var fallback = selectedSourceId();
+    if (previous && linkLayersSourceSelect.querySelector('option[value="' + previous + '"]')) {
+      linkLayersSourceSelect.value = previous;
+    } else if (fallback && linkLayersSourceSelect.querySelector('option[value="' + fallback + '"]')) {
+      linkLayersSourceSelect.value = fallback;
+    }
+  }
+
+  function layerMirrorSourceId() {
+    if (!linkLayersSourceSelect) {
+      return selectedSourceId();
+    }
+    var picked = String(linkLayersSourceSelect.value || "").trim();
+    if (picked) {
+      return picked;
+    }
+    return selectedSourceId();
+  }
+
+  function nodeIdBelongsToSource(nodeId, sourceId) {
+    if (!nodeId || !sourceId) {
+      return false;
+    }
+    if (nodeId === sourceId) {
+      return true;
+    }
+    return nodeId.indexOf(sourceId + ":") === 0;
+  }
+
+  function layerTreeCheckboxChecked(nodeId) {
+    var treeEl = document.getElementById("layer-tree");
+    if (!treeEl || !nodeId) {
+      return null;
+    }
+    var wraps = treeEl.querySelectorAll(".layer-node");
+    for (var i = 0; i < wraps.length; i += 1) {
+      if (wraps[i].dataset.id !== nodeId) {
+        continue;
+      }
+      var box = wraps[i].querySelector(':scope > .layer-row input[type="checkbox"]');
+      return box ? box.checked : null;
+    }
+    return null;
+  }
+
+  function mirrorNodeIdForItem(item) {
+    if (!item || !global.GisMap) {
+      return null;
+    }
+    var mirrorSourceId = layerMirrorSourceId();
+    if (!mirrorSourceId) {
+      return item.nodeId || null;
+    }
+    if (item.nodeId && nodeIdBelongsToSource(item.nodeId, mirrorSourceId)) {
+      return item.nodeId;
+    }
+    var targetName = String(item.name || "").trim();
+    if (!targetName) {
+      return null;
+    }
+    var points = GisMap.listSourcePointLatLngs(mirrorSourceId);
+    for (var i = 0; i < points.length; i += 1) {
+      if (String(points[i].name || "").trim() === targetName) {
+        return points[i].nodeId;
+      }
+    }
+    return null;
+  }
+
+  function layerVisibilityAffectsMirrorSource(changedLayerId) {
+    var mirrorId = layerMirrorSourceId();
+    if (!mirrorId || !changedLayerId) {
+      return true;
+    }
+    if (nodeIdBelongsToSource(changedLayerId, mirrorId)) {
+      return true;
+    }
+    var root = GisMap.getDocumentSourceRoot(mirrorId);
+    if (!root) {
+      return false;
+    }
+    if (changedLayerId === root.id) {
+      return true;
+    }
+    if (typeof GisMap.nodeContains === "function" && GisMap.nodeContains(root.id, changedLayerId)) {
+      return true;
+    }
+    var compositeRoot = GisMap.getRoot();
+    if (compositeRoot && changedLayerId === compositeRoot.id) {
+      return true;
+    }
+    return false;
   }
 
   function readInsetInput(input, fallback) {
@@ -723,17 +855,20 @@
     }
     var widthPx = item.captureWidth || (outDims && outDims.width) || outputDimensions().width;
     var heightPx = item.captureHeight || (outDims && outDims.height) || outputDimensions().height;
+    var center = imageCenterForItem(item);
     return ScreenshotMetadata.buildForFixedView({
       captureKind: "borehole_placemark",
       nodeId: item.nodeId,
-      lat: item.lat,
-      lng: item.lng,
+      lat: center.lat,
+      lng: center.lng,
       zoom: item.zoom,
       widthPx: widthPx,
       heightPx: heightPx,
       scaleDenom: item.scaleDenom,
+      bearing: item.captureBearing,
       sourceId: selectedSourceId(),
       chromeOpts: captureChromeOptions(),
+      includeVisiblePlacemarks: true,
     });
   }
 
@@ -788,6 +923,8 @@
     item.meta = null;
     item.zoom = null;
     item.scaleDenom = null;
+    item.pngMetadata = null;
+    item.captureBearing = null;
   }
 
   function clearPreviewItems() {
@@ -956,7 +1093,7 @@
         name: entry.name || "Placemark",
         lat: entry.lat,
         lng: entry.lng,
-        include: true,
+        include: initialIncludeForPlacemark(entry),
       };
       applyStoredCenterToItem(item, centersByNodeId);
       previewItems.push(item);
@@ -981,16 +1118,17 @@
     var checked = previewItems.filter(function (item) {
       return item.include !== false;
     }).length;
-    saveBtn.disabled = saveInFlight || previewInFlight || savable === 0;
-    if (savable === 0) {
+    saveBtn.disabled = saveInFlight || previewInFlight || checked === 0;
+    if (checked === 0) {
       saveBtn.textContent = "Save selected";
-    } else if (savable === 1) {
-      saveBtn.textContent = "Save 1 screenshot";
+    } else if (checked === 1) {
+      saveBtn.textContent =
+        savable === 1 ? "Save 1 screenshot" : "Save 1 selected";
     } else {
-      saveBtn.textContent = "Save " + savable + " screenshots";
-    }
-    if (checked === 0 && savable === 0) {
-      saveBtn.textContent = "Save selected";
+      saveBtn.textContent =
+        savable === checked
+          ? "Save " + checked + " screenshots"
+          : "Save " + checked + " selected";
     }
     syncGeneratePreviewsButton();
   }
@@ -1003,6 +1141,103 @@
       return item.include !== false;
     }).length;
     generatePreviewsBtn.disabled = saveInFlight || previewInFlight || checked === 0;
+  }
+
+  function isLinkLayersEnabled() {
+    return !!(linkLayersToggle && linkLayersToggle.checked);
+  }
+
+  function layerVisibleForPlacemark(item) {
+    if (!item || !global.GisMap) {
+      return true;
+    }
+    var mirrorNodeId = mirrorNodeIdForItem(item);
+    if (!mirrorNodeId) {
+      return true;
+    }
+    var treeChecked = layerTreeCheckboxChecked(mirrorNodeId);
+    if (treeChecked != null) {
+      return treeChecked;
+    }
+    var node = GisMap.findNode(mirrorNodeId);
+    if (!node) {
+      return true;
+    }
+    return node.visible !== false;
+  }
+
+  function initialIncludeForPlacemark(entry) {
+    if (isLinkLayersEnabled()) {
+      return layerVisibleForPlacemark({ nodeId: entry.nodeId, name: entry.name });
+    }
+    return true;
+  }
+
+  function updatePlacemarkCheckboxControls() {
+    var linked = isLinkLayersEnabled();
+    if (linkLayersSourceWrap) {
+      linkLayersSourceWrap.classList.toggle("hidden", !linked);
+      linkLayersSourceWrap.setAttribute("aria-hidden", linked ? "false" : "true");
+    }
+    if (linkLayersSourceSelect) {
+      linkLayersSourceSelect.disabled = !linked || !loadedSourcesForMirror().length;
+    }
+    if (selectAllToggle) {
+      selectAllToggle.disabled = linked;
+      selectAllToggle.title = linked
+        ? "Save selection follows the chosen file in Layers"
+        : "";
+    }
+    if (!placemarkList) {
+      return;
+    }
+    placemarkList
+      .querySelectorAll('.borehole-images-placemark-row input[type="checkbox"]')
+      .forEach(function (box) {
+        box.disabled = linked;
+        box.title = linked ? "Controlled by the matching layer checkbox in the chosen KMZ" : "";
+      });
+  }
+
+  function syncPlacemarkIncludeFromLayers(changedLayerId) {
+    if (!isLinkLayersEnabled() || !previewItems.length || !layerMirrorSourceId()) {
+      return;
+    }
+    if (changedLayerId && !layerVisibilityAffectsMirrorSource(changedLayerId)) {
+      return;
+    }
+    previewItems.forEach(function (item, index) {
+      var nextInclude = layerVisibleForPlacemark(item);
+      item.include = nextInclude;
+      if (placemarkList) {
+        var box = placemarkList.querySelector(
+          '.borehole-images-placemark-row input[type="checkbox"][data-index="' + index + '"]'
+        );
+        if (box) {
+          box.checked = nextInclude;
+        }
+      }
+    });
+    syncSelectAllToggle();
+    syncSaveButton();
+    updatePlacemarkCheckboxControls();
+  }
+
+  function onLinkLayersToggleChange() {
+    writeSettings();
+    refreshLinkLayersSourceSelect();
+    if (isLinkLayersEnabled()) {
+      syncPlacemarkIncludeFromLayers();
+    } else {
+      updatePlacemarkCheckboxControls();
+    }
+  }
+
+  function onLinkLayersSourceChange() {
+    writeSettings();
+    if (isLinkLayersEnabled()) {
+      syncPlacemarkIncludeFromLayers();
+    }
   }
 
   function syncSelectAllToggle() {
@@ -1040,6 +1275,10 @@
       box.checked = item.include !== false;
       box.dataset.index = String(index);
       box.addEventListener("change", function () {
+        if (isLinkLayersEnabled()) {
+          box.checked = previewItems[index].include !== false;
+          return;
+        }
         previewItems[index].include = box.checked;
         syncSelectAllToggle();
         syncSaveButton();
@@ -1157,6 +1396,7 @@
     });
     syncSelectAllToggle();
     syncSaveButton();
+    updatePlacemarkCheckboxControls();
   }
 
   function capturePreviewForPlacemark(entry, scaleDenom, outDims, includeFlag) {
@@ -1184,14 +1424,32 @@
           outDims.width,
           outDims.height,
           chromeOpts
-        );
+        ).then(function (fullBlob) {
+          var map =
+            global.GisMap && typeof GisMap.getMap === "function" ? GisMap.getMap() : null;
+          var captureBearing =
+            map && typeof map.getBearing === "function" ? map.getBearing() || 0 : 0;
+          var metadataItem = Object.assign({}, entry, {
+            zoom: zoom,
+            scaleDenom: scaleDenom,
+            captureWidth: outDims.width,
+            captureHeight: outDims.height,
+            captureBearing: captureBearing,
+          });
+          return {
+            fullBlob: fullBlob,
+            pngMetadata: buildSaveMetadataForItem(metadataItem, outDims),
+            captureBearing: captureBearing,
+          };
+        });
       });
     }
     var capturePromise =
       global.BhAlignments && typeof BhAlignments.withCaptureVisibility === "function"
         ? BhAlignments.withCaptureVisibility(runCapture)
         : runCapture();
-    return capturePromise.then(function (fullBlob) {
+    return capturePromise.then(function (captureResult) {
+      var fullBlob = captureResult.fullBlob;
       return blobToThumbUrl(fullBlob, thumbDims).then(function (thumbUrl) {
         return {
           nodeId: entry.nodeId,
@@ -1202,6 +1460,8 @@
           scaleDenom: scaleDenom,
           captureWidth: outDims.width,
           captureHeight: outDims.height,
+          captureBearing: captureResult.captureBearing,
+          pngMetadata: captureResult.pngMetadata,
           meta: metaText,
           thumbUrl: thumbUrl,
           fullBlob: fullBlob,
@@ -1500,6 +1760,7 @@
       .finally(function () {
         previewInFlight = false;
         renderPlacemarkList();
+        syncSaveButton();
         syncFullPreviewSaveButton();
       });
   }
@@ -1545,7 +1806,7 @@
         return MapScreenshot.savePngBlob(blob, stem, {
           mode: "counter",
           directory: directory,
-          metadata: buildSaveMetadataForItem(item, outDims),
+          metadata: item.pngMetadata || buildSaveMetadataForItem(item, outDims),
         }).then(function (result) {
           return {
             fileName: result && result.name ? result.name : stem + ".png",
@@ -1577,6 +1838,9 @@
 
   function saveSelectedPreviews() {
     if (saveInFlight || previewInFlight || !previewItems.length) {
+      if (setMessageFn && (saveInFlight || previewInFlight)) {
+        setMessageFn("Wait for the current capture or save to finish.");
+      }
       return;
     }
     var directory = prepareSaveDirectory();
@@ -1586,19 +1850,22 @@
       }
       return;
     }
-    var selected = previewItems.filter(function (item) {
-      return item.include !== false && item.fullBlob;
+    var selected = [];
+    previewItems.forEach(function (item, index) {
+      if (item.include !== false) {
+        selected.push({ item: item, index: index });
+      }
     });
-    var checkedWithoutPreview = previewItems.filter(function (item) {
-      return item.include !== false && !item.fullBlob;
-    }).length;
     if (!selected.length) {
       if (setMessageFn) {
-        if (checkedWithoutPreview > 0) {
-          setMessageFn("Preview checked placemarks before saving.");
-        } else {
-          setMessageFn("Select at least one previewed placemark to save.");
-        }
+        setMessageFn("Select at least one placemark to save.");
+      }
+      return;
+    }
+    var validation = validateCaptureSettings();
+    if (!validation.ok) {
+      if (setMessageFn && validation.message) {
+        setMessageFn(validation.message);
       }
       return;
     }
@@ -1609,37 +1876,73 @@
       return;
     }
 
+    var scaleDenom = validation.scaleDenom;
+    var outDims = validation.outDims;
     saveInFlight = true;
     batchStopRequested = false;
     setBatchProgressMode("save");
     syncSaveButton();
     renderPlacemarkList();
+    writeSettings();
     setBatchProgressVisible(true);
     updateBatchProgress(0, selected.length, "Starting…");
 
     var savedNames = [];
     var savedItems = [];
     var chain = Promise.resolve();
-    selected.forEach(function (item, idx) {
+    selected.forEach(function (entry, idx) {
       chain = chain.then(function () {
         assertBatchNotStopped();
-        updateBatchProgress(idx, selected.length, item.name || "Placemark");
-        if (setMessageFn) {
-          setMessageFn("Saving " + (idx + 1) + " of " + selected.length + ": " + item.name + "…");
+        var item = previewItems[entry.index];
+        if (!item) {
+          return;
         }
-        var stem = sanitizeFileStem(item.name || "placemark");
-        var outDims = outputDimensions();
-        return MapScreenshot.savePngBlob(item.fullBlob, stem, {
-          mode: "counter",
-          directory: directory,
-          metadata: buildSaveMetadataForItem(item, outDims),
-        }).then(
-          function (result) {
+        var placemarkName = item.name || "Placemark";
+        updateBatchProgress(idx, selected.length, placemarkName);
+        var blobPromise;
+        if (item.fullBlob) {
+          blobPromise = Promise.resolve(item.fullBlob);
+        } else {
+          if (setMessageFn) {
+            setMessageFn(
+              "Capturing " + (idx + 1) + " of " + selected.length + ": " + placemarkName + "…"
+            );
+          }
+          blobPromise = capturePreviewForPlacemark(
+            item,
+            scaleDenom,
+            outDims,
+            item.include !== false
+          ).then(function (captured) {
+            revokeItemThumb(previewItems[entry.index]);
+            previewItems[entry.index] = Object.assign({}, previewItems[entry.index], captured, {
+              include: item.include !== false,
+            });
+            renderPlacemarkList();
+            return previewItems[entry.index].fullBlob;
+          });
+        }
+        return blobPromise.then(function (blob) {
+          if (!blob) {
+            return Promise.reject(new Error("Could not capture " + placemarkName + "."));
+          }
+          item = previewItems[entry.index];
+          if (setMessageFn) {
+            setMessageFn(
+              "Saving " + (idx + 1) + " of " + selected.length + ": " + placemarkName + "…"
+            );
+          }
+          var stem = sanitizeFileStem(placemarkName);
+          return MapScreenshot.savePngBlob(blob, stem, {
+            mode: "counter",
+            directory: directory,
+            metadata: item.pngMetadata || buildSaveMetadataForItem(item, outDims),
+          }).then(function (result) {
             savedNames.push(result && result.name ? result.name : stem + ".png");
             savedItems.push(item);
-            updateBatchProgress(idx + 1, selected.length, item.name || "Placemark");
-          }
-        );
+            updateBatchProgress(idx + 1, selected.length, placemarkName);
+          });
+        });
       });
     });
 
@@ -1755,8 +2058,18 @@
     if (batchStopBtn) {
       batchStopBtn.addEventListener("click", requestBatchStop);
     }
+    if (linkLayersToggle) {
+      linkLayersToggle.addEventListener("change", onLinkLayersToggleChange);
+    }
+    if (linkLayersSourceSelect) {
+      linkLayersSourceSelect.addEventListener("change", onLinkLayersSourceChange);
+    }
     if (selectAllToggle) {
       selectAllToggle.addEventListener("change", function () {
+        if (isLinkLayersEnabled()) {
+          syncPlacemarkIncludeFromLayers();
+          return;
+        }
         var checked = selectAllToggle.checked;
         placemarkList.querySelectorAll('.borehole-images-placemark-row input[type="checkbox"]').forEach(function (box) {
           box.checked = checked;
@@ -1896,9 +2209,21 @@
     if (chromePlateToggle) {
       chromePlateToggle.checked = stored.plateBackground !== false;
     }
+    if (linkLayersToggle) {
+      linkLayersToggle.checked = stored.linkLayers !== false;
+    }
     populateScaleSelect();
     syncChromePanelVisibility();
     refreshSourceSelect();
+    refreshLinkLayersSourceSelect();
+    if (
+      stored.linkMirrorSourceId
+      && linkLayersSourceSelect
+      && linkLayersSourceSelect.querySelector('option[value="' + stored.linkMirrorSourceId + '"]')
+    ) {
+      linkLayersSourceSelect.value = stored.linkMirrorSourceId;
+    }
+    updatePlacemarkCheckboxControls();
     if (stored.sourceId && sourceSelect && sourceSelect.querySelector('option[value="' + stored.sourceId + '"]')) {
       sourceSelect.value = stored.sourceId;
     }
@@ -1922,6 +2247,9 @@
     placemarkList = document.getElementById("borehole-images-placemark-list");
     placemarkSubtitle = document.getElementById("borehole-images-placemark-subtitle");
     selectAllToggle = document.getElementById("borehole-images-select-all");
+    linkLayersToggle = document.getElementById("borehole-images-link-layers");
+    linkLayersSourceSelect = document.getElementById("borehole-images-link-layers-source");
+    linkLayersSourceWrap = document.getElementById("borehole-images-link-layers-source-wrap");
     saveBtn = document.getElementById("borehole-images-save");
     generatePreviewsBtn = document.getElementById("borehole-images-generate-previews");
     batchProgressPanel = document.getElementById("borehole-images-batch-progress");
@@ -1972,7 +2300,11 @@
       sourceSelect.addEventListener("change", function () {
         writeSettings();
         refreshSourceSelect();
+        refreshLinkLayersSourceSelect();
         buildPlacemarkListFromSource();
+        if (isLinkLayersEnabled()) {
+          syncPlacemarkIncludeFromLayers();
+        }
         if (onSourceChangedFn) {
           onSourceChangedFn();
         }
@@ -2039,6 +2371,12 @@
       el.addEventListener("change", onChromeDetailChange);
     });
 
+    if (global.GisMap && typeof GisMap.onLayerVisibilityChanged === "function") {
+      GisMap.onLayerVisibilityChanged(function (changedLayerId) {
+        syncPlacemarkIncludeFromLayers(changedLayerId);
+      });
+    }
+
     bindBrowseDirectory();
     bindPlacemarkPanel();
     bindFullPreviewDialog();
@@ -2054,6 +2392,7 @@
 
   function refreshSources() {
     refreshSourceSelect();
+    refreshLinkLayersSourceSelect();
     buildPlacemarkListFromSource();
     if (onSourceChangedFn) {
       onSourceChangedFn();

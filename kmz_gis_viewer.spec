@@ -4,6 +4,7 @@ from PyInstaller.utils.hooks import collect_all
 
 datas = [
     ("index.html", "."),
+    ("scan-coordinates.html", "."),
     ("css", "css"),
     ("js", "js"),
     ("custom-icons", "custom-icons"),
@@ -20,6 +21,8 @@ hiddenimports += webview_hidden
 
 hiddenimports.append("desktop.server")
 hiddenimports.append("desktop.geg_appendix_excel")
+hiddenimports.append("desktop.scan_coordinate_extract")
+hiddenimports.append("desktop.copilot_scan_parser")
 
 a = Analysis(
     ["desktop/app.py"],

@@ -599,6 +599,52 @@
     });
   }
 
+  function extendBoundsFromNode(node, bounds) {
+    if (!node || !bounds) {
+      return;
+    }
+    var layer = layersById[node.id];
+    if (layer && layer.getBounds) {
+      try {
+        bounds.extend(layer.getBounds());
+      } catch (err) {
+        // Degenerate geometry; skip bounds.
+      }
+    }
+    (node.children || []).forEach(function (child) {
+      extendBoundsFromNode(child, bounds);
+    });
+  }
+
+  function boundsForNodeId(id) {
+    if (!currentRoot || !id) {
+      return null;
+    }
+    var node = findNode(currentRoot, id);
+    if (!node) {
+      return null;
+    }
+    var bounds = L.latLngBounds([]);
+    extendBoundsFromNode(node, bounds);
+    return bounds.isValid() ? bounds : null;
+  }
+
+  function canGoToNode(id) {
+    return !!boundsForNodeId(id);
+  }
+
+  function goToNode(id) {
+    if (!map) {
+      return false;
+    }
+    var bounds = boundsForNodeId(id);
+    if (!bounds) {
+      return false;
+    }
+    map.setView(bounds.getCenter(), map.getZoom());
+    return true;
+  }
+
   function collectDescendantIds(node, ids) {
     ids.push(node.id);
     (node.children || []).forEach(function (child) {
@@ -1059,7 +1105,76 @@
     return lng.toFixed(6) + ", " + lat.toFixed(6);
   }
 
-  function updateNodePointFromCsvRow(node, row, syncExtendedData) {
+  function extendedDataFieldKey(fieldName) {
+    if (global.KmlParse && global.KmlParse.extendedDataFieldKey) {
+      return global.KmlParse.extendedDataFieldKey(fieldName);
+    }
+    return String(fieldName || "")
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "");
+  }
+
+  function latitudeFieldKeys() {
+    if (global.KmlParse && global.KmlParse.LATITUDE_FIELD_KEYS) {
+      return global.KmlParse.LATITUDE_FIELD_KEYS;
+    }
+    return { LAT: true, LATITUDE: true };
+  }
+
+  function longitudeFieldKeys() {
+    if (global.KmlParse && global.KmlParse.LONGITUDE_FIELD_KEYS) {
+      return global.KmlParse.LONGITUDE_FIELD_KEYS;
+    }
+    return { LONG: true, LONGITUDE: true };
+  }
+
+  function syncPlacemarkCoordinateExtendedData(placemarkEl, feature, lat, lng) {
+    if (!placemarkEl || !feature || !global.KmzSave || !global.KmzSave.setExtendedDataValue) {
+      return;
+    }
+    var rows = feature.extendedData || [];
+    if (
+      global.KmlParse &&
+      global.KmlParse.parseExtendedData &&
+      !rows.length
+    ) {
+      rows = global.KmlParse.parseExtendedData(placemarkEl);
+      feature.extendedData = rows;
+    }
+    var latKeys = latitudeFieldKeys();
+    var lngKeys = longitudeFieldKeys();
+    var wroteLat = false;
+    var wroteLng = false;
+    var i;
+    for (i = 0; i < rows.length; i += 1) {
+      var rowName = rows[i].name;
+      if (!rowName) {
+        continue;
+      }
+      var key = extendedDataFieldKey(rowName);
+      if (latKeys[key]) {
+        global.KmzSave.setExtendedDataValue(placemarkEl, rowName, lat);
+        syncFeatureExtendedData(feature, rowName, lat);
+        wroteLat = true;
+      }
+      if (lngKeys[key]) {
+        global.KmzSave.setExtendedDataValue(placemarkEl, rowName, lng);
+        syncFeatureExtendedData(feature, rowName, lng);
+        wroteLng = true;
+      }
+    }
+    if (!wroteLat) {
+      global.KmzSave.setExtendedDataValue(placemarkEl, "LAT", lat);
+      syncFeatureExtendedData(feature, "LAT", lat);
+    }
+    if (!wroteLng) {
+      global.KmzSave.setExtendedDataValue(placemarkEl, "LONG", lng);
+      syncFeatureExtendedData(feature, "LONG", lng);
+    }
+  }
+
+  function updateNodePointFromCsvRow(node, row) {
     if (!node || !node.feature || !node.sourceEl || !row) {
       return false;
     }
@@ -1076,12 +1191,7 @@
       }
     });
     node.feature.coordinatesText = formatPointCoordinateText(row.lat, row.lng);
-    if (syncExtendedData && global.KmzSave.setExtendedDataValue) {
-      global.KmzSave.setExtendedDataValue(node.sourceEl, "LAT", row.lat);
-      global.KmzSave.setExtendedDataValue(node.sourceEl, "LONG", row.lng);
-      syncFeatureExtendedData(node.feature, "LAT", row.lat);
-      syncFeatureExtendedData(node.feature, "LONG", row.lng);
-    }
+    syncPlacemarkCoordinateExtendedData(node.sourceEl, node.feature, row.lat, row.lng);
     refreshNodeLayer(node);
     return true;
   }
@@ -1129,7 +1239,9 @@
         var rows = node.feature.extendedData || [];
         if (
           global.KmlParse.parseExtendedData &&
-          (!rows.length || !global.KmlParse.extendedDataValue(rows, "BH_ID"))
+          (!rows.length ||
+            (!global.KmlParse.extendedDataBoreholeId(rows) &&
+              !global.KmlParse.extendedDataValue(rows, "BH_ID")))
         ) {
           rows = global.KmlParse.parseExtendedData(node.sourceEl);
         }
@@ -1207,7 +1319,9 @@
         var rows = node.feature.extendedData || [];
         if (
           global.KmlParse.parseExtendedData &&
-          (!rows.length || !global.KmlParse.extendedDataValue(rows, "BH_ID"))
+          (!rows.length ||
+            (!global.KmlParse.extendedDataBoreholeId(rows) &&
+              !global.KmlParse.extendedDataValue(rows, "BH_ID")))
         ) {
           rows = global.KmlParse.parseExtendedData(node.sourceEl);
           node.feature.extendedData = rows;
@@ -1231,10 +1345,7 @@
           stats.notInCsv += 1;
           return;
         }
-        var syncExtended =
-          global.KmlParse.placemarkUsesExtendedDataCoords(rows) ||
-          match.idSource === "extended";
-        if (updateNodePointFromCsvRow(node, resolved, syncExtended)) {
+        if (updateNodePointFromCsvRow(node, resolved)) {
           used[resolved.canonical || resolved.csvLabel] = true;
           stats.updated += 1;
           if (resolved.matchedVia === "canonical") {
@@ -1253,6 +1364,113 @@
       selectFeature(selectedId, false);
     }
     return stats;
+  }
+
+  function bhCoordValuesNearlyEqual(a, b) {
+    var eps = 1e-7;
+    return Math.abs(a - b) <= eps;
+  }
+
+  function previewBhCoordCsvToSource(sourceId, lookup) {
+    var result = {
+      ok: false,
+      errors: [],
+      warnings: [],
+      changes: [],
+      unchanged: [],
+      stats: {
+        toUpdate: 0,
+        unchanged: 0,
+        noBhId: 0,
+        notInCsv: 0,
+        notPoint: 0,
+        fuzzyMatched: 0,
+        unusedCsvIds: [],
+      },
+    };
+    var validation = validateBhCoordCsvToSource(sourceId, lookup);
+    result.warnings = (validation.warnings || []).slice();
+    if (!validation.ok) {
+      result.errors = (validation.errors || []).slice();
+      return result;
+    }
+    if (!sourceId || !lookup || !global.KmlParse) {
+      result.errors.push("Could not preview CSV coordinate changes.");
+      return result;
+    }
+    var used = {};
+    walkSourceRoot(sourceId, function (root) {
+      walkTree(root, function (node) {
+        if (node.type !== "placemark" || !node.feature || !node.sourceEl) {
+          return;
+        }
+        var rows = node.feature.extendedData || [];
+        if (
+          global.KmlParse.parseExtendedData &&
+          (!rows.length ||
+            (!global.KmlParse.extendedDataBoreholeId(rows) &&
+              !global.KmlParse.extendedDataValue(rows, "BH_ID")))
+        ) {
+          rows = global.KmlParse.parseExtendedData(node.sourceEl);
+        }
+        var match = global.KmlParse.placemarkCsvMatchId(node.sourceEl, rows);
+        if (!featureHasPointGeometry(node.feature)) {
+          if (match.id) {
+            result.stats.notPoint += 1;
+          }
+          return;
+        }
+        if (!match.id) {
+          result.stats.noBhId += 1;
+          return;
+        }
+        if (!global.KmlParse.placemarkHasPointCoordinates(node.sourceEl)) {
+          return;
+        }
+        var resolved = resolveCsvBhRow(lookup, match.id);
+        if (!resolved) {
+          result.stats.notInCsv += 1;
+          return;
+        }
+        var point = firstPoint(node.feature);
+        if (!point) {
+          return;
+        }
+        var entry = {
+          bhId: match.id,
+          name: node.name || match.id,
+          oldLat: point.lat,
+          oldLng: point.lng,
+          newLat: resolved.lat,
+          newLng: resolved.lng,
+          fuzzyMatched: resolved.matchedVia === "canonical",
+        };
+        var willUpdate =
+          !bhCoordValuesNearlyEqual(point.lat, resolved.lat) ||
+          !bhCoordValuesNearlyEqual(point.lng, resolved.lng);
+        if (willUpdate) {
+          result.changes.push(entry);
+          result.stats.toUpdate += 1;
+          if (entry.fuzzyMatched) {
+            result.stats.fuzzyMatched += 1;
+          }
+        } else {
+          result.unchanged.push(entry);
+          result.stats.unchanged += 1;
+        }
+        used[resolved.canonical || resolved.csvLabel] = true;
+      });
+    });
+    Object.keys(lookup).forEach(function (canonKey) {
+      if (!used[canonKey]) {
+        var lookupEntry = lookup[canonKey];
+        result.stats.unusedCsvIds.push(
+          lookupEntry && lookupEntry.csvLabel ? lookupEntry.csvLabel : canonKey
+        );
+      }
+    });
+    result.ok = true;
+    return result;
   }
 
   function setSharedStylePointIcon(sourceId, iconStyleKey, spec) {
@@ -1678,6 +1896,27 @@
     });
   }
 
+  var layerVisibilityListeners = [];
+
+  function notifyLayerVisibilityChanged(changedLayerId) {
+    layerVisibilityListeners.forEach(function (listener) {
+      try {
+        listener(changedLayerId);
+      } catch (err) {
+        /* ignore listener errors */
+      }
+    });
+  }
+
+  function onLayerVisibilityChanged(listener) {
+    if (typeof listener !== "function") {
+      return;
+    }
+    if (layerVisibilityListeners.indexOf(listener) === -1) {
+      layerVisibilityListeners.push(listener);
+    }
+  }
+
   function setLayerVisible(id, visible, root) {
     var node = root ? findNode(root, id) : null;
     if (node) {
@@ -1696,6 +1935,7 @@
           dataGroup.removeLayer(layer);
         }
       });
+      notifyLayerVisibilityChanged(id);
       return;
     }
     var layer = layersById[id];
@@ -1707,6 +1947,7 @@
     } else {
       dataGroup.removeLayer(layer);
     }
+    notifyLayerVisibilityChanged(id);
   }
 
   function featureHasPointGeometry(feature) {
@@ -2378,11 +2619,14 @@
     listDocumentSources: listDocumentSources,
     clearDocument: clearDocument,
     setLayerVisible: setLayerVisible,
+    onLayerVisibilityChanged: onLayerVisibilityChanged,
     setFeatureClicksEnabled: setFeatureClicksEnabled,
     onInspect: onInspect,
     onFeatureHover: onFeatureHover,
     onFeatureContextMenu: onFeatureContextMenu,
     selectFeature: selectFeature,
+    canGoToNode: canGoToNode,
+    goToNode: goToNode,
     getMap: getMap,
     getSelectedId: getSelectedId,
     findNode: function (id) {
@@ -2414,6 +2658,7 @@
     setSourcePointNameLabelsHidden: setSourcePointNameLabelsHidden,
     getSourcePointNameLabelsHidden: getSourcePointNameLabelsHidden,
     validateBhCoordCsvToSource: validateBhCoordCsvToSource,
+    previewBhCoordCsvToSource: previewBhCoordCsvToSource,
     applyBhCoordCsvToSource: applyBhCoordCsvToSource,
     setSharedStyleIconUrl: setSharedStyleIconUrl,
     setSharedStylePointIcon: setSharedStylePointIcon,

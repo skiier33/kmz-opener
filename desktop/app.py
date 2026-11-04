@@ -57,8 +57,19 @@ from desktop.geg_appendix_excel import (  # noqa: E402
     default_template_path,
     list_appendix_preview,
     validate_screenshot_directory,
+    validate_template_path,
+)
+from desktop.icon_to_image import (  # noqa: E402
+    preview_icon_to_image as build_icon_to_image_preview,
+    save_icon_to_image as write_icon_to_image_outputs,
 )
 from desktop.google_earth import launch_google_earth  # noqa: E402
+from desktop.copilot_scan_parser import list_scan_parsers  # noqa: E402
+from desktop.scan_coordinate_extract import (  # noqa: E402
+    parse_scan_coordinates_pdf,
+    validate_scan_pdf_path,
+    write_scan_coordinates_export,
+)
 from desktop.server import (  # noqa: E402
     DESKTOP_TOKEN,
     EXPORT_PATHS,
@@ -68,6 +79,7 @@ from desktop.server import (  # noqa: E402
     normalize_path,
     register_source,
     resolve_session_kmz_paths,
+    set_scan_gps_window_callback,
     start_server,
     user_custom_icons_dir,
 )
@@ -298,6 +310,33 @@ def _invoke_on_ui(window: object, action):
     return box.get("value")
 
 
+def _invoke_on_ui_always(window: object, action):
+    """
+    Run a callable on the WinForms UI thread whenever Invoke is available.
+
+    Args:
+        window: pywebview window that owns the native form.
+        action: Callable that performs the UI work.
+
+    Returns:
+        The value returned by action.
+    """
+    native = getattr(window, "native", None)
+    invoke = getattr(native, "Invoke", None)
+    if invoke is None:
+        return action()
+
+    box: Dict[str, object] = {}
+
+    def _run() -> None:
+        box["value"] = action()
+
+    from System import Func, Type
+
+    invoke(Func[Type](_run))
+    return box.get("value")
+
+
 def _source_payload(path: str) -> dict:
     """Register a path and return the metadata the page needs to read it."""
     full = normalize_path(path)
@@ -350,6 +389,65 @@ class DesktopApi:
         if not path or not isinstance(path, str):
             return None
         return import_custom_icon_from_path(path)
+
+    def choose_csv(self, initial_directory: str = "") -> Optional[dict]:
+        """
+        Show a native open dialog for a coordinate CSV file.
+
+        Args:
+            initial_directory: Folder to open the dialog in when set.
+
+        Returns:
+            Path metadata for the chosen CSV, or None if cancelled.
+        """
+        windows = webview.windows
+        if not windows:
+            return None
+        window = windows[0]
+        start_dir = _dialog_directory(initial_directory)
+
+        def _open() -> Optional[str]:
+            result = window.create_file_dialog(
+                _open_dialog_flag(),
+                directory=start_dir,
+                allow_multiple=False,
+                file_types=("CSV (*.csv)", "All files (*.*)"),
+            )
+            return _first_path(result)
+
+        path = _invoke_on_ui(window, _open)
+        if not path or not isinstance(path, str):
+            return None
+        full = normalize_path(path)
+        if not full.lower().endswith(".csv") or not os.path.isfile(full):
+            return None
+        return {"path": full, "name": os.path.basename(full)}
+
+    def read_csv_file(self, path: str = "") -> dict:
+        """
+        Read a local CSV file for coordinate import.
+
+        Args:
+            path: Absolute path to a .csv file.
+
+        Returns:
+            Dict with ``path`` and ``text``, or ``error`` when the file cannot be read.
+        """
+        if not path or not isinstance(path, str):
+            return {"error": "No CSV path was given."}
+        full = normalize_path(path)
+        if not full.lower().endswith(".csv"):
+            return {"error": "Choose a .csv file."}
+        if not os.path.isfile(full):
+            return {"error": "That CSV file was not found."}
+        try:
+            with open(full, "r", encoding="utf-8-sig", newline="") as handle:
+                text = handle.read()
+        except OSError as err:
+            return {"error": err.strerror or "Could not read that CSV."}
+        if len(text) > 5_000_000:
+            return {"error": "That CSV file is too large."}
+        return {"path": full, "text": text}
 
     def choose_kmz(self, initial_directory: str = "") -> Optional[dict]:
         """
@@ -411,6 +509,169 @@ class DesktopApi:
         if not os.path.isdir(full):
             return None
         return {"path": full}
+
+    def choose_geg_appendix_template(self, initial_directory: str = "") -> Optional[dict]:
+        """
+        Show a native open dialog for the GEG appendix Excel template.
+
+        Args:
+            initial_directory: Folder to open the dialog in when set.
+
+        Returns:
+            Path metadata for the chosen .xlsm, or None if cancelled.
+        """
+        windows = webview.windows
+        if not windows:
+            return None
+        window = windows[0]
+        start_dir = _dialog_directory(initial_directory)
+
+        def _open() -> Optional[str]:
+            result = window.create_file_dialog(
+                _open_dialog_flag(),
+                directory=start_dir,
+                allow_multiple=False,
+                file_types=(
+                    "Excel macro (*.xlsm)",
+                    "Excel (*.xls;*.xlsx;*.xlsm)",
+                    "All files (*.*)",
+                ),
+            )
+            return _first_path(result)
+
+        path = _invoke_on_ui(window, _open)
+        if not path or not isinstance(path, str):
+            return None
+        full = normalize_path(path)
+        if validate_template_path(full):
+            return None
+        return {"path": full, "name": os.path.basename(full)}
+
+    def choose_scan_pdf(self, initial_directory: str = "") -> Optional[dict]:
+        """
+        Show a native open dialog for a scanned boring-log PDF.
+
+        Args:
+            initial_directory: Folder to open the dialog in when set.
+
+        Returns:
+            Path metadata for the chosen PDF, or None if cancelled.
+        """
+        windows = webview.windows
+        if not windows:
+            return None
+        window = windows[0]
+        start_dir = _dialog_directory(initial_directory)
+
+        def _open() -> Optional[str]:
+            result = window.create_file_dialog(
+                _open_dialog_flag(),
+                directory=start_dir,
+                allow_multiple=False,
+                file_types=("PDF (*.pdf)", "All files (*.*)"),
+            )
+            return _first_path(result)
+
+        path = _invoke_on_ui(window, _open)
+        if not path or not isinstance(path, str):
+            return None
+        full = normalize_path(path)
+        if validate_scan_pdf_path(full):
+            return None
+        return {"path": full, "name": os.path.basename(full)}
+
+    def choose_scan_coords_export_path(
+        self, suggested_name: str = "borehole-coordinates.csv", initial_directory: str = ""
+    ) -> Optional[dict]:
+        """
+        Show a native save dialog for coordinate export CSV.
+
+        Args:
+            suggested_name: Default file name in the dialog.
+            initial_directory: Folder to open the dialog in when set.
+
+        Returns:
+            The chosen path, or None if the dialog was cancelled.
+        """
+        windows = webview.windows
+        if not windows:
+            return None
+        window = windows[0]
+        file_name = suggested_name.strip() if isinstance(suggested_name, str) else ""
+        if not file_name:
+            file_name = "borehole-coordinates.csv"
+        if not file_name.lower().endswith(".csv"):
+            file_name = f"{file_name}.csv"
+        start_dir = _dialog_directory(initial_directory)
+
+        def _save() -> Optional[str]:
+            result = window.create_file_dialog(
+                _save_dialog_flag(),
+                directory=start_dir,
+                save_filename=file_name,
+                file_types=("CSV (*.csv)", "All files (*.*)"),
+            )
+            return _first_path(result)
+
+        path = _invoke_on_ui(window, _save)
+        if not path or not isinstance(path, str):
+            return None
+        full = normalize_path(path)
+        stem, ext = os.path.splitext(full)
+        if ext.lower() != ".csv":
+            full = f"{stem}.csv" if stem else f"{full}.csv"
+        with STATE_LOCK:
+            EXPORT_PATHS.add(full)
+        return {"path": full, "name": os.path.basename(full)}
+
+    def scan_parser_options(self) -> dict:
+        """
+        Return available scan parsing engines for the Parse GPS tool UI.
+
+        Returns:
+            Dict with ``parsers`` list (id, label, available).
+        """
+        return {"parsers": list_scan_parsers()}
+
+    def parse_scan_coordinates_pdf(self, pdf_path: str = "", parser: str = "ocr") -> dict:
+        """
+        Parse Boring ID and GPS N/W from each page of a scanned boring-log PDF.
+
+        Args:
+            pdf_path: Absolute path to the PDF file.
+            parser: ``ocr`` or ``copilot``.
+
+        Returns:
+            Parsed pages with thumbnails, or ``error`` on failure.
+        """
+        path = normalize_path(pdf_path) if pdf_path else ""
+        mode = parser.strip().lower() if isinstance(parser, str) else "ocr"
+        return parse_scan_coordinates_pdf(path, parser=mode)
+
+    def write_scan_coordinates_export(
+        self, export_path: str, rows: object
+    ) -> dict:
+        """
+        Write tab-separated borehole coordinates to a text file.
+
+        Args:
+            export_path: Destination file path.
+            rows: List of dicts with boringId, latitudeN, longitudeW.
+
+        Returns:
+            Result dict with path and lineCount, or ``error``.
+        """
+        if not export_path or not isinstance(export_path, str):
+            return {"error": "Choose an output file."}
+        if not isinstance(rows, list):
+            return {"error": "No rows to export."}
+        full = normalize_path(export_path)
+        result = write_scan_coordinates_export(full, rows)
+        if "error" in result:
+            return result
+        with STATE_LOCK:
+            EXPORT_PATHS.add(full)
+        return result
 
     def choose_export_path(
         self, suggested_name: str, initial_directory: str = ""
@@ -613,12 +874,17 @@ class DesktopApi:
         path = default_template_path(app_root())
         return {"path": path}
 
-    def list_appendix_screenshots(self, screenshot_directory: str = "") -> dict:
+    def list_appendix_screenshots(
+        self,
+        screenshot_directory: str = "",
+        template_path: str = "",
+    ) -> dict:
         """
         List PNG screenshots available for appendix PDF compilation.
 
         Args:
             screenshot_directory: Folder to scan; must exist when non-empty.
+            template_path: Optional .xlsm template; defaults to bundled GEG file.
 
         Returns:
             Preview dict or ``error`` when the folder is invalid.
@@ -627,16 +893,81 @@ class DesktopApi:
         err = validate_screenshot_directory(directory)
         if err:
             return {"error": err}
+        template = normalize_path(template_path) if template_path else default_template_path(app_root())
+        template_err = validate_template_path(template)
+        if template_err:
+            return {"error": template_err}
         preview = list_appendix_preview(directory)
-        preview["templatePath"] = default_template_path(app_root())
+        preview["templatePath"] = template
         return preview
 
-    def build_geg_appendix_pdf(self, screenshot_directory: str = "") -> dict:
+    def preview_icon_to_image(
+        self,
+        screenshot_directory: str = "",
+        icon_png_b64: str = "",
+        icon_size_px: int = 32,
+    ) -> dict:
+        """
+        Preview compositing an icon onto screenshots using embedded placemark pixels.
+
+        Args:
+            screenshot_directory: Folder containing screenshot PNG files.
+            icon_png_b64: Base64-encoded icon PNG raster from the viewer.
+            icon_size_px: Icon edge length in image pixels.
+
+        Returns:
+            Preview dict with sheet thumbnails, or ``error`` on failure.
+        """
+        try:
+            return build_icon_to_image_preview(
+                screenshot_directory,
+                icon_png_b64,
+                icon_size_px,
+            )
+        except ValueError as val_err:
+            return {"error": str(val_err)}
+        except OSError as os_err:
+            return {"error": str(os_err)}
+
+    def save_icon_to_image(
+        self,
+        screenshot_directory: str = "",
+        icon_png_b64: str = "",
+        icon_size_px: int = 32,
+    ) -> dict:
+        """
+        Save icon-composited copies of folder PNGs into ``ss_w_icon``.
+
+        Args:
+            screenshot_directory: Folder containing screenshot PNG files.
+            icon_png_b64: Base64-encoded icon PNG raster from the viewer.
+            icon_size_px: Icon edge length in image pixels.
+
+        Returns:
+            Result dict with output paths and counts, or ``error`` on failure.
+        """
+        try:
+            return write_icon_to_image_outputs(
+                screenshot_directory,
+                icon_png_b64,
+                icon_size_px,
+            )
+        except ValueError as val_err:
+            return {"error": str(val_err)}
+        except OSError as os_err:
+            return {"error": str(os_err)}
+
+    def build_geg_appendix_pdf(
+        self,
+        screenshot_directory: str = "",
+        template_path: str = "",
+    ) -> dict:
         """
         Build a GEG boring-location appendix PDF from PNGs via Excel macros.
 
         Args:
             screenshot_directory: Folder containing screenshot PNG files.
+            template_path: Optional .xlsm template; defaults to bundled GEG file.
 
         Returns:
             Result paths and counts, or ``error`` on failure.
@@ -645,9 +976,10 @@ class DesktopApi:
         err = validate_screenshot_directory(directory)
         if err:
             return {"error": err}
-        template = default_template_path(app_root())
-        if not os.path.isfile(template):
-            return {"error": f"Template workbook not found: {template}"}
+        template = normalize_path(template_path) if template_path else default_template_path(app_root())
+        template_err = validate_template_path(template)
+        if template_err:
+            return {"error": template_err}
 
         windows = webview.windows
         if not windows:
@@ -679,6 +1011,40 @@ class DesktopApi:
             with STATE_LOCK:
                 EXPORT_PATHS.add(normalize_path(str(xlsm_path)))
         return result
+
+    def open_scan_gps_window(self) -> dict:
+        """
+        Open a dedicated window for parsing GPS coordinates from scanned boring logs.
+
+        Returns:
+            Dict with ``ok`` when a window was created, or ``error`` when unavailable.
+        """
+        if not _VIEWER_BASE_URL:
+            return {"error": "Desktop window is not available."}
+        windows = webview.windows
+        if not windows:
+            return {"error": "Desktop window is not available."}
+        window = windows[0]
+        url = f"{_VIEWER_BASE_URL}scan-coordinates.html"
+
+        def _open() -> dict:
+            try:
+                webview.create_window(
+                    "Parse GPS from Scan",
+                    url,
+                    width=920,
+                    height=780,
+                    min_size=(640, 520),
+                    js_api=DesktopApi(),
+                )
+            except (OSError, RuntimeError, TypeError, ValueError) as err:
+                return {"error": f"Could not open window: {err}"}
+            return {"ok": True}
+
+        result = _invoke_on_ui_always(window, _open)
+        if isinstance(result, dict):
+            return result
+        return {"ok": True}
 
     def duplicate_window(
         self,
@@ -771,6 +1137,7 @@ def main() -> None:
         ensure_user_custom_icons_dir()
         server, port = start_server(app_root())
         _VIEWER_BASE_URL = f"http://127.0.0.1:{port}/"
+        set_scan_gps_window_callback(lambda: DesktopApi().open_scan_gps_window())
         webview.create_window(
             "KMZ GIS Viewer",
             f"http://127.0.0.1:{port}/",

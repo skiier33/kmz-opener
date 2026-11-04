@@ -140,6 +140,68 @@
               </button>
             </div>
           </div>
+          <div class="menubar-menu" id="menubar-tools">
+            <button
+              type="button"
+              class="menubar-top-item"
+              id="menubar-tools-trigger"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="menubar-tools-popup"
+            >
+              Tools
+            </button>
+            <div
+              class="menubar-popup hidden"
+              id="menubar-tools-popup"
+              role="menu"
+              aria-labelledby="menubar-tools-trigger"
+            >
+              <button
+                type="button"
+                class="menubar-menu-item"
+                id="menubar-tools-csv-coords"
+                role="menuitem"
+                title="Update point placemark coordinates from a CSV file"
+              >
+                CSV Coordinates to KMZ File…
+              </button>
+              <button
+                type="button"
+                class="menubar-menu-item"
+                id="menubar-tools-parse-gps-scan"
+                role="menuitem"
+                title="Open a window to OCR Boring ID and GPS from scanned boring-log PDFs"
+              >
+                Parse GPS from Scan
+              </button>
+              <div class="menubar-sep" role="separator"></div>
+              <button
+                type="button"
+                class="menubar-menu-item menubar-menu-item-check"
+                id="menubar-tools-point-chain"
+                role="menuitemcheckbox"
+                data-section-slug="point-chain"
+                aria-checked="true"
+                title="Show or hide the Point chain section in the sidebar"
+              >
+                <span class="menubar-checkmark" aria-hidden="true">✓</span>
+                <span class="menubar-menu-item-label">Point chain</span>
+              </button>
+              <button
+                type="button"
+                class="menubar-menu-item menubar-menu-item-check"
+                id="menubar-tools-kml-editor"
+                role="menuitemcheckbox"
+                data-section-slug="kml-editor"
+                aria-checked="true"
+                title="Show or hide the KML editor section in the sidebar"
+              >
+                <span class="menubar-checkmark" aria-hidden="true">✓</span>
+                <span class="menubar-menu-item-label">KML editor</span>
+              </button>
+            </div>
+          </div>
           <div class="menubar-menu" id="menubar-options">
             <button
               type="button"
@@ -458,39 +520,6 @@
             <div id="point-chain-panel" class="point-chain-panel" aria-label="Nearest-neighbor point chain"></div>
           </section>
 
-          <section class="sidebar-section sidebar-csv-coords">
-            <h2>Coords from CSV</h2>
-            <div class="csv-coords" aria-label="Update coordinates from CSV">
-              <p class="muted csv-coords-hint">
-                Choose a CSV with columns <strong>BH_ID</strong>, <strong>LAT</strong>, and
-                <strong>LONG</strong>, then a KMZ or KML. Each point placemark must have
-                <strong>&lt;Point&gt;&lt;coordinates&gt;</strong>. Match CSV rows by ExtendedData
-                <strong>BH_ID</strong> or by <strong>&lt;name&gt;</strong> (e.g. B6A). The file is
-                checked before any edits. <strong>BH_ID</strong> matching tolerates common
-                spelling differences (e.g. B6A vs B-6A, B06A, or BH-6A).
-              </p>
-              <button type="button" class="btn" id="btn-csv-coords-update" title="Pick CSV, then KMZ, and update matching point placemarks">
-                Update from CSV…
-              </button>
-              <input
-                id="csv-coords-input"
-                type="file"
-                accept=".csv,text/csv"
-                hidden
-                tabindex="-1"
-                aria-hidden="true"
-              />
-              <input
-                id="csv-coords-kmz-input"
-                type="file"
-                accept=".kmz,.kml,application/vnd.google-earth.kmz,application/vnd.google-earth.kml+xml"
-                hidden
-                tabindex="-1"
-                aria-hidden="true"
-              />
-            </div>
-          </section>
-
           <section class="sidebar-section sidebar-kml-editor hidden" id="external-edit-section">
             <h2>KML editor</h2>
             <div class="external-edit">
@@ -536,8 +565,8 @@
           <section class="sidebar-section sidebar-borehole-images">
             <h2>Borehole Images</h2>
             <p class="muted borehole-images-hint">
-              Choose a KMZ with point placemarks, set map scale and image size, then use Preview on each
-              row before saving selected screenshots.
+              Choose a KMZ with point placemarks, set map scale and image size, select rows to save, and
+              use Preview when you want to review captures before saving.
             </p>
             <div class="borehole-images-fields">
               <label class="borehole-images-field borehole-images-field-wide">
@@ -820,6 +849,20 @@
               aria-hidden="true"
             >
               <p id="borehole-images-placemark-subtitle" class="muted borehole-images-placemark-subtitle"></p>
+              <label class="borehole-images-select-all borehole-images-link-layers">
+                <input id="borehole-images-link-layers" type="checkbox" checked />
+                Link save selection to Layers panel checkboxes
+              </label>
+              <label
+                id="borehole-images-link-layers-source-wrap"
+                class="borehole-images-field borehole-images-field-wide borehole-images-link-layers-source-wrap hidden"
+              >
+                <span class="borehole-images-label">Mirror Layers checkboxes from</span>
+                <select
+                  id="borehole-images-link-layers-source"
+                  aria-label="Loaded KMZ or KML file whose layer tree controls save selection"
+                ></select>
+              </label>
               <label class="borehole-images-select-all">
                 <input id="borehole-images-select-all" type="checkbox" checked />
                 Save all listed
@@ -1007,6 +1050,62 @@
             </div>
           </section>
 
+          <section class="sidebar-section sidebar-icon-to-image">
+            <h2>Icon to Image</h2>
+            <p class="muted icon-to-image-hint">
+              Composite a point icon onto every borehole location stored in screenshot PNG metadata.
+              Preview the folder, then save copies into a subfolder named
+              <code>ss_w_icon</code>. Requires the desktop app.
+            </p>
+            <div class="icon-to-image-fields">
+              <label class="icon-to-image-field icon-to-image-field-wide">
+                <span class="icon-to-image-label">Screenshot folder</span>
+                <div class="icon-to-image-path-row">
+                  <input
+                    id="icon-to-image-directory"
+                    type="text"
+                    spellcheck="false"
+                    autocomplete="off"
+                    placeholder="Folder containing PNG screenshots"
+                  />
+                  <button id="icon-to-image-browse-dir" class="btn" type="button" title="Choose folder">
+                    Browse…
+                  </button>
+                </div>
+              </label>
+              <div
+                id="icon-to-image-icon-picker"
+                class="icon-to-image-icon-picker"
+                aria-label="Icon to draw on screenshots"
+              ></div>
+              <label class="icon-to-image-field">
+                <span class="icon-to-image-label">Icon size on image (px)</span>
+                <input
+                  id="icon-to-image-size-px"
+                  type="number"
+                  min="8"
+                  max="256"
+                  step="1"
+                  value="32"
+                  aria-label="Icon edge length in screenshot pixels"
+                />
+              </label>
+              <div class="icon-to-image-preview">
+                <span id="icon-to-image-count" class="icon-to-image-count">0 PNG files</span>
+                <span id="icon-to-image-output-hint" class="icon-to-image-output-hint muted"></span>
+                <div
+                  id="icon-to-image-sheet-previews"
+                  class="icon-to-image-sheet-previews"
+                  aria-label="Preview of icon composited screenshots"
+                ></div>
+              </div>
+              <button id="icon-to-image-save" class="btn icon-to-image-save-btn" type="button" disabled>
+                Save to ss_w_icon
+              </button>
+              <p id="icon-to-image-status" class="icon-to-image-status muted" aria-live="polite"></p>
+            </div>
+          </section>
+
           <section class="sidebar-section sidebar-appx-pdf">
             <h2>Appx PDF</h2>
             <p class="muted appx-pdf-hint">
@@ -1017,21 +1116,41 @@
             <div class="appx-pdf-fields">
               <label class="appx-pdf-field appx-pdf-field-wide">
                 <span class="appx-pdf-label">Screenshot folder</span>
-                <input
-                  id="appx-pdf-directory"
-                  type="text"
-                  readonly
-                  spellcheck="false"
-                  placeholder="Set under Options or Screenshot panel"
-                />
+                <div class="appx-pdf-path-row">
+                  <input
+                    id="appx-pdf-directory"
+                    type="text"
+                    spellcheck="false"
+                    autocomplete="off"
+                    placeholder="Folder containing PNG screenshots"
+                  />
+                  <button id="appx-pdf-browse-dir" class="btn" type="button" title="Choose folder">
+                    Browse…
+                  </button>
+                </div>
               </label>
               <label class="appx-pdf-field appx-pdf-field-wide">
                 <span class="appx-pdf-label">Excel template</span>
-                <input id="appx-pdf-template" type="text" readonly spellcheck="false" />
+                <div class="appx-pdf-path-row">
+                  <input
+                    id="appx-pdf-template"
+                    type="text"
+                    spellcheck="false"
+                    autocomplete="off"
+                    placeholder="GEG boring-location diagram .xlsm template"
+                  />
+                  <button id="appx-pdf-browse-template" class="btn" type="button" title="Choose template">
+                    Browse…
+                  </button>
+                </div>
               </label>
               <div class="appx-pdf-preview">
                 <span id="appx-pdf-count" class="appx-pdf-count">0 PNG files</span>
-                <ul id="appx-pdf-file-list" class="appx-pdf-file-list" aria-label="Screenshot files to include"></ul>
+                <div
+                  id="appx-pdf-sheet-previews"
+                  class="appx-pdf-sheet-previews"
+                  aria-label="Preview of each figure sheet"
+                ></div>
               </div>
               <button id="appx-pdf-build" class="btn appx-pdf-build-btn" type="button" disabled>
                 Build appendix PDF
@@ -1105,7 +1224,7 @@
                 </div>
                 <button
                   type="button"
-                  class="btn btn-subtle borehole-images-full-preview-close"
+                  class="btn-dismiss"
                   id="borehole-images-full-preview-close"
                   aria-label="Close preview"
                 >
@@ -1125,6 +1244,165 @@
                 </button>
                 <button type="button" class="btn btn-subtle" id="borehole-images-full-preview-dismiss">
                   Close
+                </button>
+              </footer>
+            </div>
+          </div>
+          <div
+            id="csv-coords-dialog"
+            class="csv-coords-dialog hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="csv-coords-dialog-title"
+            aria-hidden="true"
+          >
+            <div class="csv-coords-panel">
+              <header class="csv-coords-header">
+                <div>
+                  <h2 id="csv-coords-dialog-title">CSV Coordinates to KMZ File</h2>
+                  <p class="muted csv-coords-dialog-subtitle">
+                    Update matching point placemarks in a KMZ or KML from a spreadsheet export.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  class="btn-dismiss"
+                  id="csv-coords-dialog-close"
+                  aria-label="Close CSV Coordinates to KMZ File"
+                >
+                  ×
+                </button>
+              </header>
+              <div class="csv-coords" aria-label="Update coordinates from CSV">
+                <p class="muted csv-coords-hint">
+                  Set a CSV with borehole id, latitude, and longitude columns (any common spelling, such as
+                  <strong>BH_ID</strong> / <strong>Borehole</strong> / <strong>boring_id</strong>,
+                  <strong>LAT</strong> / <strong>Latitude</strong>, and
+                  <strong>LONG</strong> / <strong>Longitude</strong>), and the KMZ or KML to update. Each point placemark must have
+                  <strong>&lt;Point&gt;&lt;coordinates&gt;</strong>. Match CSV rows by ExtendedData
+                  <strong>BH_ID</strong> or by <strong>&lt;name&gt;</strong> (e.g. B6A). Preview
+                  changes before applying them to the open file. <strong>BH_ID</strong> matching
+                  tolerates common spelling differences (e.g. B6A vs B-6A, B06A, or BH-6A).
+                </p>
+                <label class="csv-coords-field">
+                  <span class="csv-coords-label">CSV file</span>
+                  <div class="csv-coords-path-row">
+                    <input
+                      id="csv-coords-csv-path"
+                      type="text"
+                      spellcheck="false"
+                      autocomplete="off"
+                      placeholder="Path to coordinate CSV…"
+                    />
+                    <button
+                      type="button"
+                      class="btn btn-subtle"
+                      id="csv-coords-browse-csv"
+                      title="Choose CSV file"
+                    >
+                      Browse…
+                    </button>
+                  </div>
+                  <p
+                    id="csv-coords-csv-selected"
+                    class="csv-coords-selected-path muted"
+                    hidden
+                    aria-live="polite"
+                  ></p>
+                </label>
+                <label class="csv-coords-field">
+                  <span class="csv-coords-label">KMZ or KML file</span>
+                  <div class="csv-coords-path-row">
+                    <input
+                      id="csv-coords-kmz-path"
+                      type="text"
+                      spellcheck="false"
+                      autocomplete="off"
+                      placeholder="Path to KMZ or KML…"
+                    />
+                    <button
+                      type="button"
+                      class="btn btn-subtle"
+                      id="csv-coords-browse-kmz"
+                      title="Choose KMZ or KML file"
+                    >
+                      Browse…
+                    </button>
+                  </div>
+                  <p
+                    id="csv-coords-kmz-selected"
+                    class="csv-coords-selected-path muted"
+                    hidden
+                    aria-live="polite"
+                  ></p>
+                </label>
+                <p id="csv-coords-status" class="csv-coords-status muted" aria-live="polite"></p>
+                <section
+                  id="csv-coords-preview-section"
+                  class="csv-coords-preview-section hidden"
+                  aria-label="Coordinate change preview"
+                  hidden
+                >
+                  <p id="csv-coords-preview-summary" class="csv-coords-preview-summary muted"></p>
+                  <p
+                    id="csv-coords-preview-warnings"
+                    class="csv-coords-preview-warnings muted hidden"
+                    hidden
+                  ></p>
+                  <div class="csv-coords-diff-wrap">
+                    <table class="csv-coords-diff-table">
+                      <thead>
+                        <tr>
+                          <th scope="col">BH_ID</th>
+                          <th scope="col">Latitude</th>
+                          <th scope="col">Longitude</th>
+                        </tr>
+                      </thead>
+                      <tbody id="csv-coords-diff-body"></tbody>
+                    </table>
+                  </div>
+                </section>
+                <input
+                  id="csv-coords-input"
+                  type="file"
+                  accept=".csv,text/csv"
+                  hidden
+                  tabindex="-1"
+                  aria-hidden="true"
+                />
+                <input
+                  id="csv-coords-kmz-input"
+                  type="file"
+                  accept=".kmz,.kml,application/vnd.google-earth.kmz,application/vnd.google-earth.kml+xml"
+                  hidden
+                  tabindex="-1"
+                  aria-hidden="true"
+                />
+              </div>
+              <footer class="csv-coords-footer">
+                <button
+                  type="button"
+                  class="btn btn-subtle"
+                  id="csv-coords-dialog-dismiss"
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  class="btn"
+                  id="btn-csv-coords-preview"
+                  title="Load both files and show coordinate changes"
+                >
+                  Preview changes
+                </button>
+                <button
+                  type="button"
+                  class="btn"
+                  id="btn-csv-coords-apply"
+                  disabled
+                  title="Update point coordinates and ExtendedData tags, then save the KMZ or KML"
+                >
+                  Apply and save
                 </button>
               </footer>
             </div>
@@ -1150,7 +1428,7 @@
                 </div>
                 <button
                   type="button"
-                  class="btn btn-subtle map-scale-presets-close"
+                  class="btn-dismiss"
                   id="map-scale-presets-close"
                   aria-label="Close map scale list"
                 >
@@ -1199,7 +1477,7 @@
                 </div>
                 <button
                   type="button"
-                  class="btn btn-subtle feature-properties-close"
+                  class="btn-dismiss"
                   id="feature-properties-close"
                   aria-label="Close properties"
                 >
@@ -1463,7 +1741,9 @@
     <script src="js/screenshot.js"></script>
     <script src="js/bh-alignments.js"></script>
     <script src="js/borehole-images.js"></script>
+    <script src="js/desktop-api.js"></script>
     <script src="js/appx-pdf.js"></script>
+    <script src="js/icon-to-image.js"></script>
     <script src="js/gui-prefs.js"></script>
     <script src="js/viewer-path-prefs.js"></script>
     <script src="js/viewer-defaults.js"></script>

@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Parse GPS from Scan</title>
+    <link rel="stylesheet" href="css/app.css" />
+  </head>
+  <body class="scan-coords-body">
+    <main id="scan-coords-window" class="scan-coords-window">
+      <header class="scan-coords-window-header">
+        <h1>Parse GPS from Scan</h1>
+        <p class="muted scan-coords-hint">
+          Choose a scanned GEG boring-log PDF and a CSV output path, pick a parsing method, then parse all
+          pages. Review and edit the results below before confirming save.
+        </p>
+      </header>
+      <div class="scan-coords-fields">
+        <label class="scan-coords-field-wide">
+          <span class="scan-coords-label">Parsing method</span>
+          <select id="scan-coords-parser" class="scan-coords-parser-select" aria-label="Parsing method"></select>
+          <p id="scan-coords-parser-hint" class="muted scan-coords-parser-hint" hidden></p>
+        </label>
+        <label class="scan-coords-field-wide">
+          <span class="scan-coords-label">Scanned PDF</span>
+          <div class="scan-coords-path-row">
+            <input id="scan-coords-pdf" type="text" readonly spellcheck="false" placeholder="Choose PDF…" />
+            <button id="scan-coords-browse-pdf" class="btn btn-subtle" type="button">Browse…</button>
+          </div>
+        </label>
+        <label class="scan-coords-field-wide">
+          <span class="scan-coords-label">Save CSV as</span>
+          <div class="scan-coords-path-row">
+            <input
+              id="scan-coords-export-path"
+              type="text"
+              readonly
+              spellcheck="false"
+              placeholder="Choose output .csv…"
+            />
+            <button id="scan-coords-browse-export" class="btn btn-subtle" type="button">Browse…</button>
+          </div>
+        </label>
+        <button id="scan-coords-parse" class="btn scan-coords-parse-btn" type="button">Parse all pages</button>
+        <p id="scan-coords-status" class="scan-coords-status muted" aria-live="polite"></p>
+        <section id="scan-coords-results-section" class="scan-coords-results-section hidden" aria-label="Parsed results">
+          <h2 class="scan-coords-results-title">Parsed results</h2>
+          <p class="muted scan-coords-results-hint">
+            One row per PDF page. Click a thumbnail to enlarge. Edit values if parsing missed handwriting,
+            then save the CSV.
+          </p>
+          <div id="scan-coords-list" class="scan-coords-list scan-coords-list-window" aria-label="Parsed borehole pages"></div>
+          <button id="scan-coords-export" class="btn scan-coords-export-btn" type="button" disabled>
+            Save CSV…
+          </button>
+        </section>
+      </div>
+    </main>
+    <div
+      id="scan-coords-preview-dialog"
+      class="scan-coords-preview-dialog hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="scan-coords-preview-title"
+      aria-hidden="true"
+    >
+      <div class="scan-coords-preview-panel">
+        <header class="scan-coords-preview-header">
+          <h2 id="scan-coords-preview-title">Page preview</h2>
+          <button
+            type="button"
+            class="btn-dismiss"
+            id="scan-coords-preview-close"
+            aria-label="Close page preview"
+          >
+            ×
+          </button>
+        </header>
+        <div class="scan-coords-preview-body">
+          <img id="scan-coords-preview-img" class="scan-coords-preview-img" alt="" />
+        </div>
+      </div>
+    </div>
+    <script src="js/desktop-api.js"></script>
+    <script src="js/scan-coordinates.js"></script>
+  </body>
+</html>

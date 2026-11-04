@@ -153,9 +153,23 @@
     return { sourceId: sourceId, label: sourceId };
   }
 
-  function mapBlockFromView(lat, lng, zoom, widthPx, heightPx, scaleDenomOverride, includeLiveBounds) {
+  function mapBlockFromView(
+    lat,
+    lng,
+    zoom,
+    widthPx,
+    heightPx,
+    scaleDenomOverride,
+    includeLiveBounds,
+    bearingOverride
+  ) {
     var map = global.GisMap && typeof GisMap.getMap === "function" ? GisMap.getMap() : null;
-    var bearing = map && typeof map.getBearing === "function" ? map.getBearing() || 0 : 0;
+    var bearing =
+      bearingOverride != null && Number.isFinite(bearingOverride)
+        ? bearingOverride
+        : map && typeof map.getBearing === "function"
+          ? map.getBearing() || 0
+          : 0;
     var scaleDenom =
       scaleDenomOverride != null && scaleDenomOverride > 0
         ? scaleDenomOverride
@@ -241,6 +255,251 @@
     };
   }
 
+  function latLngInBounds(lat, lng, bounds) {
+    if (
+      !bounds
+      || lat == null
+      || lng == null
+      || !Number.isFinite(lat)
+      || !Number.isFinite(lng)
+    ) {
+      return false;
+    }
+    return (
+      lat <= bounds.north
+      && lat >= bounds.south
+      && lng <= bounds.east
+      && lng >= bounds.west
+    );
+  }
+
+  function isNodeVisibleOnMap(nodeId) {
+    var gis = global.GisMap;
+    if (!gis || !nodeId || typeof gis.findNode !== "function" || typeof gis.locate !== "function") {
+      return false;
+    }
+    var sourceId = nodeId.indexOf(":") >= 0 ? nodeId.slice(0, nodeId.indexOf(":")) : "";
+    if (sourceId && typeof gis.listDocumentSources === "function") {
+      var sources = gis.listDocumentSources();
+      var sourceVisible = false;
+      var i;
+      for (i = 0; i < sources.length; i += 1) {
+        if (sources[i].id === sourceId) {
+          sourceVisible = sources[i].visible !== false;
+          break;
+        }
+      }
+      if (!sourceVisible) {
+        return false;
+      }
+    }
+    var id = nodeId;
+    while (id) {
+      var node = gis.findNode(id);
+      if (!node || node.visible === false) {
+        return false;
+      }
+      var loc = gis.locate(id);
+      if (!loc || !loc.parent) {
+        break;
+      }
+      id = loc.parent.id;
+    }
+    return true;
+  }
+
+  function placemarkNameShown(nodeId) {
+    var gis = global.GisMap;
+    if (!gis || !nodeId) {
+      return true;
+    }
+    var sourceId = nodeId.indexOf(":") >= 0 ? nodeId.slice(0, nodeId.indexOf(":")) : "";
+    if (
+      sourceId
+      && typeof gis.getSourcePointNameLabelsHidden === "function"
+      && gis.getSourcePointNameLabelsHidden(sourceId)
+    ) {
+      return false;
+    }
+    var node = typeof gis.findNode === "function" ? gis.findNode(nodeId) : null;
+    var style = node && node.feature ? node.feature.style : null;
+    if (style && style.labelScale === 0) {
+      return false;
+    }
+    return true;
+  }
+
+  function mapMatchesFixedView(map, lat, lng, zoom, widthPx, heightPx) {
+    if (!map || !global.L) {
+      return false;
+    }
+    var center = map.getCenter();
+    var size = typeof map.getSize === "function" ? map.getSize() : null;
+    if (!center || !size) {
+      return false;
+    }
+    return (
+      Math.abs(center.lat - lat) < 1e-7
+      && Math.abs(center.lng - lng) < 1e-7
+      && Math.abs(map.getZoom() - zoom) < 0.02
+      && Math.round(size.x) === Math.round(widthPx)
+      && Math.round(size.y) === Math.round(heightPx)
+    );
+  }
+
+  function projectLatLngToImagePx(lat, lng, view) {
+    if (
+      !global.L
+      || view == null
+      || !Number.isFinite(lat)
+      || !Number.isFinite(lng)
+      || !Number.isFinite(view.centerLat)
+      || !Number.isFinite(view.centerLng)
+      || !Number.isFinite(view.zoom)
+      || !Number.isFinite(view.widthPx)
+      || !Number.isFinite(view.heightPx)
+    ) {
+      return null;
+    }
+    var map =
+      global.GisMap && typeof GisMap.getMap === "function" ? GisMap.getMap() : null;
+    if (
+      map
+      && typeof map.latLngToContainerPoint === "function"
+      && mapMatchesFixedView(
+        map,
+        view.centerLat,
+        view.centerLng,
+        view.zoom,
+        view.widthPx,
+        view.heightPx
+      )
+    ) {
+      var live = map.latLngToContainerPoint(global.L.latLng(lat, lng));
+      return {
+        x: roundNumber(live.x, 3),
+        y: roundNumber(live.y, 3),
+      };
+    }
+    var crs = global.L.CRS.EPSG3857;
+    var centerPt = crs.latLngToPoint(global.L.latLng(view.centerLat, view.centerLng), view.zoom);
+    var pt = crs.latLngToPoint(global.L.latLng(lat, lng), view.zoom);
+    var dx = pt.x - centerPt.x;
+    var dy = pt.y - centerPt.y;
+    var bearing = view.bearing != null && Number.isFinite(view.bearing) ? view.bearing : 0;
+    if (Math.abs(bearing) > 0.001) {
+      var rad = (bearing * Math.PI) / 180;
+      var cos = Math.cos(rad);
+      var sin = Math.sin(rad);
+      var rx = dx * cos - dy * sin;
+      var ry = dx * sin + dy * cos;
+      dx = rx;
+      dy = ry;
+    }
+    return {
+      x: roundNumber(dx + view.widthPx / 2, 3),
+      y: roundNumber(dy + view.heightPx / 2, 3),
+    };
+  }
+
+  function pixelInImage(pixel, widthPx, heightPx, marginPx) {
+    if (!pixel || !Number.isFinite(pixel.x) || !Number.isFinite(pixel.y)) {
+      return false;
+    }
+    var margin = marginPx != null && marginPx >= 0 ? marginPx : 0;
+    return (
+      pixel.x >= -margin
+      && pixel.y >= -margin
+      && pixel.x <= widthPx + margin
+      && pixel.y <= heightPx + margin
+    );
+  }
+
+  function collectVisiblePlacemarksInView(options) {
+    options = options || {};
+    var gis = global.GisMap;
+    if (
+      !gis
+      || typeof gis.listDocumentSources !== "function"
+      || typeof gis.listSourcePointLatLngs !== "function"
+    ) {
+      return [];
+    }
+    if (
+      !Number.isFinite(options.centerLat)
+      || !Number.isFinite(options.centerLng)
+      || !Number.isFinite(options.zoom)
+      || !Number.isFinite(options.widthPx)
+      || !Number.isFinite(options.heightPx)
+    ) {
+      return [];
+    }
+    var bounds = boundsFromView(
+      options.centerLat,
+      options.centerLng,
+      options.zoom,
+      options.widthPx,
+      options.heightPx
+    );
+    var view = {
+      centerLat: options.centerLat,
+      centerLng: options.centerLng,
+      zoom: options.zoom,
+      widthPx: options.widthPx,
+      heightPx: options.heightPx,
+      bearing: options.bearing != null ? options.bearing : 0,
+    };
+    var allowedSources = null;
+    if (options.sourceIds && options.sourceIds.length) {
+      allowedSources = {};
+      options.sourceIds.forEach(function (id) {
+        if (id) {
+          allowedSources[String(id)] = true;
+        }
+      });
+    }
+    var out = [];
+    var sources = gis.listDocumentSources();
+    sources.forEach(function (sourceInfo) {
+      if (!sourceInfo || !sourceInfo.id || sourceInfo.visible === false) {
+        return;
+      }
+      if (allowedSources && !allowedSources[sourceInfo.id]) {
+        return;
+      }
+      var points = gis.listSourcePointLatLngs(sourceInfo.id);
+      points.forEach(function (entry) {
+        if (!entry || !entry.nodeId || !isNodeVisibleOnMap(entry.nodeId)) {
+          return;
+        }
+        if (!latLngInBounds(entry.lat, entry.lng, bounds)) {
+          return;
+        }
+        var pixel = projectLatLngToImagePx(entry.lat, entry.lng, view);
+        if (!pixelInImage(pixel, options.widthPx, options.heightPx, 2)) {
+          return;
+        }
+        out.push({
+          nodeId: entry.nodeId,
+          sourceId: sourceInfo.id,
+          name: entry.name || "",
+          lat: roundCoord(entry.lat, 8),
+          lng: roundCoord(entry.lng, 8),
+          imageX: pixel.x,
+          imageY: pixel.y,
+          nameShown: placemarkNameShown(entry.nodeId),
+        });
+      });
+    });
+    out.sort(function (a, b) {
+      return String(a.name || "").localeCompare(String(b.name || ""), undefined, {
+        numeric: true,
+        sensitivity: "base",
+      });
+    });
+    return out;
+  }
+
   function buildBase(options) {
     options = options || {};
     var widthPx = options.widthPx;
@@ -258,7 +517,8 @@
             widthPx,
             heightPx,
             options.scaleDenom,
-            !!options.includeLiveBounds
+            !!options.includeLiveBounds,
+            options.bearing
           )
         : null;
     var placemark =
@@ -273,7 +533,23 @@
       placemark.lat = roundCoord(options.lat, 8);
       placemark.lng = roundCoord(options.lng, 8);
     }
-    return {
+    var visiblePlacemarks = options.visiblePlacemarks;
+    if (
+      visiblePlacemarks == null
+      && map
+      && options.includeVisiblePlacemarks !== false
+    ) {
+      visiblePlacemarks = collectVisiblePlacemarksInView({
+        centerLat: lat,
+        centerLng: lng,
+        zoom: zoom,
+        widthPx: widthPx,
+        heightPx: heightPx,
+        bearing: map.bearing,
+        sourceIds: options.visibleSourceIds,
+      });
+    }
+    var payload = {
       schema: SCHEMA,
       capturedAt: options.capturedAt || new Date().toISOString(),
       captureKind: options.captureKind || "screenshot",
@@ -285,6 +561,10 @@
       captureNotes: options.captureNotes || null,
       pdfHints: pdfHints(image),
     };
+    if (visiblePlacemarks && visiblePlacemarks.length) {
+      payload.visiblePlacemarks = visiblePlacemarks;
+    }
+    return payload;
   }
 
   function buildForMapFrame(options) {
@@ -319,7 +599,9 @@
     buildForMapFrame: buildForMapFrame,
     buildForFixedView: buildForFixedView,
     placemarkFromNodeId: placemarkFromNodeId,
+    collectVisiblePlacemarksInView: collectVisiblePlacemarksInView,
     boundsFromView: boundsFromView,
     imageBlock: imageBlock,
+    projectLatLngToImagePx: projectLatLngToImagePx,
   };
 })(window);

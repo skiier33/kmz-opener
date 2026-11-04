@@ -92,6 +92,10 @@
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6z"/></svg>';
   var SIDEBAR_SECTION_STORAGE_KEY = "kmz-sidebar-sections-collapsed";
   var SIDEBAR_SECTION_HIDDEN_STORAGE_KEY = "kmz-sidebar-sections-hidden";
+  var TOOLS_MENU_SIDEBAR_SECTION_IDS = {
+    "point-chain": "menubar-tools-point-chain",
+    "kml-editor": "menubar-tools-kml-editor",
+  };
   var sidebarSectionRegistry = [];
   var sidebarSectionHiddenState = {};
   var sidebarSectionContextMenu = null;
@@ -232,6 +236,9 @@
     if (entry && entry.menuItem) {
       entry.menuItem.setAttribute("aria-checked", hidden ? "false" : "true");
     }
+    if (entry && entry.toolsMenuItem) {
+      entry.toolsMenuItem.setAttribute("aria-checked", hidden ? "false" : "true");
+    }
     syncSidebarInspectSplitHandle();
   }
 
@@ -355,6 +362,9 @@
     }
     container.innerHTML = "";
     sidebarSectionRegistry.forEach(function (entry) {
+      if (TOOLS_MENU_SIDEBAR_SECTION_IDS[entry.slug]) {
+        return;
+      }
       var btn = document.createElement("button");
       btn.type = "button";
       btn.className = "menubar-menu-item menubar-menu-item-check";
@@ -419,9 +429,28 @@
     window.addEventListener("blur", hideSidebarSectionContextMenu);
   }
 
+  function wireToolsMenuSidebarSections() {
+    Object.keys(TOOLS_MENU_SIDEBAR_SECTION_IDS).forEach(function (slug) {
+      var btn = document.getElementById(TOOLS_MENU_SIDEBAR_SECTION_IDS[slug]);
+      if (!btn) {
+        return;
+      }
+      var entry = findSidebarSectionEntry(slug);
+      if (!entry) {
+        return;
+      }
+      entry.toolsMenuItem = btn;
+      btn.setAttribute(
+        "aria-checked",
+        isSidebarSectionUserHidden(slug) ? "false" : "true"
+      );
+    });
+  }
+
   function initSidebarSectionVisibility() {
     buildSidebarSectionRegistry();
     populateViewMenuSidebarSections();
+    wireToolsMenuSidebarSections();
     createSidebarSectionContextMenu();
     var sidebarLeft = document.querySelector(".sidebar-left");
     if (sidebarLeft) {
@@ -988,6 +1017,7 @@
   var layerTreeContextMenuDeleteBtn = null;
   var layerTreeContextMenuHideBtn = null;
   var layerTreeContextMenuRenameBtn = null;
+  var layerTreeContextMenuGotoBtn = null;
   var layerTreeContextMenuExportBtn = null;
   var sourceOverwriteDialog = document.getElementById("source-overwrite-dialog");
   var sourceOverwriteSubtitle = document.getElementById("source-overwrite-subtitle");
@@ -1033,10 +1063,25 @@
   var persistSessionInFlight = false;
   var pointIconsSectionEl = document.getElementById("point-icons-section");
   var filePointIconsEl = document.getElementById("file-point-icons");
-  var btnCsvCoordsUpdate = document.getElementById("btn-csv-coords-update");
+  var btnCsvCoordsPreview = document.getElementById("btn-csv-coords-preview");
+  var btnCsvCoordsApply = document.getElementById("btn-csv-coords-apply");
+  var csvCoordsCsvPathInput = document.getElementById("csv-coords-csv-path");
+  var csvCoordsKmzPathInput = document.getElementById("csv-coords-kmz-path");
+  var csvCoordsCsvSelectedEl = document.getElementById("csv-coords-csv-selected");
+  var csvCoordsKmzSelectedEl = document.getElementById("csv-coords-kmz-selected");
+  var csvCoordsBrowseCsvBtn = document.getElementById("csv-coords-browse-csv");
+  var csvCoordsBrowseKmzBtn = document.getElementById("csv-coords-browse-kmz");
+  var csvCoordsStatusEl = document.getElementById("csv-coords-status");
+  var csvCoordsPreviewSection = document.getElementById("csv-coords-preview-section");
+  var csvCoordsPreviewSummary = document.getElementById("csv-coords-preview-summary");
+  var csvCoordsPreviewWarnings = document.getElementById("csv-coords-preview-warnings");
+  var csvCoordsDiffBody = document.getElementById("csv-coords-diff-body");
   var csvCoordsInput = document.getElementById("csv-coords-input");
   var csvCoordsKmzInput = document.getElementById("csv-coords-kmz-input");
-  var pendingCsvCoordLookup = null;
+  var csvCoordsDialog = document.getElementById("csv-coords-dialog");
+  var csvCoordsBrowserCsvFile = null;
+  var csvCoordsBrowserKmzFile = null;
+  var csvCoordsApplyContext = null;
   var customIconsCatalog = [];
   var customIconsUserFolder = "";
   var customIconThumbUrls = {};
@@ -3228,7 +3273,7 @@
           (index === total - 1 ? " disabled" : "") +
           ">↓</button>" +
           (canRemove
-            ? '<button type="button" class="point-chain-move-btn point-chain-remove" data-index="' +
+            ? '<button type="button" class="btn-dismiss point-chain-remove" data-index="' +
               index +
               '" title="Remove from chain" aria-label="Remove from chain">×</button>'
             : "") +
@@ -5294,6 +5339,17 @@
       });
   }
 
+  function listLoadedSourcesForBoreholeImages() {
+    return loadedSources.map(function (source) {
+      return {
+        id: source.id,
+        label: source.doc.fileName || "Untitled",
+        visible: source.visible !== false,
+        bhAlignmentOverlay: !!source.bhAlignmentOverlay,
+      };
+    });
+  }
+
   function applyLoadedSourceVisibility(sourceId, visible) {
     var source = findLoadedSource(sourceId);
     if (source) {
@@ -5365,7 +5421,7 @@
 
       var removeBtn = document.createElement("button");
       removeBtn.type = "button";
-      removeBtn.className = "loaded-source-remove";
+      removeBtn.className = "btn-dismiss loaded-source-remove";
       removeBtn.setAttribute("aria-label", "Remove " + (source.doc.fileName || "file"));
       removeBtn.title = "Remove from map";
       removeBtn.textContent = "×";
@@ -6071,6 +6127,10 @@
     if (layerTreeContextMenuRenameBtn) {
       layerTreeContextMenuRenameBtn.disabled = !canRename;
     }
+    var canGoto = !!(focusId && GisMap.canGoToNode(focusId));
+    if (layerTreeContextMenuGotoBtn) {
+      layerTreeContextMenuGotoBtn.disabled = !canGoto;
+    }
     var sourceId = focusId ? documentSourceIdForLayerNodeId(focusId) : null;
     layerTreeContextMenuSourceId = sourceId;
     var source = sourceId ? findLoadedSource(sourceId) : null;
@@ -6114,6 +6174,21 @@
       hideLayerTreeContextMenu();
       if (sourceId) {
         saveSourceFromLayerTree(sourceId);
+      }
+    });
+
+    layerTreeContextMenuGotoBtn = document.createElement("button");
+    layerTreeContextMenuGotoBtn.type = "button";
+    layerTreeContextMenuGotoBtn.className = "map-context-menu-item";
+    layerTreeContextMenuGotoBtn.setAttribute("role", "menuitem");
+    layerTreeContextMenuGotoBtn.textContent = "Goto";
+    layerTreeContextMenuGotoBtn.addEventListener("click", function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      var id = focusId;
+      hideLayerTreeContextMenu();
+      if (id && !GisMap.goToNode(id)) {
+        setMessage("That layer has no geometry on the map.");
       }
     });
 
@@ -6172,6 +6247,7 @@
       }
     });
 
+    layerTreeContextMenu.appendChild(layerTreeContextMenuGotoBtn);
     layerTreeContextMenu.appendChild(layerTreeContextMenuSaveBtn);
     layerTreeContextMenu.appendChild(layerTreeContextMenuDeleteBtn);
     layerTreeContextMenu.appendChild(layerTreeContextMenuHideBtn);
@@ -7461,93 +7537,432 @@
     return parts.join(" ");
   }
 
-  function finishCsvCoordApply(sourceId, lookup, fileName) {
-    if (!sourceId || !lookup) {
+  function setCsvCoordsDialogStatus(text, isError) {
+    if (!csvCoordsStatusEl) {
       return;
+    }
+    csvCoordsStatusEl.textContent = text || "";
+    csvCoordsStatusEl.classList.toggle("is-error", !!isError);
+  }
+
+  function setCsvCoordsPathDisplay(kind, path, browserFileOnly) {
+    var text = String(path || "").trim();
+    var input = kind === "csv" ? csvCoordsCsvPathInput : csvCoordsKmzPathInput;
+    var selectedEl = kind === "csv" ? csvCoordsCsvSelectedEl : csvCoordsKmzSelectedEl;
+    if (input) {
+      input.value = text;
+      input.title = text;
+    }
+    if (!selectedEl) {
+      return;
+    }
+    if (!text) {
+      selectedEl.textContent = "";
+      selectedEl.classList.add("hidden");
+      selectedEl.hidden = true;
+      return;
+    }
+    selectedEl.textContent = text;
+    selectedEl.title = text;
+    if (browserFileOnly) {
+      selectedEl.title = "Full path is not available in the browser — using file name only.";
+    }
+    selectedEl.classList.remove("hidden");
+    selectedEl.hidden = false;
+  }
+
+  function formatCsvCoordNumber(value) {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      return "—";
+    }
+    return value.toFixed(6);
+  }
+
+  function clearCsvCoordsPreviewDisplay() {
+    if (csvCoordsPreviewSection) {
+      csvCoordsPreviewSection.classList.add("hidden");
+      csvCoordsPreviewSection.hidden = true;
+    }
+    if (csvCoordsPreviewSummary) {
+      csvCoordsPreviewSummary.textContent = "";
+    }
+    if (csvCoordsPreviewWarnings) {
+      csvCoordsPreviewWarnings.textContent = "";
+      csvCoordsPreviewWarnings.classList.add("hidden");
+      csvCoordsPreviewWarnings.hidden = true;
+    }
+    if (csvCoordsDiffBody) {
+      csvCoordsDiffBody.innerHTML = "";
+    }
+  }
+
+  function clearCsvCoordsPreviewUi() {
+    csvCoordsApplyContext = null;
+    if (btnCsvCoordsApply) {
+      btnCsvCoordsApply.disabled = true;
+    }
+    clearCsvCoordsPreviewDisplay();
+  }
+
+  function resetCsvCoordsPreviewOnPathChange() {
+    clearCsvCoordsPreviewUi();
+    setCsvCoordsDialogStatus("", false);
+  }
+
+  function csvCoordsCsvPathValue() {
+    return csvCoordsCsvPathInput ? String(csvCoordsCsvPathInput.value || "").trim() : "";
+  }
+
+  function csvCoordsKmzPathValue() {
+    return csvCoordsKmzPathInput ? String(csvCoordsKmzPathInput.value || "").trim() : "";
+  }
+
+  function appendCsvCoordDiffCell(row, oldValue, newValue) {
+    var cell = document.createElement("td");
+    var oldSpan = document.createElement("span");
+    oldSpan.className = "csv-coords-diff-old";
+    oldSpan.textContent = formatCsvCoordNumber(oldValue);
+    var arrow = document.createElement("span");
+    arrow.className = "csv-coords-diff-arrow";
+    arrow.textContent = "→";
+    var newSpan = document.createElement("span");
+    newSpan.className = "csv-coords-diff-new";
+    newSpan.textContent = formatCsvCoordNumber(newValue);
+    cell.appendChild(oldSpan);
+    cell.appendChild(arrow);
+    cell.appendChild(newSpan);
+    row.appendChild(cell);
+  }
+
+  function renderCsvCoordsPreview(preview, fileName) {
+    clearCsvCoordsPreviewDisplay();
+    if (!preview || !csvCoordsPreviewSection) {
+      return;
+    }
+    if (preview.errors && preview.errors.length) {
+      setCsvCoordsDialogStatus(preview.errors[0], true);
+      setMessage(preview.errors[0]);
+      return;
+    }
+    if (!preview.changes || !preview.changes.length) {
+      var noChangeMsg =
+        "No coordinate changes to apply. Matching placemarks already use the CSV values.";
+      setCsvCoordsDialogStatus(noChangeMsg, false);
+      setMessage(noChangeMsg);
+      if (preview.warnings && preview.warnings.length && csvCoordsPreviewWarnings) {
+        csvCoordsPreviewWarnings.textContent = preview.warnings.join(" ");
+        csvCoordsPreviewWarnings.classList.remove("hidden");
+        csvCoordsPreviewWarnings.hidden = false;
+      }
+      return;
+    }
+    csvCoordsPreviewSection.classList.remove("hidden");
+    csvCoordsPreviewSection.hidden = false;
+    var label = fileName || "the file";
+    var summaryParts = [
+      preview.changes.length +
+        " placemark(s) will move in " +
+        label +
+        ".",
+    ];
+    if (preview.stats && preview.stats.unchanged) {
+      summaryParts.push(preview.stats.unchanged + " already match the CSV.");
+    }
+    if (preview.stats && preview.stats.unusedCsvIds && preview.stats.unusedCsvIds.length) {
+      var unusedPreview = preview.stats.unusedCsvIds.slice(0, 4).join(", ");
+      var unusedExtra =
+        preview.stats.unusedCsvIds.length > 4
+          ? " (+" + (preview.stats.unusedCsvIds.length - 4) + " more)"
+          : "";
+      summaryParts.push(
+        preview.stats.unusedCsvIds.length + " unused CSV row(s): " + unusedPreview + unusedExtra + "."
+      );
+    }
+    if (csvCoordsPreviewSummary) {
+      csvCoordsPreviewSummary.textContent = summaryParts.join(" ");
+    }
+    if (preview.warnings && preview.warnings.length && csvCoordsPreviewWarnings) {
+      csvCoordsPreviewWarnings.textContent = preview.warnings.join(" ");
+      csvCoordsPreviewWarnings.classList.remove("hidden");
+      csvCoordsPreviewWarnings.hidden = false;
+    }
+    if (csvCoordsDiffBody) {
+      preview.changes.forEach(function (entry) {
+        var row = document.createElement("tr");
+        var idCell = document.createElement("td");
+        idCell.className = "csv-coords-diff-id";
+        idCell.textContent = entry.bhId || "—";
+        if (entry.name && entry.name !== entry.bhId) {
+          var nameSpan = document.createElement("span");
+          nameSpan.className = "csv-coords-diff-name";
+          nameSpan.textContent = entry.name;
+          idCell.appendChild(nameSpan);
+        }
+        row.appendChild(idCell);
+        appendCsvCoordDiffCell(row, entry.oldLat, entry.newLat);
+        appendCsvCoordDiffCell(row, entry.oldLng, entry.newLng);
+        csvCoordsDiffBody.appendChild(row);
+      });
+    }
+    setCsvCoordsDialogStatus("Review the changes below, then apply them to the open file.", false);
+  }
+
+  function finishCsvCoordApply(sourceId, lookup, fileName, sourcePath) {
+    if (!sourceId || !lookup) {
+      return Promise.resolve();
     }
     var validation = GisMap.validateBhCoordCsvToSource(sourceId, lookup);
     if (!validation.ok) {
-      setMessage(validation.errors[0] || "This KMZ is not compatible with the CSV update.");
-      return;
+      var validationMsg =
+        validation.errors[0] || "This KMZ is not compatible with the CSV update.";
+      setCsvCoordsDialogStatus(validationMsg, true);
+      setMessage(validationMsg);
+      return Promise.resolve();
     }
     var stats = GisMap.applyBhCoordCsvToSource(sourceId, lookup);
     var message = formatCsvCoordApplyMessage(stats, fileName);
     if (validation.warnings && validation.warnings.length) {
       message = validation.warnings.join(" ") + " " + message;
     }
-    if (stats.updated) {
-      noteEdit();
-      updateFileActions();
-      renderTree(GisMap.getRoot());
-      persistLoadedSession();
-    }
-    setMessage(message);
-  }
-
-  function pickKmzForCsvCoords(lookup) {
-    if (!lookup) {
+    if (!stats.updated) {
+      setCsvCoordsDialogStatus(message, false);
+      setMessage(message);
       return Promise.resolve();
     }
-    setMessage("Choose a KMZ or KML file to update…");
+    var source = findLoadedSource(sourceId);
+    if (source) {
+      markSourceEdited(source);
+    } else {
+      noteEdit();
+    }
+    updateFileActions();
+    renderTree(GisMap.getRoot());
+    persistLoadedSession();
+    clearCsvCoordsPreviewUi();
+    setCsvCoordsDialogStatus(message + " Saving…", false);
+    setMessage(message + " Saving…");
+    if (!source || !sourceCanPersistToOriginal(source)) {
+      var noSaveMsg =
+        message +
+        " Changes are in the open map only — use Save copy or Save to write a file.";
+      setCsvCoordsDialogStatus(noSaveMsg, false);
+      setMessage(noSaveMsg);
+      return Promise.resolve();
+    }
+    persistActiveSourceState();
+    return persistSourceToDisk(source)
+      .then(function () {
+        var savedMsg = message + " Saved " + (sourcePath || fileName || "the file") + ".";
+        setCsvCoordsDialogStatus(savedMsg, false);
+        setMessage(savedMsg);
+      })
+      .catch(function (err) {
+        var saveErr = (err && err.message) || "Could not save the KMZ file.";
+        setCsvCoordsDialogStatus(message + " " + saveErr, true);
+        setMessage(message + " " + saveErr);
+      });
+  }
+
+  function readCsvCoordsCsvText() {
+    if (!window.CsvCoords) {
+      return Promise.reject(new Error("CSV coordinate update is unavailable."));
+    }
+    if (csvCoordsBrowserCsvFile) {
+      return csvCoordsBrowserCsvFile.text();
+    }
+    var path = csvCoordsCsvPathValue();
+    if (!path) {
+      return Promise.reject(new Error("Choose a CSV file first."));
+    }
+    return ensureDesktop().then(function (desktop) {
+      if (!desktop || !desktop.api || typeof desktop.api.read_csv_file !== "function") {
+        throw new Error(
+          "Enter a CSV path in the desktop app, or use Browse to choose a file in the browser."
+        );
+      }
+      return Promise.resolve(desktop.api.read_csv_file(path)).then(function (payload) {
+        if (!payload || payload.error) {
+          throw new Error((payload && payload.error) || "Could not read the CSV file.");
+        }
+        if (payload.path) {
+          setCsvCoordsPathDisplay("csv", payload.path, false);
+        }
+        return payload.text || "";
+      });
+    });
+  }
+
+  function parseCsvCoordsLookup(text) {
+    var parsed = window.CsvCoords.parseBhCoordCsv(text);
+    if (parsed.errors && parsed.errors.length) {
+      throw new Error(parsed.errors[0]);
+    }
+    var ids = Object.keys(parsed.lookup || parsed.byId || {});
+    if (!ids.length) {
+      throw new Error("The CSV has no coordinate rows.");
+    }
+    return parsed.lookup;
+  }
+
+  function ensureCsvCoordsKmzSource() {
+    var path = csvCoordsKmzPathValue();
+    if (!path && !csvCoordsBrowserKmzFile) {
+      return Promise.reject(new Error("Choose a KMZ or KML file first."));
+    }
+    if (csvCoordsBrowserKmzFile) {
+      return openFile(csvCoordsBrowserKmzFile, null, null, {}).then(function () {
+        if (!activeSourceId) {
+          throw new Error("Could not load " + csvCoordsBrowserKmzFile.name + ".");
+        }
+        return {
+          sourceId: activeSourceId,
+          fileName: csvCoordsBrowserKmzFile.name,
+          sourcePath: null,
+        };
+      });
+    }
+    var existing = findLoadedSourceByPath(path);
+    if (existing) {
+      return Promise.resolve({
+        sourceId: existing.id,
+        fileName: existing.doc.fileName || path.split(/[/\\]/).pop(),
+        sourcePath: existing.doc.sourcePath || path,
+      });
+    }
+    return ensureDesktop().then(function (desktop) {
+      if (!desktop || !desktop.api || typeof desktop.api.register_path !== "function") {
+        throw new Error(
+          "Open the KMZ in the desktop app or use Browse to choose a file in the browser."
+        );
+      }
+      return Promise.resolve(desktop.api.register_path(path)).then(function (meta) {
+        if (!meta || !meta.token) {
+          throw new Error("Could not open " + path + ".");
+        }
+        if (meta.path) {
+          setCsvCoordsPathDisplay("kmz", meta.path, false);
+        }
+        return readDesktopFile(desktop.token, meta).then(function () {
+          if (!activeSourceId) {
+            throw new Error("Could not load " + (meta.name || path) + ".");
+          }
+          return {
+            sourceId: activeSourceId,
+            fileName: meta.name || path.split(/[/\\]/).pop(),
+            sourcePath: meta.path || path,
+          };
+        });
+      });
+    });
+  }
+
+  function previewCsvCoordsChanges() {
+    if (!window.CsvCoords || typeof GisMap.previewBhCoordCsvToSource !== "function") {
+      setCsvCoordsDialogStatus("CSV coordinate update is unavailable.", true);
+      return Promise.resolve();
+    }
+    if (!csvCoordsCsvPathValue() && !csvCoordsBrowserCsvFile) {
+      setCsvCoordsDialogStatus("Choose a CSV file first.", true);
+      return Promise.resolve();
+    }
+    if (!csvCoordsKmzPathValue() && !csvCoordsBrowserKmzFile) {
+      setCsvCoordsDialogStatus("Choose a KMZ or KML file first.", true);
+      return Promise.resolve();
+    }
+    clearCsvCoordsPreviewUi();
+    setCsvCoordsDialogStatus("Loading files and building preview…", false);
+    setMessage("Building CSV coordinate preview…");
+    return readCsvCoordsCsvText()
+      .then(function (text) {
+        var lookup = parseCsvCoordsLookup(text);
+        return ensureCsvCoordsKmzSource().then(function (loaded) {
+          var preview = GisMap.previewBhCoordCsvToSource(loaded.sourceId, lookup);
+          if (!preview.ok) {
+            renderCsvCoordsPreview(preview, loaded.fileName);
+            return null;
+          }
+          if (!preview.changes.length) {
+            renderCsvCoordsPreview(preview, loaded.fileName);
+            return null;
+          }
+          renderCsvCoordsPreview(preview, loaded.fileName);
+          csvCoordsApplyContext = {
+            sourceId: loaded.sourceId,
+            lookup: lookup,
+            fileName: loaded.fileName,
+            sourcePath: loaded.sourcePath || csvCoordsKmzPathValue(),
+          };
+          if (btnCsvCoordsApply) {
+            btnCsvCoordsApply.disabled = false;
+          }
+          setMessage(
+            "Preview ready: " + preview.changes.length + " placemark(s) will move in " + loaded.fileName + "."
+          );
+          return null;
+        });
+      })
+      .catch(function (err) {
+        var msg = (err && err.message) || "Could not preview CSV coordinate changes.";
+        setCsvCoordsDialogStatus(msg, true);
+        setMessage(msg);
+      });
+  }
+
+  function applyCsvCoordsChanges() {
+    if (!csvCoordsApplyContext) {
+      setCsvCoordsDialogStatus("Preview changes before applying them to the file.", true);
+      return;
+    }
+    if (btnCsvCoordsApply) {
+      btnCsvCoordsApply.disabled = true;
+    }
+    var ctx = csvCoordsApplyContext;
+    csvCoordsApplyContext = null;
+    finishCsvCoordApply(ctx.sourceId, ctx.lookup, ctx.fileName, ctx.sourcePath).finally(function () {
+      if (btnCsvCoordsApply) {
+        btnCsvCoordsApply.disabled = true;
+      }
+    });
+  }
+
+  function browseCsvCoordsCsv() {
+    return ensureDesktop().then(function (desktop) {
+      if (desktop && desktop.api && typeof desktop.api.choose_csv === "function") {
+        var initial = csvCoordsCsvPathValue().replace(/[\\/][^\\/]*$/, "") || desktopProjectRootInitial();
+        return Promise.resolve(desktop.api.choose_csv(initial || "")).then(function (result) {
+          if (!result || !result.path || !csvCoordsCsvPathInput) {
+            return;
+          }
+          csvCoordsBrowserCsvFile = null;
+          setCsvCoordsPathDisplay("csv", result.path, false);
+          setCsvCoordsDialogStatus("CSV file: " + result.path, false);
+          resetCsvCoordsPreviewOnPathChange();
+        });
+      }
+      if (csvCoordsInput) {
+        csvCoordsInput.value = "";
+        csvCoordsInput.click();
+      }
+    });
+  }
+
+  function browseCsvCoordsKmz() {
     return ensureDesktop().then(function (desktop) {
       if (desktop && desktop.api && typeof desktop.api.choose_kmz === "function") {
         return desktopChooseKmz(desktop.api).then(function (meta) {
-          if (!meta || !meta.token) {
-            setMessage("CSV coordinates update cancelled.");
-            return null;
+          if (!meta || !meta.path || !csvCoordsKmzPathInput) {
+            return;
           }
-          var existing = findLoadedSourceByPath(meta.path);
-          if (existing) {
-            finishCsvCoordApply(existing.id, lookup, meta.name || existing.doc.fileName);
-            return null;
-          }
-          return readDesktopFile(desktop.token, meta).then(function () {
-            if (!activeSourceId) {
-              throw new Error("Could not load " + (meta.name || "that file") + ".");
-            }
-            finishCsvCoordApply(activeSourceId, lookup, meta.name);
-          });
+          csvCoordsBrowserKmzFile = null;
+          setCsvCoordsPathDisplay("kmz", meta.path, false);
+          setCsvCoordsDialogStatus("KMZ/KML file: " + meta.path, false);
+          resetCsvCoordsPreviewOnPathChange();
         });
       }
       if (csvCoordsKmzInput) {
         csvCoordsKmzInput.value = "";
         csvCoordsKmzInput.click();
       }
-      return null;
-    });
-  }
-
-  function beginCsvCoordsUpdate() {
-    if (!window.CsvCoords || !csvCoordsInput) {
-      setMessage("CSV coordinate update is unavailable.");
-      return;
-    }
-    pendingCsvCoordLookup = null;
-    csvCoordsInput.value = "";
-    csvCoordsInput.click();
-  }
-
-  function onCsvCoordsFileSelected(file) {
-    if (!file || !window.CsvCoords) {
-      return Promise.resolve();
-    }
-    setMessage("Reading " + file.name + "…");
-    return file.text().then(function (text) {
-      var parsed = window.CsvCoords.parseBhCoordCsv(text);
-      if (parsed.errors && parsed.errors.length) {
-        setMessage(parsed.errors[0]);
-        return null;
-      }
-      var ids = Object.keys(parsed.lookup || parsed.byId || {});
-      if (!ids.length) {
-        setMessage("The CSV has no coordinate rows.");
-        return null;
-      }
-      pendingCsvCoordLookup = parsed.lookup;
-      setMessage("Loaded " + ids.length + " CSV row(s). Choose a KMZ or KML file…");
-      return pickKmzForCsvCoords(parsed.lookup);
-    }).catch(function () {
-      setMessage("Could not read the CSV file.");
     });
   }
 
@@ -7893,30 +8308,139 @@
   if (fileSaveBtn) {
     fileSaveBtn.addEventListener("click", saveTimestampedCopy);
   }
-  if (btnCsvCoordsUpdate) {
-    btnCsvCoordsUpdate.addEventListener("click", beginCsvCoordsUpdate);
+  function closeCsvCoordsDialog() {
+    if (!csvCoordsDialog) {
+      return;
+    }
+    csvCoordsDialog.classList.add("hidden");
+    csvCoordsDialog.setAttribute("aria-hidden", "true");
+    clearCsvCoordsPreviewUi();
+    setCsvCoordsDialogStatus("", false);
+  }
+
+  function openCsvCoordsDialog() {
+    if (!csvCoordsDialog) {
+      return;
+    }
+    csvCoordsDialog.classList.remove("hidden");
+    csvCoordsDialog.setAttribute("aria-hidden", "false");
+    if (csvCoordsCsvPathInput) {
+      csvCoordsCsvPathInput.focus();
+    }
+  }
+
+  window.openCsvCoordsDialog = openCsvCoordsDialog;
+
+  function openParseGpsFromScanWindow() {
+    function openTool() {
+      if (!window.DesktopBridge || typeof window.DesktopBridge.openScanGpsWindow !== "function") {
+        setMessage("Parse GPS from Scan could not start (desktop bridge missing).");
+        return;
+      }
+      window.DesktopBridge.openScanGpsWindow()
+        .then(function (result) {
+          if (result === null) {
+            setMessage(
+              "Parse GPS from Scan requires the KMZ GIS Viewer desktop app. Run desktop/app.py — do not use a normal browser tab at 127.0.0.1."
+            );
+            return;
+          }
+          if (result && result.error) {
+            setMessage(result.error);
+          }
+        })
+        .catch(function (err) {
+          setMessage((err && err.message) || "Could not open Parse GPS from Scan.");
+        });
+    }
+    openTool();
+  }
+
+  window.openParseGpsFromScanWindow = openParseGpsFromScanWindow;
+
+  if (csvCoordsDialog) {
+    var csvCoordsDialogCloseBtn = document.getElementById("csv-coords-dialog-close");
+    var csvCoordsDialogDismissBtn = document.getElementById("csv-coords-dialog-dismiss");
+    if (csvCoordsDialogCloseBtn) {
+      csvCoordsDialogCloseBtn.addEventListener("click", closeCsvCoordsDialog);
+    }
+    if (csvCoordsDialogDismissBtn) {
+      csvCoordsDialogDismissBtn.addEventListener("click", closeCsvCoordsDialog);
+    }
+    csvCoordsDialog.addEventListener("click", function (event) {
+      if (event.target === csvCoordsDialog) {
+        closeCsvCoordsDialog();
+      }
+    });
+    document.addEventListener("keydown", function (event) {
+      if (
+        event.key === "Escape"
+        && csvCoordsDialog
+        && !csvCoordsDialog.classList.contains("hidden")
+      ) {
+        closeCsvCoordsDialog();
+      }
+    });
+  }
+
+  if (btnCsvCoordsPreview) {
+    btnCsvCoordsPreview.addEventListener("click", function () {
+      previewCsvCoordsChanges();
+    });
+  }
+  if (btnCsvCoordsApply) {
+    btnCsvCoordsApply.addEventListener("click", applyCsvCoordsChanges);
+  }
+  if (csvCoordsBrowseCsvBtn) {
+    csvCoordsBrowseCsvBtn.addEventListener("click", function () {
+      browseCsvCoordsCsv().catch(function (err) {
+        setCsvCoordsDialogStatus((err && err.message) || "Could not choose CSV.", true);
+      });
+    });
+  }
+  if (csvCoordsBrowseKmzBtn) {
+    csvCoordsBrowseKmzBtn.addEventListener("click", function () {
+      browseCsvCoordsKmz().catch(function (err) {
+        setCsvCoordsDialogStatus((err && err.message) || "Could not choose KMZ.", true);
+      });
+    });
+  }
+  if (csvCoordsCsvPathInput) {
+    csvCoordsCsvPathInput.addEventListener("input", function () {
+      csvCoordsBrowserCsvFile = null;
+      setCsvCoordsPathDisplay("csv", csvCoordsCsvPathInput.value, false);
+      resetCsvCoordsPreviewOnPathChange();
+    });
+  }
+  if (csvCoordsKmzPathInput) {
+    csvCoordsKmzPathInput.addEventListener("input", function () {
+      csvCoordsBrowserKmzFile = null;
+      setCsvCoordsPathDisplay("kmz", csvCoordsKmzPathInput.value, false);
+      resetCsvCoordsPreviewOnPathChange();
+    });
   }
   if (csvCoordsInput) {
     csvCoordsInput.addEventListener("change", function () {
       var file = csvCoordsInput.files && csvCoordsInput.files[0];
-      onCsvCoordsFileSelected(file);
+      if (!file || !csvCoordsCsvPathInput) {
+        return;
+      }
+      csvCoordsBrowserCsvFile = file;
+      setCsvCoordsPathDisplay("csv", file.name, true);
+      setCsvCoordsDialogStatus("CSV file: " + file.name, false);
+      resetCsvCoordsPreviewOnPathChange();
     });
   }
   if (csvCoordsKmzInput) {
     csvCoordsKmzInput.addEventListener("change", function () {
       var file = csvCoordsKmzInput.files && csvCoordsKmzInput.files[0];
-      var lookup = pendingCsvCoordLookup;
-      pendingCsvCoordLookup = null;
-      if (!file || !lookup) {
+      if (!file || !csvCoordsKmzPathInput) {
         return;
       }
-      openFile(file, null, null, {}).then(function () {
-        if (!activeSourceId) {
-          setMessage("Could not load " + file.name + ".");
-          return;
-        }
-        finishCsvCoordApply(activeSourceId, lookup, file.name);
-      });
+      csvCoordsBrowserKmzFile = file;
+      setCsvCoordsPathDisplay("kmz", file.name, true);
+      setCsvCoordsDialogStatus("KMZ/KML file: " + file.name, false);
+      resetCsvCoordsPreviewOnPathChange();
     });
   }
   if (externalEditSourceSelect) {
@@ -8164,6 +8688,10 @@
         popup: document.getElementById("menubar-view-popup"),
       },
       {
+        trigger: document.getElementById("menubar-tools-trigger"),
+        popup: document.getElementById("menubar-tools-popup"),
+      },
+      {
         trigger: document.getElementById("menubar-options-trigger"),
         popup: document.getElementById("menubar-options-popup"),
       },
@@ -8271,6 +8799,22 @@
           if (typeof window.openMapScalePresetsDialog === "function") {
             window.openMapScalePresetsDialog();
           }
+          return;
+        }
+        if (item.id === "menubar-tools-csv-coords") {
+          event.preventDefault();
+          event.stopPropagation();
+          closeAllMenus();
+          if (typeof window.openCsvCoordsDialog === "function") {
+            window.openCsvCoordsDialog();
+          }
+          return;
+        }
+        if (item.id === "menubar-tools-parse-gps-scan") {
+          event.preventDefault();
+          event.stopPropagation();
+          closeAllMenus();
+          openParseGpsFromScanWindow();
           return;
         }
         closeAllMenus();
@@ -9040,7 +9584,7 @@
 
   if (window.BoreholeImages) {
     window.BoreholeImages.init({
-      listSources: listLoadedSourcesForScreenshot,
+      listSources: listLoadedSourcesForBoreholeImages,
       ensureDesktop: ensureDesktop,
       setMessage: setMessage,
       onSourceChanged: function () {
@@ -9053,6 +9597,18 @@
 
   if (window.AppxPdf) {
     window.AppxPdf.init({
+      setMessage: setMessage,
+    });
+  }
+
+  if (window.IconToImage) {
+    window.IconToImage.init({
+      buildIconPickerHtml: buildIconPickerHtml,
+      bindIconPicker: bindIconPicker,
+      specFromPickerState: specFromPickerState,
+      refreshCustomIconCatalog: refreshCustomIconCatalog,
+      hydrateCustomIconThumbnails: hydrateCustomIconThumbnails,
+      ensureDesktop: ensureDesktop,
       setMessage: setMessage,
     });
   }

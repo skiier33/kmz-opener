@@ -159,9 +159,28 @@
   }
 
   function findOverlaySourceId() {
-    var boreholeSourceId = getSelectedBoreholeSourceIdFn ? getSelectedBoreholeSourceIdFn() : "";
-    var overlay = findOverlayForBorehole(boreholeSourceId);
+    var selectedId = getSelectedBoreholeSourceIdFn ? getSelectedBoreholeSourceIdFn() : "";
+    var selected = findLoadedSourceFn ? findLoadedSourceFn(selectedId) : null;
+    if (isOverlaySource(selected)) {
+      return selectedId;
+    }
+    var overlay = findOverlayForBorehole(selectedId);
     return overlay ? overlay.id : null;
+  }
+
+  function boreholeSourceIdForAlignmentWork() {
+    var selectedId = getSelectedBoreholeSourceIdFn ? getSelectedBoreholeSourceIdFn() : "";
+    if (!selectedId || !findLoadedSourceFn) {
+      return selectedId;
+    }
+    var selected = findLoadedSourceFn(selectedId);
+    if (
+      isOverlaySource(selected)
+      && selected.bhAlignmentForSourceId
+    ) {
+      return selected.bhAlignmentForSourceId;
+    }
+    return selectedId;
   }
 
   function stampParsedAlignmentCopy(parsed, parentSourcePath) {
@@ -315,7 +334,7 @@
     if (createInFlight) {
       return;
     }
-    var boreholeSourceId = getSelectedBoreholeSourceIdFn ? getSelectedBoreholeSourceIdFn() : "";
+    var boreholeSourceId = boreholeSourceIdForAlignmentWork();
     var boreholeSource = findLoadedSourceFn ? findLoadedSourceFn(boreholeSourceId) : null;
     var gis = getGisMapFn ? getGisMapFn() : null;
     if (!boreholeSourceId || !boreholeSource || !gis) {
@@ -457,19 +476,32 @@
     if (!statusEl) {
       return;
     }
-    var boreholeSourceId = getSelectedBoreholeSourceIdFn ? getSelectedBoreholeSourceIdFn() : "";
-    var overlay = findOverlayForBorehole(boreholeSourceId);
-    if (!boreholeSourceId) {
+    var selectedId = getSelectedBoreholeSourceIdFn ? getSelectedBoreholeSourceIdFn() : "";
+    if (!selectedId) {
       statusEl.textContent = "Choose a borehole KMZ to build an alignment overlay.";
       return;
     }
+    var gis = getGisMapFn ? getGisMapFn() : null;
+    var selected = findLoadedSourceFn ? findLoadedSourceFn(selectedId) : null;
+    if (isOverlaySource(selected)) {
+      var overlayCount = gis ? gis.countSourcePointPlacemarks(selectedId) : 0;
+      var overlayPath =
+        selected.doc && selected.doc.sourcePath ? selected.doc.sourcePath : ALIGNMENT_FILE_NAME;
+      statusEl.textContent =
+        overlayCount
+        + " alignment point(s) selected · "
+        + overlayPath
+        + " · captures use this layer.";
+      return;
+    }
+    var boreholeSourceId = selectedId;
+    var overlay = findOverlayForBorehole(boreholeSourceId);
     if (!overlay) {
       statusEl.textContent = isAlignmentIconPickerEnabled()
         ? "No BH_Alignments layer for this file — pick an icon and create the overlay."
         : "No BH_Alignments layer for this file — create the overlay (default 4px red dot).";
       return;
     }
-    var gis = getGisMapFn ? getGisMapFn() : null;
     var count = gis ? gis.countSourcePointPlacemarks(overlay.id) : 0;
     var path = overlay.doc && overlay.doc.sourcePath ? overlay.doc.sourcePath : ALIGNMENT_FILE_NAME;
     statusEl.textContent =
@@ -497,9 +529,15 @@
   }
 
   function withCaptureVisibility(work) {
-    var boreholeSourceId = getSelectedBoreholeSourceIdFn ? getSelectedBoreholeSourceIdFn() : "";
-    var overlayId = findOverlayForBorehole(boreholeSourceId);
-    overlayId = overlayId ? overlayId.id : null;
+    var selectedId = getSelectedBoreholeSourceIdFn ? getSelectedBoreholeSourceIdFn() : "";
+    var selected = findLoadedSourceFn ? findLoadedSourceFn(selectedId) : null;
+    var overlayId = null;
+    if (isOverlaySource(selected)) {
+      overlayId = selectedId;
+    } else {
+      var overlay = findOverlayForBorehole(selectedId);
+      overlayId = overlay ? overlay.id : null;
+    }
     if (!overlayId || !listLoadedSourcesFn || !applyLoadedSourceVisibilityFn) {
       return Promise.resolve().then(work);
     }
