@@ -1916,6 +1916,14 @@ body.sidebar-panel-resizing * {
   background: #2b3038;
 }
 
+.layers-bulk-labels {
+  padding: 0 10px 8px;
+}
+
+.layers-add-labels-btn {
+  width: 100%;
+}
+
 .layers-add-btn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
@@ -4322,6 +4330,29 @@ body.icon-picker-scroll-resizing * {
   border: none;
 }
 
+.node-map-label-dialog.node-map-label-dialog--bulk.floating-panel-backdrop {
+  display: block;
+  background: transparent;
+  pointer-events: none;
+}
+
+.node-map-label-dialog.node-map-label-dialog--bulk .node-map-label-panel.floating-panel {
+  pointer-events: auto;
+  display: flex;
+  width: auto;
+  max-width: none;
+  max-height: none;
+  overflow: hidden;
+}
+
+.node-map-label-dialog.node-map-label-dialog--bulk .feature-properties-header {
+  cursor: grab;
+}
+
+.node-map-label-dialog.node-map-label-dialog--bulk .feature-properties-header.is-dragging {
+  cursor: grabbing;
+}
+
 .node-map-label-panel {
   width: min(480px, 100%);
   max-height: min(88vh, 720px);
@@ -4335,6 +4366,101 @@ body.icon-picker-scroll-resizing * {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.node-map-label-bulk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.node-map-label-per-point-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 120px;
+  flex: 1;
+  min-width: 0;
+}
+
+.node-map-label-per-point-panel.hidden {
+  display: none;
+}
+
+.node-map-label-per-point-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+}
+
+.node-map-label-per-point-table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.node-map-label-per-point-table th,
+.node-map-label-per-point-table td {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.node-map-label-per-point-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel);
+  font-weight: 600;
+  color: var(--muted);
+  text-align: left;
+}
+
+.node-map-label-per-point-table td:first-child,
+.node-map-label-per-point-table th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--panel-2);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.node-map-label-per-point-table th:first-child {
+  z-index: 3;
+  background: var(--panel);
+}
+
+.node-map-label-per-point-table input[type="number"],
+.node-map-label-per-point-table input[type="color"],
+.node-map-label-per-point-table select {
+  width: 100%;
+  min-width: 52px;
+  max-width: 88px;
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+}
+
+.node-map-label-per-point-table input[type="color"] {
+  min-width: 36px;
+  max-width: 44px;
+  height: 24px;
+  padding: 0;
+}
+
+.node-map-label-per-point-table input[type="checkbox"] {
+  margin: 0;
 }
 
 .node-map-label-fieldset {

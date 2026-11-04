@@ -1378,7 +1378,7 @@
             aria-hidden="true"
           >
             <div class="feature-properties-panel node-map-label-panel">
-              <header class="feature-properties-header">
+              <header class="feature-properties-header" id="node-map-label-header">
                 <div>
                   <h2 id="node-map-label-title">Add label</h2>
                   <p id="node-map-label-subtitle" class="muted feature-properties-subtitle"></p>
@@ -1393,7 +1393,34 @@
                 </button>
               </header>
               <div class="node-map-label-body">
-                <label class="node-map-label-field node-map-label-field-wide" for="node-map-label-text">
+                <div id="node-map-label-file-target" class="file-point-icon-target hidden">
+                  <label for="node-map-label-source">KMZ / KML file</label>
+                  <select id="node-map-label-source" aria-label="KMZ or KML file for bulk labels"></select>
+                </div>
+                <p id="node-map-label-bulk-hint" class="muted icon-picker-hint hidden">
+                  Style applies to every point in the file. Each label uses that placemark’s name as its text.
+                </p>
+                <div id="node-map-label-bulk-actions" class="node-map-label-bulk-actions hidden">
+                  <button type="button" class="btn btn-subtle" id="node-map-label-per-point-toggle">
+                    Per-point positioning…
+                  </button>
+                </div>
+                <div id="node-map-label-per-point-panel" class="node-map-label-per-point-panel hidden">
+                  <p class="muted icon-picker-hint">
+                    Override position and style for individual points. Preview to see changes on the map.
+                  </p>
+                  <div class="node-map-label-per-point-scroll">
+                    <table class="node-map-label-per-point-table" id="node-map-label-per-point-table">
+                      <thead id="node-map-label-per-point-head"></thead>
+                      <tbody id="node-map-label-per-point-body"></tbody>
+                    </table>
+                  </div>
+                </div>
+                <label
+                  id="node-map-label-text-label"
+                  class="node-map-label-field node-map-label-field-wide"
+                  for="node-map-label-text"
+                >
                   Label text
                 </label>
                 <textarea
@@ -1468,6 +1495,7 @@
                 <button type="button" class="btn btn-subtle" id="node-map-label-remove" hidden>Remove label</button>
                 <span class="node-map-label-footer-spacer"></span>
                 <button type="button" class="btn btn-subtle" id="node-map-label-cancel">Cancel</button>
+                <button type="button" class="btn btn-subtle" id="node-map-label-preview" hidden>Preview</button>
                 <button type="button" class="btn" id="node-map-label-apply">Apply</button>
               </footer>
             </div>
@@ -1533,6 +1561,17 @@
                   <svg viewBox="0 0 24 24" aria-hidden="true">
                     <path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
                   </svg>
+                </button>
+              </div>
+              <div class="layers-bulk-labels">
+                <button
+                  type="button"
+                  class="btn btn-subtle layers-add-labels-btn"
+                  id="layers-add-labels"
+                  disabled
+                  title="Apply label styles to all points in a file"
+                >
+                  Add Labels
                 </button>
               </div>
               <div class="layer-toolbar" role="toolbar" aria-label="Layer actions">

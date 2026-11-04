@@ -1059,6 +1059,131 @@
     return true;
   }
 
+  function listSourcePointNodes(sourceId) {
+    var list = [];
+    if (!sourceId) {
+      return list;
+    }
+    walkSourceRoot(sourceId, function (root) {
+      walkTree(root, function (node) {
+        if (!node.feature || !featureHasPointGeometry(node.feature)) {
+          return;
+        }
+        list.push({
+          id: node.id,
+          name: node.name || (node.feature && node.feature.name) || "Point",
+        });
+      });
+    });
+    list.sort(function (a, b) {
+      return String(a.name).localeCompare(String(b.name), undefined, { sensitivity: "base" });
+    });
+    return list;
+  }
+
+  function snapshotSourceMapLabels(sourceId) {
+    var snapshot = {};
+    if (!sourceId || !global.NodeMapLabel) {
+      return snapshot;
+    }
+    walkSourceRoot(sourceId, function (root) {
+      walkTree(root, function (node) {
+        if (!node.feature || !featureHasPointGeometry(node.feature)) {
+          return;
+        }
+        global.NodeMapLabel.hydrateNodeMapLabel(node);
+        snapshot[node.id] = node.mapLabel
+          ? JSON.parse(JSON.stringify(node.mapLabel))
+          : null;
+      });
+    });
+    return snapshot;
+  }
+
+  function restoreSourceMapLabelsSnapshot(sourceId, snapshot, options) {
+    if (!sourceId || !global.NodeMapLabel) {
+      return 0;
+    }
+    snapshot = snapshot || {};
+    var count = 0;
+    walkSourceRoot(sourceId, function (root) {
+      walkTree(root, function (node) {
+        if (!node.feature || !featureHasPointGeometry(node.feature)) {
+          return;
+        }
+        if (!Object.prototype.hasOwnProperty.call(snapshot, node.id)) {
+          return;
+        }
+        if (global.NodeMapLabel.applyToNode(node, snapshot[node.id], options)) {
+          count += 1;
+        }
+      });
+    });
+    if (count) {
+      refreshSourceLayers(sourceId);
+    }
+    return count;
+  }
+
+  function applySourceMapLabelStyles(sourceId, styleTemplate, options, overridesByNodeId) {
+    if (!sourceId || !styleTemplate || !global.NodeMapLabel) {
+      return 0;
+    }
+    overridesByNodeId = overridesByNodeId || {};
+    var count = 0;
+    walkSourceRoot(sourceId, function (root) {
+      walkTree(root, function (node) {
+        if (!node.feature || !featureHasPointGeometry(node.feature)) {
+          return;
+        }
+        var override = overridesByNodeId[node.id];
+        var spec = override
+          ? global.NodeMapLabel.specForNodeFromTemplateAndOverride(
+              node,
+              styleTemplate,
+              override
+            )
+          : global.NodeMapLabel.specForNodeFromTemplate(node, styleTemplate);
+        if (!spec || !global.NodeMapLabel.applyToNode(node, spec, options)) {
+          return;
+        }
+        count += 1;
+      });
+    });
+    if (count) {
+      refreshSourceLayers(sourceId);
+      if (selectedId) {
+        selectFeature(selectedId, false);
+      }
+    }
+    return count;
+  }
+
+  function clearSourceMapLabels(sourceId, options) {
+    if (!sourceId || !global.NodeMapLabel) {
+      return 0;
+    }
+    var count = 0;
+    walkSourceRoot(sourceId, function (root) {
+      walkTree(root, function (node) {
+        if (!node.feature || !featureHasPointGeometry(node.feature)) {
+          return;
+        }
+        global.NodeMapLabel.hydrateNodeMapLabel(node);
+        if (!node.mapLabel) {
+          return;
+        }
+        if (global.NodeMapLabel.applyToNode(node, null, options)) {
+          count += 1;
+        }
+      });
+    });
+    if (count) {
+      refreshSourceLayers(sourceId);
+    }
+    return count;
+  }
+
   function applySourcePointIcon(sourceId, spec, options) {
     if (!sourceId || !spec) {
       return 0;
@@ -2840,6 +2965,11 @@
     setFeaturePointIcon: setFeaturePointIcon,
     getNodeMapLabel: getNodeMapLabel,
     setNodeMapLabel: setNodeMapLabel,
+    listSourcePointNodes: listSourcePointNodes,
+    snapshotSourceMapLabels: snapshotSourceMapLabels,
+    restoreSourceMapLabelsSnapshot: restoreSourceMapLabelsSnapshot,
+    applySourceMapLabelStyles: applySourceMapLabelStyles,
+    clearSourceMapLabels: clearSourceMapLabels,
     applySourcePointIcon: applySourcePointIcon,
     countSubtreePointIconTargets: countSubtreePointIconTargets,
     applySubtreePointIcon: applySubtreePointIcon,

@@ -16,12 +16,8 @@
     return Math.max(min, Math.min(max, parsed));
   }
 
-  function normalizeSpec(raw) {
+  function normalizeStyleFields(raw) {
     if (!raw || typeof raw !== "object") {
-      return null;
-    }
-    var text = typeof raw.text === "string" ? raw.text : "";
-    if (!text.trim()) {
       return null;
     }
     var align = String(raw.align || "right").toLowerCase();
@@ -34,7 +30,6 @@
     }
     return {
       version: VERSION,
-      text: text,
       align: align,
       padding: clampNumber(raw.padding, 4, 0, 128),
       offsetLeft: clampNumber(raw.offsetLeft, 0, -512, 512),
@@ -49,6 +44,62 @@
       underline: !!raw.underline,
       backgroundColor: backgroundColor,
     };
+  }
+
+  function normalizeSpec(raw) {
+    if (!raw || typeof raw !== "object") {
+      return null;
+    }
+    var text = typeof raw.text === "string" ? raw.text : "";
+    if (!text.trim()) {
+      return null;
+    }
+    var style = normalizeStyleFields(raw);
+    if (!style) {
+      return null;
+    }
+    style.text = text;
+    return style;
+  }
+
+  function normalizeStyleTemplate(raw) {
+    return normalizeStyleFields(raw);
+  }
+
+  function mergeStyleTemplate(template, override) {
+    if (!template) {
+      return null;
+    }
+    if (!override || typeof override !== "object") {
+      return normalizeStyleTemplate(template);
+    }
+    return normalizeStyleTemplate(Object.assign({}, template, override));
+  }
+
+  function specForNodeFromTemplate(node, template) {
+    var merged = mergeStyleTemplate(template, null);
+    if (!merged) {
+      return null;
+    }
+    var text =
+      (node && (node.name || (node.feature && node.feature.name))) || "";
+    if (!String(text).trim()) {
+      return null;
+    }
+    return normalizeSpec(Object.assign({}, merged, { text: text }));
+  }
+
+  function specForNodeFromTemplateAndOverride(node, template, override) {
+    var merged = mergeStyleTemplate(template, override);
+    if (!merged) {
+      return null;
+    }
+    var text =
+      (node && (node.name || (node.feature && node.feature.name))) || "";
+    if (!String(text).trim()) {
+      return null;
+    }
+    return normalizeSpec(Object.assign({}, merged, { text: text }));
   }
 
   function defaultSpec(node) {
@@ -266,6 +317,10 @@
     EXT_KEY: EXT_KEY,
     ALIGNMENTS: ALIGNMENTS,
     normalizeSpec: normalizeSpec,
+    normalizeStyleTemplate: normalizeStyleTemplate,
+    mergeStyleTemplate: mergeStyleTemplate,
+    specForNodeFromTemplate: specForNodeFromTemplate,
+    specForNodeFromTemplateAndOverride: specForNodeFromTemplateAndOverride,
     defaultSpec: defaultSpec,
     specFromNode: specFromNode,
     specForEditor: specForEditor,
