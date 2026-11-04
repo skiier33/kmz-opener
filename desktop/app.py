@@ -58,6 +58,7 @@ from desktop.geg_appendix_excel import (  # noqa: E402
     build_appendix_from_screenshots,
     default_template_path,
     list_appendix_preview,
+    open_template_workbook,
     validate_screenshot_directory,
     validate_template_path,
 )
@@ -83,6 +84,7 @@ from desktop.server import (  # noqa: E402
     resolve_session_kmz_paths,
     set_crosshair_icon_window_callback,
     set_scan_gps_window_callback,
+    set_sidebar_mode_window_callback,
     set_tool_window_callback,
     start_server,
     user_custom_icons_dir,
@@ -550,6 +552,22 @@ class DesktopApi:
         if validate_template_path(full):
             return None
         return {"path": full, "name": os.path.basename(full)}
+
+    def open_geg_appendix_template(self, template_path: str = "") -> dict:
+        """
+        Open the active GEG appendix Excel template for editing in Excel.
+
+        Args:
+            template_path: Optional .xlsm template; defaults to bundled GEG file.
+
+        Returns:
+            ``ok`` and ``path``, or ``error`` when the template cannot be opened.
+        """
+        template = normalize_path(template_path) if template_path else default_template_path(app_root())
+        launch_err = open_template_workbook(template)
+        if launch_err:
+            return {"error": launch_err}
+        return {"ok": True, "path": template}
 
     def choose_scan_pdf(self, initial_directory: str = "") -> Optional[dict]:
         """
@@ -1128,6 +1146,51 @@ class DesktopApi:
             return result
         return {"ok": True}
 
+    def open_sidebar_mode_window(self, mode: str) -> dict:
+        """
+        Open a sidebar mode tab in its own viewer window.
+
+        Args:
+            mode: Sidebar mode (map, icon, or appx).
+
+        Returns:
+            Dict with ``ok`` when a window was created, or ``error`` when unavailable.
+        """
+        specs = {
+            "map": ("KMZ GIS Viewer — Map", 1280, 820),
+            "icon": ("Icon to Image", 920, 860),
+            "appx": ("Appx PDF", 920, 860),
+        }
+        key = str(mode or "").strip()
+        spec = specs.get(key)
+        if spec is None or not _VIEWER_BASE_URL:
+            return {"error": "That sidebar window is not available."}
+        windows = webview.windows
+        if not windows:
+            return {"error": "Desktop window is not available."}
+        window = windows[0]
+        title, width, height = spec
+        url = f"{_VIEWER_BASE_URL}?popout={key}"
+
+        def _open() -> dict:
+            try:
+                webview.create_window(
+                    title,
+                    url,
+                    width=width,
+                    height=height,
+                    min_size=(640, 480),
+                    js_api=DesktopApi(),
+                )
+            except (OSError, RuntimeError, TypeError, ValueError) as err:
+                return {"error": f"Could not open window: {err}"}
+            return {"ok": True}
+
+        result = _invoke_on_ui_always(window, _open)
+        if isinstance(result, dict):
+            return result
+        return {"ok": True}
+
     def tool_dispatch(self, action: str, payload: object) -> object:
         """
         Run a tool-window command in the main viewer window.
@@ -1270,6 +1333,9 @@ def main() -> None:
         set_scan_gps_window_callback(lambda: DesktopApi().open_scan_gps_window())
         set_crosshair_icon_window_callback(lambda: DesktopApi().open_crosshair_icon_window())
         set_tool_window_callback(lambda tool: DesktopApi().open_tool_window(tool))
+        set_sidebar_mode_window_callback(
+            lambda mode: DesktopApi().open_sidebar_mode_window(mode)
+        )
         webview.create_window(
             "KMZ GIS Viewer",
             f"http://127.0.0.1:{port}/",

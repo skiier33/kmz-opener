@@ -1114,6 +1114,14 @@
                     Browse…
                   </button>
                 </div>
+                <button
+                  id="appx-pdf-edit-template"
+                  class="btn appx-pdf-edit-template-btn"
+                  type="button"
+                  title="Open the template in Excel to edit project name and other cells, then save"
+                >
+                  Edit Excel template…
+                </button>
               </label>
               <div class="appx-pdf-preview">
                 <span id="appx-pdf-count" class="appx-pdf-count">0 PNG files</span>
@@ -1358,6 +1366,109 @@
               <footer class="feature-properties-footer">
                 <button type="button" class="btn btn-subtle" id="layer-node-icon-cancel">Cancel</button>
                 <button type="button" class="btn" id="layer-node-icon-apply">Apply</button>
+              </footer>
+            </div>
+          </div>
+          <div
+            id="node-map-label-dialog"
+            class="feature-properties-dialog hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="node-map-label-title"
+            aria-hidden="true"
+          >
+            <div class="feature-properties-panel node-map-label-panel">
+              <header class="feature-properties-header">
+                <div>
+                  <h2 id="node-map-label-title">Add label</h2>
+                  <p id="node-map-label-subtitle" class="muted feature-properties-subtitle"></p>
+                </div>
+                <button
+                  type="button"
+                  class="btn-dismiss"
+                  id="node-map-label-close"
+                  aria-label="Close label dialog"
+                >
+                  ×
+                </button>
+              </header>
+              <div class="node-map-label-body">
+                <label class="node-map-label-field node-map-label-field-wide" for="node-map-label-text">
+                  Label text
+                </label>
+                <textarea
+                  id="node-map-label-text"
+                  class="node-map-label-text"
+                  rows="2"
+                  aria-label="Label text"
+                ></textarea>
+                <fieldset class="node-map-label-fieldset">
+                  <legend>Position</legend>
+                  <label class="node-map-label-field" for="node-map-label-align">Side</label>
+                  <select id="node-map-label-align" aria-label="Label side relative to point">
+                    <option value="left">Left</option>
+                    <option value="right" selected>Right</option>
+                    <option value="top">Top</option>
+                    <option value="bottom">Bottom</option>
+                  </select>
+                  <label class="node-map-label-field" for="node-map-label-padding">Padding (px)</label>
+                  <input id="node-map-label-padding" type="number" min="0" max="128" step="1" value="4" />
+                  <label class="node-map-label-field" for="node-map-label-offset-left">Offset left (px)</label>
+                  <input id="node-map-label-offset-left" type="number" min="-512" max="512" step="1" value="0" />
+                  <label class="node-map-label-field" for="node-map-label-offset-right">Offset right (px)</label>
+                  <input id="node-map-label-offset-right" type="number" min="-512" max="512" step="1" value="0" />
+                  <label class="node-map-label-field" for="node-map-label-offset-up">Offset up (px)</label>
+                  <input id="node-map-label-offset-up" type="number" min="-512" max="512" step="1" value="0" />
+                  <label class="node-map-label-field" for="node-map-label-offset-down">Offset down (px)</label>
+                  <input id="node-map-label-offset-down" type="number" min="-512" max="512" step="1" value="0" />
+                </fieldset>
+                <fieldset class="node-map-label-fieldset">
+                  <legend>Font</legend>
+                  <label class="node-map-label-field" for="node-map-label-font">Font</label>
+                  <select id="node-map-label-font" aria-label="Label font family">
+                    <option value="system-ui, Segoe UI, sans-serif">System UI</option>
+                    <option value="Segoe UI, sans-serif">Segoe UI</option>
+                    <option value="Arial, Helvetica, sans-serif">Arial</option>
+                    <option value="Georgia, serif">Georgia</option>
+                    <option value="Times New Roman, Times, serif">Times New Roman</option>
+                    <option value="Courier New, Courier, monospace">Courier New</option>
+                  </select>
+                  <label class="node-map-label-field" for="node-map-label-font-size">Size (px)</label>
+                  <input id="node-map-label-font-size" type="number" min="6" max="96" step="1" value="12" />
+                  <label class="node-map-label-field node-map-label-color" for="node-map-label-color">Color</label>
+                  <input id="node-map-label-color" type="color" value="#e8eaed" aria-label="Label text color" />
+                  <div class="node-map-label-style-toggles">
+                    <label><input id="node-map-label-bold" type="checkbox" checked /> Bold</label>
+                    <label><input id="node-map-label-italic" type="checkbox" /> Italic</label>
+                    <label><input id="node-map-label-underline" type="checkbox" /> Underline</label>
+                  </div>
+                  <label class="node-map-label-field node-map-label-color" for="node-map-label-bg-color">
+                    Background
+                  </label>
+                  <div class="node-map-label-bg-row">
+                    <input
+                      id="node-map-label-bg-color"
+                      type="color"
+                      value="#121417"
+                      aria-label="Label background color"
+                      disabled
+                    />
+                    <label class="node-map-label-transparent-toggle">
+                      <input id="node-map-label-bg-transparent" type="checkbox" checked />
+                      Transparent
+                    </label>
+                  </div>
+                </fieldset>
+                <label class="file-point-icon-save-kmz">
+                  <input id="node-map-label-save-kmz" type="checkbox" checked />
+                  Save to KMZ — store label in placemark extended data
+                </label>
+              </div>
+              <footer class="feature-properties-footer node-map-label-footer">
+                <button type="button" class="btn btn-subtle" id="node-map-label-remove" hidden>Remove label</button>
+                <span class="node-map-label-footer-spacer"></span>
+                <button type="button" class="btn btn-subtle" id="node-map-label-cancel">Cancel</button>
+                <button type="button" class="btn" id="node-map-label-apply">Apply</button>
               </footer>
             </div>
           </div>
@@ -1795,6 +1906,7 @@
     <script src="js/app-state.js"></script>
     <script src="js/kmz-loader.js"></script>
     <script src="js/kmz-save.js"></script>
+    <script src="js/node-map-label.js"></script>
     <script src="js/csv-coords.js"></script>
     <script src="js/map.js"></script>
     <script src="js/activity-map.js"></script>

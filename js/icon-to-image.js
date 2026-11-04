@@ -71,6 +71,10 @@
   }
 
   function isIconSidebarMode() {
+    var body = global.document.body;
+    if (body && body.getAttribute("data-sidebar-popout-mode") === "icon") {
+      return true;
+    }
     if (global.SidebarModes && typeof SidebarModes.getMode === "function") {
       return SidebarModes.getMode() === SidebarModes.MODE_ICON;
     }

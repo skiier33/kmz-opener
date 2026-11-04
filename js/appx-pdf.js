@@ -8,6 +8,7 @@
   var templateInput = null;
   var browseDirBtn = null;
   var browseTemplateBtn = null;
+  var editTemplateBtn = null;
   var countEl = null;
   var sheetPreviewsEl = null;
   var buildBtn = null;
@@ -108,6 +109,10 @@
   }
 
   function isAppxSidebarMode() {
+    var body = global.document.body;
+    if (body && body.getAttribute("data-sidebar-popout-mode") === "appx") {
+      return true;
+    }
     if (global.SidebarModes && typeof SidebarModes.getMode === "function") {
       return SidebarModes.getMode() === SidebarModes.MODE_APPX;
     }
@@ -142,7 +147,20 @@
     if (!sheets.length) {
       var empty = global.document.createElement("p");
       empty.className = "muted appx-pdf-preview-empty";
-      empty.textContent = "No PNG files in this folder.";
+      var scanned = (data && (data.scanDirectory || data.directory)) || "";
+      if (scanned && data.scanDirectory && data.directory && data.scanDirectory !== data.directory) {
+        empty.textContent =
+          "No PNG files in " +
+          scanned +
+          " (using ss_w_icon because the parent folder had none).";
+      } else if (scanned) {
+        empty.textContent =
+          "No .png files in " +
+          scanned +
+          ". Appx PDF only looks in this folder (and ss_w_icon when the parent is empty)—not deeper subfolders.";
+      } else {
+        empty.textContent = "No PNG files in this folder.";
+      }
       sheetPreviewsEl.appendChild(empty);
       updateBuildEnabled(data);
       return;
@@ -285,6 +303,32 @@
       });
   }
 
+  function onEditTemplate() {
+    var api = desktopApi();
+    if (!api || typeof api.open_geg_appendix_template !== "function") {
+      setStatus("Edit template is available in the desktop app only.", true);
+      return;
+    }
+    persistPaths();
+    var template = templatePath();
+    if (!template) {
+      setStatus("Set an Excel template path first.", true);
+      return;
+    }
+    return Promise.resolve(api.open_geg_appendix_template(template))
+      .then(function (result) {
+        if (!result || result.error) {
+          setStatus((result && result.error) || "Could not open template in Excel.", true);
+          return;
+        }
+        var name = result.path ? result.path.split(/[/\\]/).pop() : "template";
+        setStatus("Opened " + name + " in Excel. Save the workbook when you are done editing.", false);
+      })
+      .catch(function (err) {
+        setStatus((err && err.message) || "Could not open template in Excel.", true);
+      });
+  }
+
   function onBrowseTemplate() {
     var api = desktopApi();
     if (!api || typeof api.choose_geg_appendix_template !== "function") {
@@ -372,6 +416,9 @@
     if (browseTemplateBtn) {
       browseTemplateBtn.disabled = !(api && typeof api.choose_geg_appendix_template === "function");
     }
+    if (editTemplateBtn) {
+      editTemplateBtn.disabled = !(api && typeof api.open_geg_appendix_template === "function");
+    }
   }
 
   function bindEvents() {
@@ -383,6 +430,9 @@
     }
     if (browseTemplateBtn) {
       browseTemplateBtn.addEventListener("click", onBrowseTemplate);
+    }
+    if (editTemplateBtn) {
+      editTemplateBtn.addEventListener("click", onEditTemplate);
     }
     if (dirInput) {
       dirInput.addEventListener("change", function () {
@@ -426,6 +476,7 @@
     templateInput = global.document.getElementById("appx-pdf-template");
     browseDirBtn = global.document.getElementById("appx-pdf-browse-dir");
     browseTemplateBtn = global.document.getElementById("appx-pdf-browse-template");
+    editTemplateBtn = global.document.getElementById("appx-pdf-edit-template");
     countEl = global.document.getElementById("appx-pdf-count");
     sheetPreviewsEl = global.document.getElementById("appx-pdf-sheet-previews");
     buildBtn = global.document.getElementById("appx-pdf-build");

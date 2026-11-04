@@ -34,6 +34,7 @@ STATE_LOCK = threading.Lock()
 _SCAN_GPS_WINDOW_CALLBACK: Optional[Callable[[], dict]] = None
 _CROSSHAIR_ICON_WINDOW_CALLBACK: Optional[Callable[[], dict]] = None
 _TOOL_WINDOW_CALLBACK: Optional[Callable[[str], dict]] = None
+_SIDEBAR_MODE_WINDOW_CALLBACK: Optional[Callable[[str], dict]] = None
 
 
 def set_scan_gps_window_callback(callback: Optional[Callable[[], dict]]) -> None:
@@ -124,6 +125,38 @@ def invoke_tool_window_callback(tool: str) -> dict:
     if isinstance(result, dict):
         return result
     return {"error": "That tool window did not return a result."}
+
+
+def set_sidebar_mode_window_callback(callback: Optional[Callable[[str], dict]]) -> None:
+    """
+    Register the function that opens a sidebar mode in its own window.
+
+    Args:
+        callback: Callable taking a mode id and returning a result dict, or None to clear.
+    """
+    global _SIDEBAR_MODE_WINDOW_CALLBACK
+    _SIDEBAR_MODE_WINDOW_CALLBACK = callback
+
+
+def invoke_sidebar_mode_window_callback(mode: str) -> dict:
+    """
+    Open a sidebar mode window via the registered desktop callback.
+
+    Args:
+        mode: Sidebar mode such as ``icon`` or ``appx``.
+
+    Returns:
+        Result dict from the callback, or an error when unavailable.
+    """
+    if _SIDEBAR_MODE_WINDOW_CALLBACK is None:
+        return {"error": "That sidebar window is not available."}
+    try:
+        result = _SIDEBAR_MODE_WINDOW_CALLBACK(str(mode or "").strip())
+    except (OSError, RuntimeError, TypeError, ValueError) as err:
+        return {"error": str(err)}
+    if isinstance(result, dict):
+        return result
+    return {"error": "That sidebar window did not return a result."}
 
 
 def user_custom_icons_dir() -> str:
@@ -748,6 +781,9 @@ def _handler_class(viewer_root: str) -> type:
             if parsed.path == "/__desktop/open-tool-window":
                 self._open_tool_window(parsed.query)
                 return
+            if parsed.path == "/__desktop/open-sidebar-mode-window":
+                self._open_sidebar_mode_window(parsed.query)
+                return
             self._send_json(404, {"error": "Not found."})
 
         def _open_scan_gps_tool(self) -> None:
@@ -771,6 +807,14 @@ def _handler_class(viewer_root: str) -> type:
                 return
             tool = parse_qs(query).get("tool", [""])[0]
             self._send_json(200, invoke_tool_window_callback(tool))
+
+        def _open_sidebar_mode_window(self, query: str) -> None:
+            """Open a sidebar mode tab in a new native window."""
+            if not token_ok(self.headers.get("X-Desktop-Token")):
+                self._send_json(403, {"error": "Desktop access was denied."})
+                return
+            mode = parse_qs(query).get("mode", [""])[0]
+            self._send_json(200, invoke_sidebar_mode_window_callback(mode))
 
         def _serve_source(self, query: str) -> None:
             """Return the bytes of a file registered by the desktop API."""

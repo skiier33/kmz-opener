@@ -554,6 +554,55 @@ select {
   display: none;
 }
 
+body.is-sidebar-mode-popout {
+  overflow: hidden;
+}
+
+body.is-sidebar-mode-popout #app {
+  min-height: 100vh;
+}
+
+body.is-sidebar-mode-popout[data-sidebar-popout-mode="icon"] .menubar,
+body.is-sidebar-mode-popout[data-sidebar-popout-mode="icon"] .toolbar,
+body.is-sidebar-mode-popout[data-sidebar-popout-mode="icon"] .map-pane,
+body.is-sidebar-mode-popout[data-sidebar-popout-mode="icon"] .right-pane-shell,
+body.is-sidebar-mode-popout[data-sidebar-popout-mode="icon"] .sidebar-edge-left,
+body.is-sidebar-mode-popout[data-sidebar-popout-mode="icon"] .sidebar-edge-right,
+body.is-sidebar-mode-popout[data-sidebar-popout-mode="icon"] .sidebar-mode-tabs,
+body.is-sidebar-mode-popout[data-sidebar-popout-mode="appx"] .menubar,
+body.is-sidebar-mode-popout[data-sidebar-popout-mode="appx"] .toolbar,
+body.is-sidebar-mode-popout[data-sidebar-popout-mode="appx"] .map-pane,
+body.is-sidebar-mode-popout[data-sidebar-popout-mode="appx"] .right-pane-shell,
+body.is-sidebar-mode-popout[data-sidebar-popout-mode="appx"] .sidebar-edge-left,
+body.is-sidebar-mode-popout[data-sidebar-popout-mode="appx"] .sidebar-edge-right,
+body.is-sidebar-mode-popout[data-sidebar-popout-mode="appx"] .sidebar-mode-tabs {
+  display: none !important;
+}
+
+body.is-sidebar-mode-popout[data-sidebar-popout-mode="icon"] .workspace,
+body.is-sidebar-mode-popout[data-sidebar-popout-mode="appx"] .workspace {
+  flex: 1;
+  min-height: 0;
+}
+
+body.is-sidebar-mode-popout[data-sidebar-popout-mode="icon"] .sidebar-shell,
+body.is-sidebar-mode-popout[data-sidebar-popout-mode="appx"] .sidebar-shell {
+  width: 100%;
+  max-width: none;
+  flex: 1;
+}
+
+body.is-sidebar-mode-popout[data-sidebar-popout-mode="icon"] .sidebar-left,
+body.is-sidebar-mode-popout[data-sidebar-popout-mode="appx"] .sidebar-left {
+  width: 100%;
+  max-width: none;
+  border-right: none;
+}
+
+body.is-sidebar-mode-popout[data-sidebar-popout-mode="map"] .sidebar-mode-tabs {
+  display: none !important;
+}
+
 .scan-coords-body,
 .crosshair-icon-body {
   margin: 0;
@@ -1011,6 +1060,11 @@ select {
 .appx-pdf-path-row .btn {
   flex-shrink: 0;
   padding: 0 10px;
+}
+
+.appx-pdf-edit-template-btn {
+  align-self: flex-start;
+  font-size: 0.8125rem;
 }
 
 .appx-pdf-preview {
@@ -4244,6 +4298,122 @@ body.icon-picker-scroll-resizing * {
 
 .leaflet-tooltip.point-label::before {
   display: none;
+}
+
+.leaflet-tooltip.node-map-label-tooltip {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  pointer-events: none;
+}
+
+.leaflet-tooltip.node-map-label-tooltip::before {
+  display: none;
+}
+
+.leaflet-tooltip.node-map-label-tooltip-transparent {
+  background: transparent;
+  border: none;
+}
+
+.node-map-label-anchor {
+  background: transparent;
+  border: none;
+}
+
+.node-map-label-panel {
+  width: min(480px, 100%);
+  max-height: min(88vh, 720px);
+}
+
+.node-map-label-body {
+  padding: 10px 14px 12px;
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.node-map-label-fieldset {
+  margin: 0;
+  padding: 8px 10px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 10px;
+}
+
+.node-map-label-fieldset legend {
+  padding: 0 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.node-map-label-field {
+  font-size: 12px;
+  color: var(--muted);
+  align-self: center;
+}
+
+.node-map-label-field-wide {
+  grid-column: 1 / -1;
+}
+
+.node-map-label-fieldset select,
+.node-map-label-fieldset input[type="number"],
+.node-map-label-fieldset input[type="color"] {
+  width: 100%;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+}
+
+.node-map-label-text {
+  width: 100%;
+  min-height: 52px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  resize: vertical;
+}
+
+.node-map-label-style-toggles {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  font-size: 12px;
+}
+
+.node-map-label-bg-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.node-map-label-transparent-toggle {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.node-map-label-footer {
+  justify-content: flex-start;
+}
+
+.node-map-label-footer-spacer {
+  flex: 1;
 }
 
 .map-rotate-control {

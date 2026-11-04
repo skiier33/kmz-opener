@@ -149,6 +149,35 @@
   }
 
   /**
+   * Open a sidebar mode tab (map, icon, appx) in its own window.
+   *
+   * @param {string} mode Sidebar mode id.
+   * @returns {Promise<object|null>} Result dict or null when not in the desktop app.
+   */
+  function openSidebarModeWindow(mode) {
+    var normalized = String(mode || "").trim();
+    return ensureDesktopSession().then(function (session) {
+      if (!session) {
+        return null;
+      }
+      if (typeof session.api.open_sidebar_mode_window === "function") {
+        return Promise.resolve(session.api.open_sidebar_mode_window(normalized));
+      }
+      return global
+        .fetch(
+          "/__desktop/open-sidebar-mode-window?mode=" + encodeURIComponent(normalized),
+          {
+            method: "POST",
+            headers: { "X-Desktop-Token": session.token },
+          }
+        )
+        .then(function (response) {
+          return response.json();
+        });
+    });
+  }
+
+  /**
    * Ask the main viewer to run a tool command.
    *
    * @param {string} action KmzToolHost action name.
@@ -170,6 +199,7 @@
     openScanGpsWindow: openScanGpsWindow,
     openCrosshairIconWindow: openCrosshairIconWindow,
     openToolWindow: openToolWindow,
+    openSidebarModeWindow: openSidebarModeWindow,
     toolDispatch: toolDispatch,
   };
 })(window);

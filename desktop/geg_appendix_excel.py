@@ -6,6 +6,7 @@ import base64
 import io
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 from datetime import datetime
@@ -46,19 +47,20 @@ def automation_bas_path() -> str:
     )
 
 
-def list_screenshot_pngs(directory: str) -> List[str]:
+SS_W_ICON_SUBDIR = "ss_w_icon"
+
+
+def _list_png_paths_in_directory(directory: str) -> List[str]:
     """
-    List PNG file paths in a directory, sorted by file name (case-insensitive).
+    List PNG file paths in one directory, sorted by file name (case-insensitive).
 
     Args:
-        directory: Folder to scan.
+        directory: Folder to scan (must exist).
 
     Returns:
-        Absolute paths to PNG files.
+        Absolute paths to PNG files in that folder only.
     """
     root = os.path.abspath(str(directory or "").strip())
-    if not root or not os.path.isdir(root):
-        return []
     names: List[str] = []
     try:
         for name in os.listdir(root):
@@ -68,6 +70,47 @@ def list_screenshot_pngs(directory: str) -> List[str]:
         return []
     names.sort(key=lambda n: n.lower())
     return [os.path.join(root, name) for name in names]
+
+
+def resolve_screenshot_png_scan(directory: str) -> Tuple[str, List[str]]:
+    """
+    Resolve which folder to use for appendix screenshots and list PNGs there.
+
+    When the chosen folder has no PNGs at its top level, falls back to the
+    ``ss_w_icon`` subfolder used by Icon to Image.
+
+    Args:
+        directory: Screenshot save folder from the viewer.
+
+    Returns:
+        Tuple of the scanned folder path and absolute PNG paths.
+    """
+    root = os.path.abspath(str(directory or "").strip())
+    if not root or not os.path.isdir(root):
+        return root, []
+    paths = _list_png_paths_in_directory(root)
+    if paths:
+        return root, paths
+    nested = os.path.join(root, SS_W_ICON_SUBDIR)
+    if os.path.isdir(nested):
+        nested_paths = _list_png_paths_in_directory(nested)
+        if nested_paths:
+            return nested, nested_paths
+    return root, []
+
+
+def list_screenshot_pngs(directory: str) -> List[str]:
+    """
+    List PNG file paths for appendix export, sorted by file name (case-insensitive).
+
+    Args:
+        directory: Folder to scan.
+
+    Returns:
+        Absolute paths to PNG files.
+    """
+    _scan_dir, paths = resolve_screenshot_png_scan(directory)
+    return paths
 
 
 def appendix_output_paths(
@@ -426,6 +469,32 @@ def validate_template_path(template_path: str) -> Optional[str]:
     return None
 
 
+def open_template_workbook(template_path: str) -> Optional[str]:
+    """
+    Open a GEG appendix template in the default spreadsheet application.
+
+    Args:
+        template_path: Path to a GEG .xlsm template.
+
+    Returns:
+        Error text, or None when the workbook was launched.
+    """
+    err = validate_template_path(template_path)
+    if err:
+        return err
+    path = os.path.abspath(str(template_path).strip())
+    try:
+        if sys.platform == "win32":
+            os.startfile(path)  # noqa: S606
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", path], close_fds=True)
+        else:
+            subprocess.Popen(["xdg-open", path], close_fds=True)
+    except OSError as exc:
+        return exc.strerror or "Could not open the template in Excel."
+    return None
+
+
 def list_appendix_preview(
     directory: str,
     limit: int = 20,
@@ -442,7 +511,7 @@ def list_appendix_preview(
     Returns:
         Dict with directory, count, names, and sheets list.
     """
-    paths = list_screenshot_pngs(directory)
+    scan_dir, paths = resolve_screenshot_png_scan(directory)
     names = [os.path.basename(p) for p in paths]
     sheets: List[Dict[str, Any]] = []
     for index, png_path in enumerate(paths[: max(0, sheet_preview_limit)]):
@@ -458,6 +527,7 @@ def list_appendix_preview(
         )
     return {
         "directory": os.path.abspath(directory) if directory else "",
+        "scanDirectory": scan_dir,
         "count": len(names),
         "names": names[: max(0, limit)],
         "sheets": sheets,

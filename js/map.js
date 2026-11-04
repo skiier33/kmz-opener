@@ -553,9 +553,20 @@
           pointNameLabelsHiddenForNode(node) || (style && style.labelScale === 0)
             ? ""
             : node.name || node.type;
+        if (global.NodeMapLabel) {
+          global.NodeMapLabel.hydrateNodeMapLabel(node);
+        }
+        var mapLabelSpec = node.mapLabel;
         geom.latlngs.forEach(function (ll) {
           var marker = pointToLayer(ll, style);
           bindPointLabel(marker, pointLabel, style);
+          if (mapLabelSpec && global.NodeMapLabel) {
+            var labelAnchor = global.NodeMapLabel.labelAnchorMarker(ll);
+            if (labelAnchor) {
+              global.NodeMapLabel.bindMapLabel(labelAnchor, mapLabelSpec);
+              group.addLayer(labelAnchor);
+            }
+          }
           group.addLayer(marker);
         });
         return;
@@ -862,6 +873,10 @@
     node.feature.geometryType = fields.geometryType;
     node.feature.extendedData = fields.extendedData;
     node.feature.coordinatesText = fields.coordinatesText;
+    delete node.mapLabel;
+    if (global.NodeMapLabel) {
+      global.NodeMapLabel.hydrateNodeMapLabel(node);
+    }
     refreshNodeLayer(node);
     refreshFeaturePresentation(node);
     if (selectedId === node.id) {
@@ -1010,6 +1025,33 @@
       return false;
     }
     applySpecToNodeStyle(node, spec);
+    var skipInspect = options && options.skipInspect;
+    if (!skipInspect && selectedId === id) {
+      selectFeature(id, false);
+    }
+    return true;
+  }
+
+  function getNodeMapLabel(id) {
+    var node = currentRoot ? findNode(currentRoot, id) : null;
+    if (!node || !global.NodeMapLabel) {
+      return null;
+    }
+    return global.NodeMapLabel.specFromNode(node);
+  }
+
+  function setNodeMapLabel(id, spec, options) {
+    var node = currentRoot ? findNode(currentRoot, id) : null;
+    if (!node || !node.feature || !featureHasPointGeometry(node.feature) || !global.NodeMapLabel) {
+      return false;
+    }
+    if (spec != null && !global.NodeMapLabel.normalizeSpec(spec)) {
+      return false;
+    }
+    if (!global.NodeMapLabel.applyToNode(node, spec, options)) {
+      return false;
+    }
+    refreshNodeLayer(node);
     var skipInspect = options && options.skipInspect;
     if (!skipInspect && selectedId === id) {
       selectFeature(id, false);
@@ -1872,6 +1914,9 @@
     };
     if (copy.feature) {
       copy.feature.name = copy.name;
+    }
+    if (node.mapLabel) {
+      copy.mapLabel = JSON.parse(JSON.stringify(node.mapLabel));
     }
     copy.children = (node.children || []).map(cloneNode);
     if (copy.sourceEl) {
@@ -2793,6 +2838,8 @@
     setFeatureIconScale: setFeatureIconScale,
     setFeatureIconUrl: setFeatureIconUrl,
     setFeaturePointIcon: setFeaturePointIcon,
+    getNodeMapLabel: getNodeMapLabel,
+    setNodeMapLabel: setNodeMapLabel,
     applySourcePointIcon: applySourcePointIcon,
     countSubtreePointIconTargets: countSubtreePointIconTargets,
     applySubtreePointIcon: applySubtreePointIcon,

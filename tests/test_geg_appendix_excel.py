@@ -7,12 +7,17 @@ import tempfile
 import unittest
 from datetime import datetime
 
+from unittest.mock import patch
+
 from desktop.geg_appendix_excel import (
+    SS_W_ICON_SUBDIR,
     appendix_output_paths,
     copy_template,
     default_template_path,
     list_appendix_preview,
     list_screenshot_pngs,
+    open_template_workbook,
+    resolve_screenshot_png_scan,
     validate_screenshot_directory,
     validate_template_path,
 )
@@ -27,6 +32,15 @@ class TestGegAppendixExcel(unittest.TestCase):
             open(os.path.join(tmp, "readme.txt"), "w", encoding="utf-8").write("x")
             names = [os.path.basename(p) for p in list_screenshot_pngs(tmp)]
             self.assertEqual(names, ["A.png", "z.png"])
+
+    def test_list_screenshot_pngs_ss_w_icon_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            nested = os.path.join(tmp, SS_W_ICON_SUBDIR)
+            os.makedirs(nested)
+            open(os.path.join(nested, "b1.png"), "wb").close()
+            scan_dir, paths = resolve_screenshot_png_scan(tmp)
+            self.assertEqual(os.path.normcase(scan_dir), os.path.normcase(nested))
+            self.assertEqual([os.path.basename(p) for p in paths], ["b1.png"])
 
     def test_validate_directory(self) -> None:
         self.assertIsNotNone(validate_screenshot_directory(""))
@@ -73,6 +87,15 @@ class TestGegAppendixExcel(unittest.TestCase):
             xlsm = os.path.join(tmp, "t.xlsm")
             open(xlsm, "wb").close()
             self.assertIsNone(validate_template_path(xlsm))
+
+    def test_open_template_workbook(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            xlsm = os.path.join(tmp, "t.xlsm")
+            open(xlsm, "wb").close()
+            with patch("desktop.geg_appendix_excel.os.startfile") as startfile:
+                self.assertIsNone(open_template_workbook(xlsm))
+                startfile.assert_called_once()
+        self.assertIsNotNone(open_template_workbook(""))
 
 
 if __name__ == "__main__":

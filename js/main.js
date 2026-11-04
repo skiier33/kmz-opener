@@ -991,6 +991,7 @@
   var hideBalloonTimer = 0;
   var mapContextMenu = null;
   var mapContextMenuNodeId = null;
+  var mapContextMenuAddLabelBtn = null;
   var layerTreeContextMenu = null;
   var layerTreeContextMenuSourceId = null;
   var layerTreeContextMenuSaveBtn = null;
@@ -1002,6 +1003,7 @@
   var layerTreeContextMenuChangeIconBtn = null;
   var layerTreeContextMenuIconRecursionBtn = null;
   var layerTreeContextMenuPlacemarksOnlyBtn = null;
+  var layerTreeContextMenuAddLabelBtn = null;
   var layerTreeIconIncludeChildren = true;
   var layerTreeIconPlacemarksOnly = false;
   var layerNodeIconDialog = document.getElementById("layer-node-icon-dialog");
@@ -1015,6 +1017,13 @@
     scale: 1,
   };
   var layerNodeIconSaveToKmz = true;
+  var nodeMapLabelDialog = document.getElementById("node-map-label-dialog");
+  var nodeMapLabelSubtitle = document.getElementById("node-map-label-subtitle");
+  var nodeMapLabelTitle = document.getElementById("node-map-label-title");
+  var nodeMapLabelApplyBtn = document.getElementById("node-map-label-apply");
+  var nodeMapLabelRemoveBtn = document.getElementById("node-map-label-remove");
+  var nodeMapLabelSession = null;
+  var nodeMapLabelSaveToKmz = true;
   var sourceOverwriteDialog = document.getElementById("source-overwrite-dialog");
   var sourceOverwriteSubtitle = document.getElementById("source-overwrite-subtitle");
   var sourceOverwriteMessage = document.getElementById("source-overwrite-message");
@@ -6479,6 +6488,16 @@
         ? layerNodeIconTargetHintText(focusId)
         : "No point icons in scope for the current options";
     }
+    var canMapLabel = !!(focusId && nodeIsMapPoint(focusNode));
+    if (layerTreeContextMenuAddLabelBtn) {
+      layerTreeContextMenuAddLabelBtn.disabled = !canMapLabel;
+      layerTreeContextMenuAddLabelBtn.textContent = canMapLabel && GisMap.getNodeMapLabel(focusId)
+        ? "Edit label"
+        : "Add label";
+      layerTreeContextMenuAddLabelBtn.title = canMapLabel
+        ? "Add or edit a custom text label beside this point on the map"
+        : "Labels are only available for point placemarks";
+    }
   }
 
   function createLayerTreeContextMenu() {
@@ -6556,6 +6575,21 @@
       }
     });
 
+    layerTreeContextMenuAddLabelBtn = document.createElement("button");
+    layerTreeContextMenuAddLabelBtn.type = "button";
+    layerTreeContextMenuAddLabelBtn.className = "map-context-menu-item";
+    layerTreeContextMenuAddLabelBtn.setAttribute("role", "menuitem");
+    layerTreeContextMenuAddLabelBtn.textContent = "Add label";
+    layerTreeContextMenuAddLabelBtn.addEventListener("click", function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      var id = focusId;
+      hideLayerTreeContextMenu();
+      if (id) {
+        openNodeMapLabelDialog(id);
+      }
+    });
+
     layerTreeContextMenuExportBtn = document.createElement("button");
     layerTreeContextMenuExportBtn.type = "button";
     layerTreeContextMenuExportBtn.className = "map-context-menu-item";
@@ -6616,6 +6650,7 @@
     layerTreeContextMenu.appendChild(layerTreeContextMenuDeleteBtn);
     layerTreeContextMenu.appendChild(layerTreeContextMenuHideBtn);
     layerTreeContextMenu.appendChild(layerTreeContextMenuRenameBtn);
+    layerTreeContextMenu.appendChild(layerTreeContextMenuAddLabelBtn);
     layerTreeContextMenu.appendChild(layerTreeContextMenuExportBtn);
     layerTreeContextMenu.appendChild(iconMenuSeparator);
     layerTreeContextMenu.appendChild(layerTreeContextMenuChangeIconBtn);
@@ -6713,7 +6748,24 @@
       }
     });
 
+    var addLabelBtn = document.createElement("button");
+    addLabelBtn.type = "button";
+    addLabelBtn.className = "map-context-menu-item";
+    addLabelBtn.setAttribute("role", "menuitem");
+    addLabelBtn.textContent = "Add label";
+    mapContextMenuAddLabelBtn = addLabelBtn;
+    addLabelBtn.addEventListener("click", function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      var nodeId = mapContextMenuNodeId;
+      hideMapContextMenu();
+      if (nodeId) {
+        openNodeMapLabelDialog(nodeId);
+      }
+    });
+
     mapContextMenu.appendChild(propertiesBtn);
+    mapContextMenu.appendChild(addLabelBtn);
     mapContextMenu.appendChild(viewKmzBtn);
     document.body.appendChild(mapContextMenu);
 
@@ -6901,6 +6953,252 @@
     });
   }
 
+  function readNodeMapLabelForm() {
+    var textEl = document.getElementById("node-map-label-text");
+    var alignEl = document.getElementById("node-map-label-align");
+    var paddingEl = document.getElementById("node-map-label-padding");
+    var offsetLeftEl = document.getElementById("node-map-label-offset-left");
+    var offsetRightEl = document.getElementById("node-map-label-offset-right");
+    var offsetUpEl = document.getElementById("node-map-label-offset-up");
+    var offsetDownEl = document.getElementById("node-map-label-offset-down");
+    var fontEl = document.getElementById("node-map-label-font");
+    var fontSizeEl = document.getElementById("node-map-label-font-size");
+    var colorEl = document.getElementById("node-map-label-color");
+    var boldEl = document.getElementById("node-map-label-bold");
+    var italicEl = document.getElementById("node-map-label-italic");
+    var underlineEl = document.getElementById("node-map-label-underline");
+    var bgColorEl = document.getElementById("node-map-label-bg-color");
+    var bgTransparentEl = document.getElementById("node-map-label-bg-transparent");
+    var backgroundColor = "transparent";
+    if (bgTransparentEl && !bgTransparentEl.checked && bgColorEl) {
+      backgroundColor = bgColorEl.value || "transparent";
+    }
+    return {
+      text: textEl ? textEl.value : "",
+      align: alignEl ? alignEl.value : "right",
+      padding: paddingEl ? paddingEl.value : 4,
+      offsetLeft: offsetLeftEl ? offsetLeftEl.value : 0,
+      offsetRight: offsetRightEl ? offsetRightEl.value : 0,
+      offsetUp: offsetUpEl ? offsetUpEl.value : 0,
+      offsetDown: offsetDownEl ? offsetDownEl.value : 0,
+      fontFamily: fontEl ? fontEl.value : "",
+      fontSize: fontSizeEl ? fontSizeEl.value : 12,
+      color: colorEl ? colorEl.value : "#e8eaed",
+      bold: !!(boldEl && boldEl.checked),
+      italic: !!(italicEl && italicEl.checked),
+      underline: !!(underlineEl && underlineEl.checked),
+      backgroundColor: backgroundColor,
+    };
+  }
+
+  function fillNodeMapLabelForm(spec) {
+    spec = spec || {};
+    var textEl = document.getElementById("node-map-label-text");
+    var alignEl = document.getElementById("node-map-label-align");
+    var paddingEl = document.getElementById("node-map-label-padding");
+    var offsetLeftEl = document.getElementById("node-map-label-offset-left");
+    var offsetRightEl = document.getElementById("node-map-label-offset-right");
+    var offsetUpEl = document.getElementById("node-map-label-offset-up");
+    var offsetDownEl = document.getElementById("node-map-label-offset-down");
+    var fontEl = document.getElementById("node-map-label-font");
+    var fontSizeEl = document.getElementById("node-map-label-font-size");
+    var colorEl = document.getElementById("node-map-label-color");
+    var boldEl = document.getElementById("node-map-label-bold");
+    var italicEl = document.getElementById("node-map-label-italic");
+    var underlineEl = document.getElementById("node-map-label-underline");
+    var bgColorEl = document.getElementById("node-map-label-bg-color");
+    var bgTransparentEl = document.getElementById("node-map-label-bg-transparent");
+    if (textEl) {
+      textEl.value = spec.text || "";
+    }
+    if (alignEl) {
+      alignEl.value = spec.align || "right";
+    }
+    if (paddingEl) {
+      paddingEl.value = spec.padding != null ? spec.padding : 4;
+    }
+    if (offsetLeftEl) {
+      offsetLeftEl.value = spec.offsetLeft != null ? spec.offsetLeft : 0;
+    }
+    if (offsetRightEl) {
+      offsetRightEl.value = spec.offsetRight != null ? spec.offsetRight : 0;
+    }
+    if (offsetUpEl) {
+      offsetUpEl.value = spec.offsetUp != null ? spec.offsetUp : 0;
+    }
+    if (offsetDownEl) {
+      offsetDownEl.value = spec.offsetDown != null ? spec.offsetDown : 0;
+    }
+    if (fontEl) {
+      fontEl.value = spec.fontFamily || "system-ui, Segoe UI, sans-serif";
+    }
+    if (fontSizeEl) {
+      fontSizeEl.value = spec.fontSize != null ? spec.fontSize : 12;
+    }
+    if (colorEl) {
+      colorEl.value = spec.color || "#e8eaed";
+    }
+    if (boldEl) {
+      boldEl.checked = spec.bold !== false;
+    }
+    if (italicEl) {
+      italicEl.checked = !!spec.italic;
+    }
+    if (underlineEl) {
+      underlineEl.checked = !!spec.underline;
+    }
+    var transparent =
+      !spec.backgroundColor || spec.backgroundColor === "transparent";
+    if (bgTransparentEl) {
+      bgTransparentEl.checked = transparent;
+    }
+    if (bgColorEl) {
+      bgColorEl.disabled = transparent;
+      if (!transparent && spec.backgroundColor) {
+        bgColorEl.value = spec.backgroundColor;
+      }
+    }
+  }
+
+  function syncNodeMapLabelBgControls() {
+    var bgColorEl = document.getElementById("node-map-label-bg-color");
+    var bgTransparentEl = document.getElementById("node-map-label-bg-transparent");
+    if (!bgColorEl || !bgTransparentEl) {
+      return;
+    }
+    bgColorEl.disabled = bgTransparentEl.checked;
+  }
+
+  function closeNodeMapLabelDialog() {
+    nodeMapLabelSession = null;
+    if (!nodeMapLabelDialog) {
+      return;
+    }
+    nodeMapLabelDialog.classList.add("hidden");
+    nodeMapLabelDialog.setAttribute("aria-hidden", "true");
+  }
+
+  function applyNodeMapLabelDialog() {
+    var session = nodeMapLabelSession;
+    if (!session || !window.NodeMapLabel) {
+      return;
+    }
+    var raw = readNodeMapLabelForm();
+    var spec = NodeMapLabel.normalizeSpec(raw);
+    if (!spec) {
+      setMessage("Enter label text to apply a map label.");
+      return;
+    }
+    var saveToggle = document.getElementById("node-map-label-save-kmz");
+    var saveToKmz = saveToggle ? saveToggle.checked : nodeMapLabelSaveToKmz;
+    nodeMapLabelSaveToKmz = saveToKmz;
+    if (!GisMap.setNodeMapLabel(session.nodeId, spec, { saveToKmz: saveToKmz })) {
+      setMessage("Could not apply the map label.");
+      return;
+    }
+    if (saveToKmz) {
+      var source = findLoadedSource(sourceIdFromNodeId(session.nodeId));
+      if (source) {
+        markSourceEdited(source);
+      }
+    }
+    closeNodeMapLabelDialog();
+  }
+
+  function removeNodeMapLabelDialog() {
+    var session = nodeMapLabelSession;
+    if (!session) {
+      return;
+    }
+    var saveToggle = document.getElementById("node-map-label-save-kmz");
+    var saveToKmz = saveToggle ? saveToggle.checked : nodeMapLabelSaveToKmz;
+    if (!GisMap.setNodeMapLabel(session.nodeId, null, { saveToKmz: saveToKmz })) {
+      setMessage("Could not remove the map label.");
+      return;
+    }
+    if (saveToKmz) {
+      var source = findLoadedSource(sourceIdFromNodeId(session.nodeId));
+      if (source) {
+        markSourceEdited(source);
+      }
+    }
+    closeNodeMapLabelDialog();
+  }
+
+  function openNodeMapLabelDialog(nodeId) {
+    if (!nodeMapLabelDialog || !nodeId || !window.NodeMapLabel) {
+      return;
+    }
+    var node = GisMap.findNode(nodeId);
+    if (!node || !nodeIsMapPoint(node)) {
+      setMessage("Labels can only be added to point placemarks.");
+      return;
+    }
+    nodeMapLabelSession = { nodeId: nodeId };
+    var existing = GisMap.getNodeMapLabel(nodeId);
+    fillNodeMapLabelForm(NodeMapLabel.specForEditor(node));
+    if (nodeMapLabelSubtitle) {
+      var subtitle = node.name || "Placemark";
+      var source = findLoadedSource(sourceIdFromNodeId(nodeId));
+      if (source && source.doc && source.doc.fileName) {
+        subtitle += " — " + source.doc.fileName;
+      }
+      nodeMapLabelSubtitle.textContent = subtitle;
+    }
+    if (nodeMapLabelTitle) {
+      nodeMapLabelTitle.textContent = existing ? "Edit label" : "Add label";
+    }
+    if (nodeMapLabelRemoveBtn) {
+      nodeMapLabelRemoveBtn.hidden = !existing;
+    }
+    var saveToggle = document.getElementById("node-map-label-save-kmz");
+    if (saveToggle) {
+      saveToggle.checked = nodeMapLabelSaveToKmz;
+    }
+    syncNodeMapLabelBgControls();
+    nodeMapLabelDialog.classList.remove("hidden");
+    nodeMapLabelDialog.setAttribute("aria-hidden", "false");
+    GisMap.selectFeature(nodeId, false);
+  }
+
+  function initNodeMapLabelDialog() {
+    if (!nodeMapLabelDialog) {
+      return;
+    }
+    var closeBtn = document.getElementById("node-map-label-close");
+    var cancelBtn = document.getElementById("node-map-label-cancel");
+    if (closeBtn) {
+      closeBtn.addEventListener("click", closeNodeMapLabelDialog);
+    }
+    if (cancelBtn) {
+      cancelBtn.addEventListener("click", closeNodeMapLabelDialog);
+    }
+    if (nodeMapLabelApplyBtn) {
+      nodeMapLabelApplyBtn.addEventListener("click", applyNodeMapLabelDialog);
+    }
+    if (nodeMapLabelRemoveBtn) {
+      nodeMapLabelRemoveBtn.addEventListener("click", removeNodeMapLabelDialog);
+    }
+    var bgTransparentEl = document.getElementById("node-map-label-bg-transparent");
+    if (bgTransparentEl) {
+      bgTransparentEl.addEventListener("change", syncNodeMapLabelBgControls);
+    }
+    nodeMapLabelDialog.addEventListener("click", function (event) {
+      if (event.target === nodeMapLabelDialog) {
+        closeNodeMapLabelDialog();
+      }
+    });
+    document.addEventListener("keydown", function (event) {
+      if (
+        event.key === "Escape"
+        && nodeMapLabelDialog
+        && !nodeMapLabelDialog.classList.contains("hidden")
+      ) {
+        closeNodeMapLabelDialog();
+      }
+    });
+  }
+
   function showMapContextMenu(nodeId, clientX, clientY) {
     if (!mapContextMenu) {
       return;
@@ -6908,6 +7206,11 @@
     hideLayerTreeContextMenu();
     hideNodeBalloon();
     mapContextMenuNodeId = nodeId;
+    if (mapContextMenuAddLabelBtn) {
+      mapContextMenuAddLabelBtn.textContent = GisMap.getNodeMapLabel(nodeId)
+        ? "Edit label"
+        : "Add label";
+    }
     mapContextMenu.classList.remove("hidden");
     mapContextMenu.style.left = "0px";
     mapContextMenu.style.top = "0px";
@@ -8527,6 +8830,7 @@
   initSourceOverwriteDialog();
   initFeaturePropertiesDialog();
   initLayerNodeIconDialog();
+  initNodeMapLabelDialog();
   initInspectTagEditing();
   initSidebarSectionFolding();
   initSidebarSectionVisibility();
@@ -8769,6 +9073,7 @@
   }
 
   window.openCrosshairIconGeneratorWindow = openCrosshairIconGeneratorWindow;
+  window.kmzSetAppMessage = setMessage;
 
   if (csvCoordsDialog) {
     var csvCoordsDialogCloseBtn = document.getElementById("csv-coords-dialog-close");
@@ -9260,14 +9565,18 @@
   if (layersAddBtn) {
     layersAddBtn.addEventListener("click", promptLayerFilePicker);
   }
-  if (duplicateWindowBtn) {
-    duplicateWindowBtn.addEventListener("click", function () {
-      var paths = collectDuplicateSourcePaths();
-      if (!paths.length) {
-        return;
-      }
+  function openMapPopoutBrowserWindow() {
+    var url = new URL(location.href);
+    url.searchParams.set("popout", "map");
+    window.open(url.toString(), "kmz-sidebar-map", "width=1280,height=820");
+  }
+
+  function openDuplicateMapWindow() {
+    var paths = collectDuplicateSourcePaths();
+    if (paths.length) {
       ensureDesktop().then(function (desktop) {
         if (!desktop || typeof desktop.api.duplicate_window !== "function") {
+          openMapPopoutBrowserWindow();
           return null;
         }
         var center = map.getCenter();
@@ -9281,6 +9590,35 @@
           }
         });
       });
+      return;
+    }
+    if (window.DesktopBridge && typeof window.DesktopBridge.openSidebarModeWindow === "function") {
+      window.DesktopBridge.openSidebarModeWindow("map")
+        .then(function (result) {
+          if (result === null) {
+            openMapPopoutBrowserWindow();
+            return;
+          }
+          if (result && result.error) {
+            setMessage(result.error);
+          }
+        })
+        .catch(function (err) {
+          setMessage((err && err.message) || "Could not open another window.");
+        });
+      return;
+    }
+    openMapPopoutBrowserWindow();
+  }
+
+  window.addEventListener("kmz-popout-map", openDuplicateMapWindow);
+
+  if (duplicateWindowBtn) {
+    duplicateWindowBtn.addEventListener("click", function () {
+      if (!collectDuplicateSourcePaths().length) {
+        return;
+      }
+      openDuplicateMapWindow();
     });
   }
   if (openGoogleEarthBtn) {
