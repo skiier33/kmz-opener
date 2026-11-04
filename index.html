@@ -474,6 +474,17 @@
             </button>
             <button
               type="button"
+              id="sidebar-mode-icon-to-image"
+              class="sidebar-mode-tab"
+              role="tab"
+              aria-selected="false"
+              aria-controls="sidebar-left"
+              title="Composite borehole icons onto screenshot PNGs"
+            >
+              Icon to Image
+            </button>
+            <button
+              type="button"
               id="sidebar-mode-appx-pdf"
               class="sidebar-mode-tab"
               role="tab"
@@ -1093,11 +1104,16 @@
               <div class="icon-to-image-preview">
                 <span id="icon-to-image-count" class="icon-to-image-count">0 PNG files</span>
                 <span id="icon-to-image-output-hint" class="icon-to-image-output-hint muted"></span>
-                <div
+                <p class="muted icon-to-image-list-hint">
+                  Folder images appear below with embedded PNG metadata. Right-click the list or
+                  metadata column to choose which tags are shown.
+                </p>
+                <ul
                   id="icon-to-image-sheet-previews"
                   class="icon-to-image-sheet-previews"
-                  aria-label="Preview of icon composited screenshots"
-                ></div>
+                  role="list"
+                  aria-label="Screenshot thumbnails and metadata"
+                ></ul>
               </div>
               <button id="icon-to-image-save" class="btn icon-to-image-save-btn" type="button" disabled>
                 Save to ss_w_icon
@@ -1742,6 +1758,7 @@
     <script src="js/bh-alignments.js"></script>
     <script src="js/borehole-images.js"></script>
     <script src="js/desktop-api.js"></script>
+    <script src="js/sidebar-modes.js"></script>
     <script src="js/appx-pdf.js"></script>
     <script src="js/icon-to-image.js"></script>
     <script src="js/gui-prefs.js"></script>

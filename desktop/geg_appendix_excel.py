@@ -7,11 +7,17 @@ import io
 import os
 import shutil
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from PIL import Image
+
+from desktop.appendix_image_orient import (
+    appendix_insert_png_path,
+    rotate_png_bytes_for_appendix,
+)
 
 TEMPLATE_BASENAME = "GEG Site and Boring Location Diagram AK TEMPLATE.xlsm"
 AUTOMATION_MODULE = "GegAppendixAutomation"
@@ -234,6 +240,7 @@ def build_appendix_from_screenshots(
 
     excel = None
     workbook = None
+    orient_cache_dir = tempfile.mkdtemp(prefix="geg_appendix_orient_", dir=dest_dir)
     try:
         excel = win32com.client.DispatchEx("Excel.Application")
         excel.Visible = False
@@ -258,7 +265,7 @@ def build_appendix_from_screenshots(
                 excel.Run(macro_dup)
             sheet = excel.ActiveSheet
             sheet.Activate()
-            abs_png = os.path.abspath(png_path)
+            abs_png = appendix_insert_png_path(png_path, orient_cache_dir)
             if use_vba_automation:
                 sheet.Range("B2").Select()
                 excel.Run(macro_over, abs_png)
@@ -296,6 +303,7 @@ def build_appendix_from_screenshots(
                 excel.Quit()
             except Exception:
                 pass
+        shutil.rmtree(orient_cache_dir, ignore_errors=True)
 
     if not os.path.isfile(pdf_path):
         raise OSError("PDF export did not create an output file.")
@@ -309,6 +317,60 @@ def build_appendix_from_screenshots(
     }
 
 
+def _appendix_preview_png_bytes(path: str) -> bytes:
+    """
+    Load a screenshot PNG and apply appendix landscape / north-up orientation.
+
+    Args:
+        path: Absolute path to a PNG file.
+
+    Returns:
+        PNG bytes as they will appear in the appendix PDF.
+    """
+    try:
+        with open(path, "rb") as handle:
+            source = handle.read()
+    except OSError:
+        return b""
+    try:
+        oriented, _ccw = rotate_png_bytes_for_appendix(source)
+        return oriented
+    except OSError:
+        return source
+
+
+def _png_bytes_thumb_jpeg_b64(png_bytes: bytes, max_width: int = 320) -> Optional[str]:
+    """
+    Encode PNG bytes as JPEG base64 for UI thumbnails.
+
+    Args:
+        png_bytes: PNG image bytes.
+        max_width: Maximum thumbnail width in pixels.
+
+    Returns:
+        Base64 JPEG payload, or None when the image cannot be read.
+    """
+    if not png_bytes:
+        return None
+    try:
+        with Image.open(io.BytesIO(png_bytes)) as img:
+            copy = img.convert("RGB")
+    except OSError:
+        return None
+    if copy.width > max_width:
+        ratio = max_width / float(copy.width)
+        copy = copy.resize(
+            (max_width, max(1, int(copy.height * ratio))),
+            Image.Resampling.LANCZOS,
+        )
+    buf = io.BytesIO()
+    try:
+        copy.save(buf, format="JPEG", quality=82, optimize=True)
+    except OSError:
+        return None
+    return base64.standard_b64encode(buf.getvalue()).decode("ascii")
+
+
 def _png_file_thumb_jpeg_b64(path: str, max_width: int = 320) -> Optional[str]:
     """
     Encode a PNG file as JPEG base64 for UI thumbnails.
@@ -320,6 +382,11 @@ def _png_file_thumb_jpeg_b64(path: str, max_width: int = 320) -> Optional[str]:
     Returns:
         Base64 JPEG payload, or None when the image cannot be read.
     """
+    preview_bytes = _appendix_preview_png_bytes(path)
+    if preview_bytes:
+        thumb = _png_bytes_thumb_jpeg_b64(preview_bytes, max_width=max_width)
+        if thumb:
+            return thumb
     try:
         with Image.open(path) as img:
             copy = img.convert("RGB")

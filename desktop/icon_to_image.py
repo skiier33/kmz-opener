@@ -18,7 +18,8 @@ from desktop.geg_appendix_excel import (
 from desktop.png_metadata import embed_screenshot_metadata, read_json_metadata
 
 OUTPUT_SUBDIR = "ss_w_icon"
-DEFAULT_PREVIEW_LIMIT = 50
+# 0 or negative means include every PNG in preview responses.
+DEFAULT_PREVIEW_LIMIT = 0
 
 
 def output_directory(screenshot_dir: str) -> str:
@@ -152,8 +153,14 @@ def preview_icon_to_image(
     sheets: List[Dict[str, Any]] = []
     total_icons = 0
     skipped_no_metadata = 0
+    preview_cap = int(sheet_preview_limit or 0)
+    preview_paths = (
+        paths
+        if preview_cap <= 0
+        else paths[: max(0, preview_cap)]
+    )
 
-    for index, png_path in enumerate(paths[: max(0, sheet_preview_limit)]):
+    for index, png_path in enumerate(preview_paths):
         base_name = os.path.basename(png_path)
         try:
             with open(png_path, "rb") as handle:
@@ -161,7 +168,7 @@ def preview_icon_to_image(
         except OSError:
             continue
         try:
-            composed, placed, _meta = compose_icon_on_png_bytes(
+            composed, placed, meta = compose_icon_on_png_bytes(
                 source_bytes,
                 icon_bytes,
                 size_px,
@@ -171,7 +178,6 @@ def preview_icon_to_image(
         if placed == 0:
             skipped_no_metadata += 1
         total_icons += placed
-        thumb_path = png_path
         thumb_b64 = (
             _png_bytes_thumb_jpeg_b64(composed)
             if placed > 0
@@ -184,6 +190,7 @@ def preview_icon_to_image(
                 "tabLabel": os.path.splitext(base_name)[0] or base_name,
                 "thumbJpegB64": thumb_b64,
                 "iconsPlaced": placed,
+                "metadata": meta,
             }
         )
 

@@ -1,14 +1,9 @@
 (function (global) {
   "use strict";
 
-  var STORAGE_KEY = "kmz-sidebar-mode";
-  var MODE_MAP = "map";
-  var MODE_APPX = "appx";
   var REFRESH_DEBOUNCE_MS = 350;
 
   var sidebarLeft = null;
-  var tabMap = null;
-  var tabAppx = null;
   var dirInput = null;
   var templateInput = null;
   var browseDirBtn = null;
@@ -112,45 +107,14 @@
     statusEl.classList.toggle("appx-pdf-status-error", !!isError);
   }
 
-  function setSidebarMode(mode) {
-    if (!sidebarLeft) {
-      return;
+  function isAppxSidebarMode() {
+    if (global.SidebarModes && typeof SidebarModes.getMode === "function") {
+      return SidebarModes.getMode() === SidebarModes.MODE_APPX;
     }
-    var next = mode === MODE_APPX ? MODE_APPX : MODE_MAP;
-    sidebarLeft.setAttribute("data-sidebar-mode", next);
-    if (tabMap) {
-      var mapActive = next === MODE_MAP;
-      tabMap.classList.toggle("is-active", mapActive);
-      tabMap.setAttribute("aria-selected", mapActive ? "true" : "false");
-    }
-    if (tabAppx) {
-      var appxActive = next === MODE_APPX;
-      tabAppx.classList.toggle("is-active", appxActive);
-      tabAppx.setAttribute("aria-selected", appxActive ? "true" : "false");
-    }
-    try {
-      localStorage.setItem(STORAGE_KEY, next);
-    } catch (err) {
-      /* ignore */
-    }
-    if (next === MODE_APPX) {
-      refreshPreview();
-    }
-  }
-
-  function restoreSidebarMode() {
-    var stored = MODE_MAP;
-    try {
-      var raw = localStorage.getItem(STORAGE_KEY);
-      if (raw === MODE_APPX) {
-        stored = MODE_APPX;
-      } else if (raw === "scan") {
-        stored = MODE_MAP;
-      }
-    } catch (err) {
-      /* ignore */
-    }
-    setSidebarMode(stored);
+    return (
+      sidebarLeft
+      && sidebarLeft.getAttribute("data-sidebar-mode") === "appx"
+    );
   }
 
   function updateBuildEnabled(data) {
@@ -411,16 +375,6 @@
   }
 
   function bindEvents() {
-    if (tabMap) {
-      tabMap.addEventListener("click", function () {
-        setSidebarMode(MODE_MAP);
-      });
-    }
-    if (tabAppx) {
-      tabAppx.addEventListener("click", function () {
-        setSidebarMode(MODE_APPX);
-      });
-    }
     if (buildBtn) {
       buildBtn.addEventListener("click", onBuildClick);
     }
@@ -456,7 +410,7 @@
         if (dirInput && !String(dirInput.value || "").trim()) {
           dirInput.value = String(shotDir.value || "").trim();
         }
-        if (sidebarLeft && sidebarLeft.getAttribute("data-sidebar-mode") === MODE_APPX) {
+        if (isAppxSidebarMode()) {
           scheduleRefreshPreview();
         }
       });
@@ -468,8 +422,6 @@
     setMessageFn = options.setMessage || null;
 
     sidebarLeft = global.document.getElementById("sidebar-left");
-    tabMap = global.document.getElementById("sidebar-mode-map");
-    tabAppx = global.document.getElementById("sidebar-mode-appx-pdf");
     dirInput = global.document.getElementById("appx-pdf-directory");
     templateInput = global.document.getElementById("appx-pdf-template");
     browseDirBtn = global.document.getElementById("appx-pdf-browse-dir");
@@ -482,7 +434,9 @@
     bindEvents();
     syncDirectoryFieldFromPrefs();
     syncTemplateFieldFromPrefs();
-    restoreSidebarMode();
+    if (global.SidebarModes && typeof SidebarModes.onActivate === "function") {
+      SidebarModes.onActivate(SidebarModes.MODE_APPX, refreshPreview);
+    }
     syncBrowseButtons();
     loadDefaultTemplatePath().then(function () {
       refreshPreview();
@@ -499,6 +453,10 @@
   global.AppxPdf = {
     init: init,
     refreshPreview: refreshPreview,
-    setSidebarMode: setSidebarMode,
+    setSidebarMode: function (mode) {
+      if (global.SidebarModes && typeof SidebarModes.setMode === "function") {
+        SidebarModes.setMode(mode);
+      }
+    },
   };
 })(window);

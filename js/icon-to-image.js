@@ -2,7 +2,9 @@
   "use strict";
 
   var STORAGE_KEY = "kmz-icon-to-image-settings";
+  var METADATA_VISIBILITY_KEY = "kmz-icon-to-image-metadata-visibility";
   var REFRESH_DEBOUNCE_MS = 350;
+  var TAG_ICONS_PLACED = "__icons_placed";
 
   var dirInput = null;
   var browseDirBtn = null;
@@ -25,6 +27,9 @@
   var saving = false;
   var refreshTimer = null;
   var lastPreviewOk = false;
+  var lastPreviewData = null;
+  var metadataContextMenu = null;
+  var metadataTagRegistry = [];
 
   var iconState = {
     selection: "crosshair",
@@ -38,9 +43,39 @@
     return desktop && desktop.api ? desktop.api : null;
   }
 
-  function isDesktopAvailable() {
-    var api = desktopApi();
+  function whenDesktopApiReady() {
+    if (global.DesktopBridge && typeof DesktopBridge.whenDesktopApiReady === "function") {
+      return DesktopBridge.whenDesktopApiReady();
+    }
+    return Promise.resolve(desktopApi());
+  }
+
+  function hasPreviewApi(api) {
+    api = api || desktopApi();
     return !!(api && typeof api.preview_icon_to_image === "function");
+  }
+
+  function hasSaveApi(api) {
+    api = api || desktopApi();
+    return !!(api && typeof api.save_icon_to_image === "function");
+  }
+
+  function previewAllowsSave(data) {
+    if (!data || data.error) {
+      return false;
+    }
+    if ((data.count || 0) > 0) {
+      return true;
+    }
+    return !!(data.sheets && data.sheets.length);
+  }
+
+  function isIconSidebarMode() {
+    if (global.SidebarModes && typeof SidebarModes.getMode === "function") {
+      return SidebarModes.getMode() === SidebarModes.MODE_ICON;
+    }
+    var sidebarLeft = global.document.getElementById("sidebar-left");
+    return !!(sidebarLeft && sidebarLeft.getAttribute("data-sidebar-mode") === "icon");
   }
 
   function jpegDataUrl(b64) {
@@ -149,6 +184,297 @@
     }
   }
 
+  function readMetadataVisibilityPrefs() {
+    try {
+      var raw = global.localStorage.getItem(METADATA_VISIBILITY_KEY);
+      if (!raw) {
+        return { hidden: {} };
+      }
+      var parsed = JSON.parse(raw);
+      return parsed && parsed.hidden ? parsed : { hidden: {} };
+    } catch (err) {
+      return { hidden: {} };
+    }
+  }
+
+  function writeMetadataVisibilityPrefs(prefs) {
+    try {
+      global.localStorage.setItem(
+        METADATA_VISIBILITY_KEY,
+        JSON.stringify({ hidden: (prefs && prefs.hidden) || {} })
+      );
+    } catch (err) {
+      /* ignore quota */
+    }
+  }
+
+  function isMetadataTagVisible(tagId) {
+    var prefs = readMetadataVisibilityPrefs();
+    return !(prefs.hidden && prefs.hidden[tagId]);
+  }
+
+  function setMetadataTagVisible(tagId, visible) {
+    if (!tagId) {
+      return;
+    }
+    var prefs = readMetadataVisibilityPrefs();
+    if (!prefs.hidden) {
+      prefs.hidden = {};
+    }
+    if (visible) {
+      delete prefs.hidden[tagId];
+    } else {
+      prefs.hidden[tagId] = true;
+    }
+    writeMetadataVisibilityPrefs(prefs);
+  }
+
+  function formatMetadataTagLabel(tagId) {
+    if (tagId === TAG_ICONS_PLACED) {
+      return "Icons placed";
+    }
+    return String(tagId || "")
+      .replace(/\[(\d+)\]/g, " $1 ")
+      .replace(/\./g, " · ")
+      .replace(/_/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function formatMetadataScalar(value) {
+    if (value === null || value === undefined) {
+      return "";
+    }
+    if (typeof value === "boolean") {
+      return value ? "true" : "false";
+    }
+    if (typeof value === "object") {
+      try {
+        return JSON.stringify(value);
+      } catch (err) {
+        return String(value);
+      }
+    }
+    return String(value);
+  }
+
+  function flattenMetadataTags(metadata, pathPrefix, out) {
+    out = out || [];
+    if (metadata == null) {
+      return out;
+    }
+    if (Array.isArray(metadata)) {
+      metadata.forEach(function (item, index) {
+        var path = pathPrefix + "[" + index + "]";
+        if (item !== null && typeof item === "object") {
+          flattenMetadataTags(item, path, out);
+        } else if (item !== null && item !== undefined && item !== "") {
+          out.push({ id: path, label: formatMetadataTagLabel(path), value: formatMetadataScalar(item) });
+        }
+      });
+      return out;
+    }
+    if (typeof metadata !== "object") {
+      if (pathPrefix) {
+        out.push({
+          id: pathPrefix,
+          label: formatMetadataTagLabel(pathPrefix),
+          value: formatMetadataScalar(metadata),
+        });
+      }
+      return out;
+    }
+    Object.keys(metadata).forEach(function (key) {
+      var value = metadata[key];
+      if (value === null || value === undefined || value === "") {
+        return;
+      }
+      var path = pathPrefix ? pathPrefix + "." + key : key;
+      if (Array.isArray(value)) {
+        if (!value.length) {
+          return;
+        }
+        flattenMetadataTags(value, path, out);
+        return;
+      }
+      if (typeof value === "object") {
+        flattenMetadataTags(value, path, out);
+        return;
+      }
+      out.push({
+        id: path,
+        label: formatMetadataTagLabel(path),
+        value: formatMetadataScalar(value),
+      });
+    });
+    return out;
+  }
+
+  function metadataRowsForSheet(sheet) {
+    var rows = flattenMetadataTags(sheet && sheet.metadata ? sheet.metadata : null, "", []);
+    var placed = sheet && sheet.iconsPlaced != null ? sheet.iconsPlaced : 0;
+    rows.unshift({
+      id: TAG_ICONS_PLACED,
+      label: formatMetadataTagLabel(TAG_ICONS_PLACED),
+      value: String(placed),
+    });
+    return rows;
+  }
+
+  function registerMetadataTagsFromSheets(sheets) {
+    var seen = {};
+    var registry = [];
+    (sheets || []).forEach(function (sheet) {
+      metadataRowsForSheet(sheet).forEach(function (row) {
+        if (!row.id || seen[row.id]) {
+          return;
+        }
+        seen[row.id] = true;
+        registry.push({ id: row.id, label: row.label || formatMetadataTagLabel(row.id) });
+      });
+    });
+    registry.sort(function (a, b) {
+      return String(a.label).localeCompare(String(b.label), undefined, {
+        numeric: true,
+        sensitivity: "base",
+      });
+    });
+    metadataTagRegistry = registry;
+  }
+
+  function hideMetadataContextMenu() {
+    if (metadataContextMenu) {
+      metadataContextMenu.classList.add("hidden");
+    }
+  }
+
+  function populateMetadataContextMenu() {
+    if (!metadataContextMenu) {
+      return;
+    }
+    metadataContextMenu.innerHTML = "";
+    if (!metadataTagRegistry.length) {
+      var emptyBtn = global.document.createElement("button");
+      emptyBtn.type = "button";
+      emptyBtn.className = "map-context-menu-item";
+      emptyBtn.disabled = true;
+      emptyBtn.textContent = "No metadata tags in folder";
+      metadataContextMenu.appendChild(emptyBtn);
+      return;
+    }
+    metadataTagRegistry.forEach(function (entry) {
+      var btn = global.document.createElement("button");
+      btn.type = "button";
+      btn.className = "map-context-menu-item map-context-menu-item-check";
+      btn.setAttribute("role", "menuitemcheckbox");
+      btn.setAttribute("data-tag-id", entry.id);
+      btn.setAttribute("aria-checked", isMetadataTagVisible(entry.id) ? "true" : "false");
+      btn.innerHTML =
+        '<span class="map-context-menu-checkmark" aria-hidden="true">✓</span>'
+        + '<span class="map-context-menu-item-label"></span>';
+      btn.querySelector(".map-context-menu-item-label").textContent = entry.label;
+      btn.addEventListener("click", function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        var tagId = btn.getAttribute("data-tag-id");
+        var nextVisible = btn.getAttribute("aria-checked") !== "true";
+        setMetadataTagVisible(tagId, nextVisible);
+        btn.setAttribute("aria-checked", nextVisible ? "true" : "false");
+        if (lastPreviewData) {
+          renderSheetPreviews(lastPreviewData);
+        }
+      });
+      metadataContextMenu.appendChild(btn);
+    });
+  }
+
+  function showMetadataContextMenu(clientX, clientY) {
+    if (!metadataContextMenu) {
+      return;
+    }
+    populateMetadataContextMenu();
+    metadataContextMenu.classList.remove("hidden");
+    metadataContextMenu.style.left = "0px";
+    metadataContextMenu.style.top = "0px";
+    var width = metadataContextMenu.offsetWidth;
+    var height = metadataContextMenu.offsetHeight;
+    var left = Math.max(8, Math.min(clientX, global.innerWidth - width - 8));
+    var top = Math.max(8, Math.min(clientY, global.innerHeight - height - 8));
+    metadataContextMenu.style.left = left + "px";
+    metadataContextMenu.style.top = top + "px";
+  }
+
+  function onMetadataContextMenu(event) {
+    if (!sheetPreviewsEl || !sheetPreviewsEl.contains(event.target)) {
+      return;
+    }
+    event.preventDefault();
+    showMetadataContextMenu(event.clientX, event.clientY);
+  }
+
+  function createMetadataContextMenu() {
+    if (metadataContextMenu) {
+      return;
+    }
+    metadataContextMenu = global.document.createElement("div");
+    metadataContextMenu.id = "icon-to-image-metadata-context-menu";
+    metadataContextMenu.className =
+      "map-context-menu icon-to-image-metadata-context-menu hidden";
+    metadataContextMenu.setAttribute("role", "menu");
+    metadataContextMenu.setAttribute("aria-label", "Show or hide metadata tags");
+    global.document.body.appendChild(metadataContextMenu);
+
+    global.document.addEventListener(
+      "mousedown",
+      function (event) {
+        if (
+          metadataContextMenu
+          && !metadataContextMenu.classList.contains("hidden")
+          && !metadataContextMenu.contains(event.target)
+        ) {
+          hideMetadataContextMenu();
+        }
+      },
+      true
+    );
+    global.addEventListener("keydown", function (event) {
+      if (event.key === "Escape") {
+        hideMetadataContextMenu();
+      }
+    });
+    global.addEventListener("blur", hideMetadataContextMenu);
+  }
+
+  function appendMetadataRows(parent, rows) {
+    var visibleCount = 0;
+    var dl = global.document.createElement("dl");
+    dl.className = "icon-to-image-meta-rows";
+    rows.forEach(function (row) {
+      if (!isMetadataTagVisible(row.id)) {
+        return;
+      }
+      visibleCount += 1;
+      var rowEl = global.document.createElement("div");
+      rowEl.className = "icon-to-image-meta-row";
+      rowEl.setAttribute("data-tag-id", row.id);
+      var dt = global.document.createElement("dt");
+      dt.textContent = row.label;
+      var dd = global.document.createElement("dd");
+      dd.textContent = row.value;
+      rowEl.appendChild(dt);
+      rowEl.appendChild(dd);
+      dl.appendChild(rowEl);
+    });
+    if (visibleCount > 0) {
+      parent.appendChild(dl);
+    } else {
+      var none = global.document.createElement("p");
+      none.className = "icon-to-image-list-meta-empty";
+      none.textContent = "No metadata tags selected. Right-click to show fields.";
+      parent.appendChild(none);
+    }
+  }
+
   function setStatus(text, isError) {
     if (!statusEl) {
       return;
@@ -206,9 +532,33 @@
     if (!saveBtn) {
       return;
     }
-    var count = data && !data.error ? data.count || 0 : 0;
-    lastPreviewOk = !!(data && !data.error && count > 0);
-    saveBtn.disabled = saving || !isDesktopAvailable() || !lastPreviewOk;
+    if (data !== undefined) {
+      lastPreviewData = data || null;
+    }
+    lastPreviewOk =
+      !saving && hasSaveApi() && previewAllowsSave(lastPreviewData);
+    saveBtn.disabled = !lastPreviewOk;
+    if (saveBtn.disabled) {
+      var hints = [];
+      if (saving) {
+        hints.push("Save in progress");
+      } else if (!hasSaveApi()) {
+        hints.push("Requires the desktop app");
+      } else if (!screenshotDirectory()) {
+        hints.push("Set the screenshot folder");
+      } else if (!lastPreviewData || lastPreviewData.error) {
+        hints.push(
+          lastPreviewData && lastPreviewData.error
+            ? String(lastPreviewData.error)
+            : "Wait for preview to finish"
+        );
+      } else if (!previewAllowsSave(lastPreviewData)) {
+        hints.push("Add at least one PNG to the folder");
+      }
+      saveBtn.title = hints.join(". ");
+    } else {
+      saveBtn.title = "Write composited PNGs into the ss_w_icon subfolder";
+    }
   }
 
   function renderSheetPreviews(data) {
@@ -218,18 +568,20 @@
     }
     sheetPreviewsEl.innerHTML = "";
     if (!data || data.error) {
-      var errBlock = global.document.createElement("p");
+      var errBlock = global.document.createElement("li");
       errBlock.className = "muted icon-to-image-preview-empty";
       errBlock.textContent =
         (data && data.error)
         || "Choose a screenshot folder and icon to preview composited images.";
       sheetPreviewsEl.appendChild(errBlock);
+      metadataTagRegistry = [];
       updateSaveEnabled(data);
       return;
     }
     var sheets = data.sheets || [];
+    registerMetadataTagsFromSheets(sheets);
     if (!sheets.length) {
-      var empty = global.document.createElement("p");
+      var empty = global.document.createElement("li");
       empty.className = "muted icon-to-image-preview-empty";
       empty.textContent = "No PNG files in this folder.";
       sheetPreviewsEl.appendChild(empty);
@@ -237,52 +589,51 @@
       return;
     }
     sheets.forEach(function (sheet) {
-      var card = global.document.createElement("article");
-      card.className = "icon-to-image-sheet-card";
+      var item = global.document.createElement("li");
+      item.className = "icon-to-image-list-item";
 
-      var tab = global.document.createElement("div");
-      tab.className = "icon-to-image-sheet-tab";
-      tab.textContent = sheet.tabLabel || sheet.fileName || "Sheet";
-      tab.title = sheet.fileName || "";
-
-      var body = global.document.createElement("div");
-      body.className = "icon-to-image-sheet-body";
-
+      var thumbWrap = global.document.createElement("div");
+      thumbWrap.className = "icon-to-image-list-thumb";
       if (sheet.thumbJpegB64) {
         var img = global.document.createElement("img");
-        img.className = "icon-to-image-sheet-img";
         img.alt = "Preview for " + (sheet.fileName || "screenshot");
         img.src = jpegDataUrl(sheet.thumbJpegB64);
         img.loading = "lazy";
-        body.appendChild(img);
+        thumbWrap.appendChild(img);
       } else {
         var missing = global.document.createElement("p");
-        missing.className = "muted icon-to-image-sheet-missing";
-        missing.textContent = "Could not load image preview.";
-        body.appendChild(missing);
+        missing.className = "muted icon-to-image-list-thumb-missing";
+        missing.textContent = "No preview";
+        thumbWrap.appendChild(missing);
       }
 
-      var caption = global.document.createElement("p");
-      caption.className = "icon-to-image-sheet-caption";
-      var placed = sheet.iconsPlaced != null ? sheet.iconsPlaced : 0;
-      caption.textContent =
-        (sheet.fileName || "")
-        + (placed === 1 ? " · 1 icon" : placed ? " · " + placed + " icons" : " · no placemark pixels");
-      card.appendChild(tab);
-      card.appendChild(body);
-      card.appendChild(caption);
-      sheetPreviewsEl.appendChild(card);
+      var meta = global.document.createElement("div");
+      meta.className = "icon-to-image-list-meta";
+      var fileTitle = global.document.createElement("p");
+      fileTitle.className = "icon-to-image-list-filename";
+      fileTitle.textContent = sheet.fileName || sheet.tabLabel || "Screenshot";
+      fileTitle.title = sheet.fileName || "";
+      meta.appendChild(fileTitle);
+
+      var rows = metadataRowsForSheet(sheet);
+      if (!sheet.metadata && rows.length <= 1) {
+        var noMeta = global.document.createElement("p");
+        noMeta.className = "icon-to-image-list-meta-empty";
+        noMeta.textContent = "No embedded kmz_opener metadata in this PNG.";
+        meta.appendChild(noMeta);
+      } else {
+        appendMetadataRows(meta, rows);
+      }
+
+      item.appendChild(thumbWrap);
+      item.appendChild(meta);
+      sheetPreviewsEl.appendChild(item);
     });
-    if ((data.count || 0) > sheets.length) {
-      var more = global.document.createElement("p");
-      more.className = "muted icon-to-image-preview-more";
-      more.textContent = "… and " + (data.count - sheets.length) + " more image(s)";
-      sheetPreviewsEl.appendChild(more);
-    }
     updateSaveEnabled(data);
   }
 
   function renderPreview(data) {
+    lastPreviewData = data || null;
     if (outputHintEl) {
       if (data && !data.error && data.outputDirectory) {
         outputHintEl.textContent = "Output: " + data.outputDirectory;
@@ -343,30 +694,40 @@
 
   function refreshPreview() {
     persistScreenshotFolder();
-    var api = desktopApi();
     var directory = screenshotDirectory();
-    if (!api || typeof api.preview_icon_to_image !== "function") {
-      renderPreview({
-        error: isDesktopAvailable()
-          ? "Icon preview is not available."
-          : "Icon to Image is available in the desktop app only.",
-      });
-      return Promise.resolve();
-    }
-    return iconPngBase64FromState()
-      .then(function (iconB64) {
-        return Promise.resolve(
-          api.preview_icon_to_image(directory, iconB64, iconSizeOnImagePx())
-        );
-      })
-      .then(function (data) {
-        renderPreview(data);
+    return whenDesktopApiReady()
+      .then(function (api) {
+        if (!hasPreviewApi(api)) {
+          renderPreview({
+            error: hasSaveApi(api)
+              ? "Icon preview is not available."
+              : "Icon to Image is available in the desktop app only.",
+          });
+          return;
+        }
+        return iconPngBase64FromState()
+          .then(function (iconB64) {
+            return Promise.resolve(
+              api.preview_icon_to_image(directory, iconB64, iconSizeOnImagePx())
+            );
+          })
+          .then(function (data) {
+            renderPreview(data);
+          });
       })
       .catch(function (err) {
         renderPreview({
           error: (err && err.message) || "Could not build icon preview.",
         });
       });
+  }
+
+  function onDesktopApiReady() {
+    syncBrowseButtons();
+    updateSaveEnabled(lastPreviewData);
+    if (isIconSidebarMode()) {
+      refreshPreview();
+    }
   }
 
   function onBrowseDirectory() {
@@ -397,18 +758,18 @@
     if (saving || !saveBtn || saveBtn.disabled) {
       return;
     }
-    var api = desktopApi();
-    if (!api || typeof api.save_icon_to_image !== "function") {
-      setStatus("Save is available in the desktop app only.", true);
-      return;
-    }
     var directory = screenshotDirectory();
     saving = true;
     saveBtn.disabled = true;
     setStatus("Saving composited PNGs to ss_w_icon…", false);
-    return iconPngBase64FromState()
-      .then(function (iconB64) {
-        return Promise.resolve(api.save_icon_to_image(directory, iconB64, iconSizeOnImagePx()));
+    return whenDesktopApiReady()
+      .then(function (api) {
+        if (!hasSaveApi(api)) {
+          throw new Error("Save is available in the desktop app only.");
+        }
+        return iconPngBase64FromState().then(function (iconB64) {
+          return Promise.resolve(api.save_icon_to_image(directory, iconB64, iconSizeOnImagePx()));
+        });
       })
       .then(function (result) {
         if (!result || result.error) {
@@ -470,6 +831,9 @@
         scheduleRefreshPreview();
       });
     }
+    if (sheetPreviewsEl) {
+      sheetPreviewsEl.addEventListener("contextmenu", onMetadataContextMenu);
+    }
     if (sizePxInput) {
       sizePxInput.addEventListener("change", function () {
         sizePxInput.value = String(iconSizeOnImagePx());
@@ -488,7 +852,9 @@
         if (dirInput && !String(dirInput.value || "").trim()) {
           dirInput.value = String(shotDir.value || "").trim();
         }
-        scheduleRefreshPreview();
+        if (isIconSidebarMode()) {
+          scheduleRefreshPreview();
+        }
       });
     }
   }
@@ -514,6 +880,7 @@
     statusEl = global.document.getElementById("icon-to-image-status");
 
     applyStoredSettings();
+    createMetadataContextMenu();
     bindEvents();
     syncDirectoryFieldFromPrefs();
     syncBrowseButtons();
@@ -521,16 +888,26 @@
     var catalogPromise = refreshCustomIconCatalogFn
       ? refreshCustomIconCatalogFn()
       : Promise.resolve();
+    if (global.SidebarModes && typeof SidebarModes.onActivate === "function") {
+      SidebarModes.onActivate(SidebarModes.MODE_ICON, refreshPreview);
+    }
+
     catalogPromise
       .then(refreshIconPickerPanel)
       .catch(refreshIconPickerPanel)
       .finally(function () {
-        refreshPreview();
+        if (
+          !global.SidebarModes
+          || SidebarModes.getMode() === SidebarModes.MODE_ICON
+        ) {
+          refreshPreview();
+        }
       });
 
+    updateSaveEnabled(null);
+    whenDesktopApiReady().then(onDesktopApiReady);
     global.addEventListener("pywebviewready", function () {
-      syncBrowseButtons();
-      refreshPreview();
+      whenDesktopApiReady().then(onDesktopApiReady);
     });
   }
 

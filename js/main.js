@@ -9595,6 +9595,10 @@
     });
   }
 
+  if (window.SidebarModes) {
+    window.SidebarModes.init();
+  }
+
   if (window.AppxPdf) {
     window.AppxPdf.init({
       setMessage: setMessage,
@@ -9611,6 +9615,10 @@
       ensureDesktop: ensureDesktop,
       setMessage: setMessage,
     });
+  }
+
+  if (window.SidebarModes && typeof SidebarModes.restoreMode === "function") {
+    window.SidebarModes.restoreMode();
   }
 
   if (window.BhAlignments) {
