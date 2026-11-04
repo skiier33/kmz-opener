@@ -219,8 +219,8 @@
     }
     previewDialog.classList.remove("hidden");
     previewDialog.setAttribute("aria-hidden", "false");
-    if (previewPanelController) {
-      previewPanelController.ensure();
+    if (previewPanelController && previewImg) {
+      previewPanelController.fitToImage(previewImg);
     }
   }
 
@@ -231,6 +231,9 @@
     previewDialog.classList.add("hidden");
     previewDialog.setAttribute("aria-hidden", "true");
     previewImg.src = "";
+    if (global.FloatingPanel && typeof global.FloatingPanel.clearImageFit === "function") {
+      global.FloatingPanel.clearImageFit(previewImg);
+    }
   }
 
   function renderPages(data) {

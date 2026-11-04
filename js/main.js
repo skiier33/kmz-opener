@@ -45,6 +45,12 @@
   if (window.ViewerDefaults) {
     ViewerDefaults.applyBeforeInit(!!launchWindowParams);
   }
+  if (
+    window.GisMap
+    && typeof GisMap.loadMapScalePresetsFromStorage === "function"
+  ) {
+    GisMap.loadMapScalePresetsFromStorage();
+  }
 
   var fileInput = document.getElementById("file-input");
   var saveAsBtn = document.getElementById("btn-save-as");
@@ -5481,6 +5487,31 @@
     schedulePersistLoadedSession();
   }
 
+  function snapshotLayerVisibilityState() {
+    return GisMap.snapshotLayerVisibility();
+  }
+
+  function restoreLayerVisibilityState(snapshot) {
+    if (!snapshot) {
+      return;
+    }
+    GisMap.restoreLayerVisibility(snapshot);
+    (snapshot.sources || []).forEach(function (entry) {
+      var source = findLoadedSource(entry.id);
+      if (source) {
+        source.visible = entry.visible !== false;
+      }
+    });
+  }
+
+  function setDocumentSourceVisibleMapOnly(sourceId, visible) {
+    var source = findLoadedSource(sourceId);
+    if (source) {
+      source.visible = visible;
+    }
+    GisMap.setDocumentSourceVisible(sourceId, visible);
+  }
+
   function renderLoadedSources() {
     if (!loadedSourcesEl) {
       return;
@@ -9497,6 +9528,13 @@
   }
 
   window.addEventListener("kmz-map-scale-presets-changed", function () {
+    if (
+      !launchWindowParams
+      && window.ViewerDefaults
+      && typeof ViewerDefaults.savePartialSnapshot === "function"
+    ) {
+      ViewerDefaults.savePartialSnapshot(["kmz-map-scale-presets"]);
+    }
     refreshMapScaleDropdowns();
     if (mapScalePresetsDialog && !mapScalePresetsDialog.classList.contains("hidden")) {
       renderMapScalePresetsDialogList();
@@ -9957,6 +9995,9 @@
       readJsonResponse: readJsonResponse,
       getLoadedSources: listLoadedSourcesForScreenshot,
       setLoadedSourceVisible: applyLoadedSourceVisibility,
+      snapshotLayerVisibility: snapshotLayerVisibilityState,
+      restoreLayerVisibility: restoreLayerVisibilityState,
+      setDocumentSourceVisibleMapOnly: setDocumentSourceVisibleMapOnly,
       getSourcePointNameLabelsHidden: function (sourceId) {
         return GisMap.getSourcePointNameLabelsHidden(sourceId);
       },

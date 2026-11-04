@@ -18,7 +18,7 @@
    * @param {number} [options.maxHeightFraction] Max height as fraction of viewport
    * @param {number} [options.maxWidthPx] Absolute max width cap
    * @param {number} [options.maxHeightPx] Absolute max height cap
-   * @returns {{ reset: function, ensure: function }}
+   * @returns {{ reset: function, ensure: function, fitToImage: function(HTMLImageElement): void }}
    */
   function bindFloatingPanel(options) {
     var backdrop = options.backdrop;
@@ -32,11 +32,15 @@
     var maxHeightPx = options.maxHeightPx != null ? options.maxHeightPx : 980;
     var viewportPad = options.viewportPad != null ? options.viewportPad : 16;
 
+    function noopController() {
+      return { reset: function () {}, ensure: function () {}, fitToImage: function () {} };
+    }
+
     if (!backdrop || !panel) {
-      return { reset: function () {}, ensure: function () {} };
+      return noopController();
     }
     if (panel.dataset.floatingPanelBound === "1") {
-      return { reset: function () {}, ensure: function () {} };
+      return noopController();
     }
     panel.dataset.floatingPanelBound = "1";
 
@@ -251,15 +255,117 @@
       ensureLayout();
     });
 
+    function measurePanelChrome(img) {
+      var body = img && img.parentElement;
+      if (!body || !panel.contains(body)) {
+        return { padX: 0, padY: 0, chromeH: 0, borderX: 0, borderY: 0 };
+      }
+      var bodyStyle = global.getComputedStyle(body);
+      var padX =
+        parseFloat(bodyStyle.paddingLeft) + parseFloat(bodyStyle.paddingRight);
+      var padY =
+        parseFloat(bodyStyle.paddingTop) + parseFloat(bodyStyle.paddingBottom);
+      var chromeH = 0;
+      Array.prototype.forEach.call(panel.children, function (child) {
+        if (
+          child === body
+          || child.classList.contains("floating-panel-resize")
+        ) {
+          return;
+        }
+        chromeH += child.offsetHeight;
+      });
+      var panelStyle = global.getComputedStyle(panel);
+      var borderX =
+        parseFloat(panelStyle.borderLeftWidth)
+        + parseFloat(panelStyle.borderRightWidth);
+      var borderY =
+        parseFloat(panelStyle.borderTopWidth)
+        + parseFloat(panelStyle.borderBottomWidth);
+      return { padX: padX, padY: padY, chromeH: chromeH, borderX: borderX, borderY: borderY };
+    }
+
+    function applyImageFit(img) {
+      var nw = img.naturalWidth;
+      var nh = img.naturalHeight;
+      if (!nw || !nh) {
+        resetLayout(true);
+        return;
+      }
+      var chrome = measurePanelChrome(img);
+      var vw = global.innerWidth;
+      var vh = global.innerHeight;
+      var maxW = Math.min(vw * maxWidthFraction, maxWidthPx, vw - viewportPad * 2);
+      var maxH = Math.min(vh * maxHeightFraction, maxHeightPx, vh - viewportPad * 2);
+      var maxImgW = maxW - chrome.padX - chrome.borderX;
+      var maxImgH = maxH - chrome.chromeH - chrome.padY - chrome.borderY;
+      if (maxImgW < minWidth || maxImgH < minHeight) {
+        resetLayout(true);
+        return;
+      }
+      var scale = Math.min(1, maxImgW / nw, maxImgH / nh);
+      var dispW = Math.max(1, Math.round(nw * scale));
+      var dispH = Math.max(1, Math.round(nh * scale));
+      img.style.maxWidth = "none";
+      img.style.width = dispW + "px";
+      img.style.height = dispH + "px";
+      var panelW = clamp(
+        dispW + chrome.padX + chrome.borderX,
+        minWidth,
+        maxW
+      );
+      var panelH = clamp(
+        dispH + chrome.padY + chrome.borderY + chrome.chromeH,
+        minHeight,
+        maxH
+      );
+      applyPanelGeometry((vw - panelW) / 2, (vh - panelH) / 2, panelW, panelH);
+      layoutInitialized = true;
+    }
+
+    function fitToImage(img) {
+      if (!img) {
+        resetLayout(true);
+        return;
+      }
+      function runFit() {
+        global.requestAnimationFrame(function () {
+          applyImageFit(img);
+        });
+      }
+      if (img.complete && img.naturalWidth > 0) {
+        runFit();
+        return;
+      }
+      img.addEventListener(
+        "load",
+        function () {
+          runFit();
+        },
+        { once: true }
+      );
+    }
+
     return {
       reset: function () {
         resetLayout(true);
       },
       ensure: ensureLayout,
+      fitToImage: fitToImage,
     };
+  }
+
+  function clearImageFit(img) {
+    if (!img) {
+      return;
+    }
+    img.style.width = "";
+    img.style.height = "";
+    img.style.maxWidth = "";
   }
 
   global.FloatingPanel = {
     bind: bindFloatingPanel,
+    clearImageFit: clearImageFit,
   };
 })(window);

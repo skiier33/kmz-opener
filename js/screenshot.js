@@ -48,6 +48,9 @@
   var takeTwoSourcesEl = null;
   var getLoadedSourcesFn = null;
   var setLoadedSourceVisibleFn = null;
+  var snapshotLayerVisibilityFn = null;
+  var restoreLayerVisibilityFn = null;
+  var setDocumentSourceVisibleMapOnlyFn = null;
   var getSourcePointNameLabelsHiddenFn = null;
   var setSourcePointNameLabelsHiddenFn = null;
   var ensureDesktopFn = null;
@@ -626,6 +629,16 @@
     });
   }
 
+  function reapplyMapLayersAfterCapture() {
+    if (!getGisMapFn) {
+      return;
+    }
+    var gis = getGisMapFn();
+    if (gis && typeof gis.applyMapLayersFromNodeVisibility === "function") {
+      gis.applyMapLayersFromNodeVisibility();
+    }
+  }
+
   function html2canvasWithPointChain(mapEl, options, map, crop, chromeOpts) {
     var chainHidden = hidePointChainForCapture();
     var chromeSaved = applyMapChromeForCapture(mapEl, chromeOpts);
@@ -643,11 +656,13 @@
         compositeExportChromeOntoCanvas(canvas, map, chromeOpts);
         restorePointChainAfterCapture(chainHidden);
         restoreMapChromeAfterCapture(chromeSaved);
+        reapplyMapLayersAfterCapture();
         return canvas;
       })
       .catch(function (err) {
         restorePointChainAfterCapture(chainHidden);
         restoreMapChromeAfterCapture(chromeSaved);
+        reapplyMapLayersAfterCapture();
         throw err;
       });
   }
@@ -1119,28 +1134,23 @@
   }
 
   function hideSourcesForSecondShot(hideIds) {
-    var snapshot = [];
+    if (!setDocumentSourceVisibleMapOnlyFn) {
+      return false;
+    }
     hideIds.forEach(function (id) {
-      var priorVisible = true;
-      listLoadedSources().forEach(function (source) {
-        if (source.id === id) {
-          priorVisible = source.visible !== false;
-        }
-      });
-      snapshot.push({ id: id, visible: priorVisible });
-      if (setLoadedSourceVisibleFn) {
-        setLoadedSourceVisibleFn(id, false);
-      }
+      setDocumentSourceVisibleMapOnlyFn(id, false);
     });
-    return snapshot;
+    return true;
   }
 
-  function restoreSourceVisibilitySnapshot(snapshot) {
-    (snapshot || []).forEach(function (item) {
-      if (setLoadedSourceVisibleFn) {
-        setLoadedSourceVisibleFn(item.id, item.visible);
-      }
+  function hideAllSourcesForSecondShot() {
+    if (!setDocumentSourceVisibleMapOnlyFn) {
+      return false;
+    }
+    listLoadedSources().forEach(function (source) {
+      setDocumentSourceVisibleMapOnlyFn(source.id, false);
     });
+    return true;
   }
 
   function clickLayersToolbarButton(id) {
@@ -1151,16 +1161,46 @@
   }
 
   function applySecondShotLayerHiding(hideIds) {
+    if (snapshotLayerVisibilityFn) {
+      var snapshot = snapshotLayerVisibilityFn();
+      if (hideIds.length) {
+        if (!hideSourcesForSecondShot(hideIds)) {
+          clickLayersToolbarButton("layers-none");
+          return null;
+        }
+      } else if (!hideAllSourcesForSecondShot()) {
+        clickLayersToolbarButton("layers-none");
+        return null;
+      }
+      return snapshot;
+    }
     if (hideIds.length && setLoadedSourceVisibleFn) {
-      return hideSourcesForSecondShot(hideIds);
+      var legacySnapshot = [];
+      hideIds.forEach(function (id) {
+        var priorVisible = true;
+        listLoadedSources().forEach(function (source) {
+          if (source.id === id) {
+            priorVisible = source.visible !== false;
+          }
+        });
+        legacySnapshot.push({ id: id, visible: priorVisible });
+        setLoadedSourceVisibleFn(id, false);
+      });
+      return legacySnapshot;
     }
     clickLayersToolbarButton("layers-none");
     return null;
   }
 
   function restoreSecondShotLayerHiding(snapshot) {
-    if (snapshot && snapshot.length) {
-      restoreSourceVisibilitySnapshot(snapshot);
+    if (snapshot && snapshot.nodes && restoreLayerVisibilityFn) {
+      restoreLayerVisibilityFn(snapshot);
+      return;
+    }
+    if (snapshot && snapshot.length && setLoadedSourceVisibleFn) {
+      snapshot.forEach(function (item) {
+        setLoadedSourceVisibleFn(item.id, item.visible);
+      });
       return;
     }
     clickLayersToolbarButton("layers-all");
@@ -1640,6 +1680,9 @@
     getGisMapFn = options.getGisMap || null;
     getLoadedSourcesFn = options.getLoadedSources || null;
     setLoadedSourceVisibleFn = options.setLoadedSourceVisible || null;
+    snapshotLayerVisibilityFn = options.snapshotLayerVisibility || null;
+    restoreLayerVisibilityFn = options.restoreLayerVisibility || null;
+    setDocumentSourceVisibleMapOnlyFn = options.setDocumentSourceVisibleMapOnly || null;
     getSourcePointNameLabelsHiddenFn = options.getSourcePointNameLabelsHidden || null;
     setSourcePointNameLabelsHiddenFn = options.setSourcePointNameLabelsHidden || null;
     ensureDesktopFn = options.ensureDesktop || null;
@@ -1753,6 +1796,7 @@
         if (hadOverlay && showToggle && showToggle.checked) {
           setOverlayVisible(true);
         }
+        reapplyMapLayersAfterCapture();
         waitForScreenshotMapReady(map);
       });
   }

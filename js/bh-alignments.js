@@ -488,10 +488,7 @@
       var overlayPath =
         selected.doc && selected.doc.sourcePath ? selected.doc.sourcePath : ALIGNMENT_FILE_NAME;
       statusEl.textContent =
-        overlayCount
-        + " alignment point(s) selected · "
-        + overlayPath
-        + " · captures use this layer.";
+        overlayCount + " alignment point(s) selected · " + overlayPath + " · same visibility as the map.";
       return;
     }
     var boreholeSourceId = selectedId;
@@ -505,7 +502,7 @@
     var count = gis ? gis.countSourcePointPlacemarks(overlay.id) : 0;
     var path = overlay.doc && overlay.doc.sourcePath ? overlay.doc.sourcePath : ALIGNMENT_FILE_NAME;
     statusEl.textContent =
-      count + " alignment point(s) loaded · " + path + " · visible on borehole captures.";
+      count + " alignment point(s) loaded · " + path + " · shown when visible on the map.";
   }
 
   function refreshIconPickerPanel() {
@@ -529,31 +526,7 @@
   }
 
   function withCaptureVisibility(work) {
-    var selectedId = getSelectedBoreholeSourceIdFn ? getSelectedBoreholeSourceIdFn() : "";
-    var selected = findLoadedSourceFn ? findLoadedSourceFn(selectedId) : null;
-    var overlayId = null;
-    if (isOverlaySource(selected)) {
-      overlayId = selectedId;
-    } else {
-      var overlay = findOverlayForBorehole(selectedId);
-      overlayId = overlay ? overlay.id : null;
-    }
-    if (!overlayId || !listLoadedSourcesFn || !applyLoadedSourceVisibilityFn) {
-      return Promise.resolve().then(work);
-    }
-    var snapshot = (listLoadedSourcesFn() || []).map(function (source) {
-      return { id: source.id, visible: source.visible !== false };
-    });
-    snapshot.forEach(function (item) {
-      applyLoadedSourceVisibilityFn(item.id, item.id === overlayId);
-    });
-    return Promise.resolve()
-      .then(work)
-      .finally(function () {
-        snapshot.forEach(function (item) {
-          applyLoadedSourceVisibilityFn(item.id, item.visible);
-        });
-      });
+    return Promise.resolve().then(work);
   }
 
   function init(options) {

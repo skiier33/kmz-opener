@@ -2322,6 +2322,92 @@
     return false;
   }
 
+  function snapshotLayerVisibility() {
+    var nodes = [];
+
+    function walk(node) {
+      if (!node) {
+        return;
+      }
+      nodes.push({ id: node.id, visible: node.visible !== false });
+      (node.children || []).forEach(walk);
+    }
+
+    if (currentRoot) {
+      walk(currentRoot);
+    }
+    return {
+      nodes: nodes,
+      sources: documentSources.map(function (source) {
+        return { id: source.id, visible: source.visible !== false };
+      }),
+    };
+  }
+
+  function applyMapLayersFromNodeVisibility() {
+    if (!currentRoot || !dataGroup) {
+      return;
+    }
+
+    function walk(node) {
+      if (!node) {
+        return;
+      }
+      var layer = layersById[node.id];
+      if (layer) {
+        if (node.visible === false) {
+          if (dataGroup.hasLayer(layer)) {
+            dataGroup.removeLayer(layer);
+          }
+        } else if (!dataGroup.hasLayer(layer)) {
+          dataGroup.addLayer(layer);
+        }
+      }
+      (node.children || []).forEach(walk);
+    }
+
+    walk(currentRoot);
+  }
+
+  function restoreLayerVisibility(snapshot) {
+    if (!snapshot || !currentRoot) {
+      return;
+    }
+    var visibleById = {};
+    (snapshot.nodes || []).forEach(function (entry) {
+      visibleById[entry.id] = entry.visible !== false;
+    });
+
+    function walk(node) {
+      if (visibleById.hasOwnProperty(node.id)) {
+        node.visible = visibleById[node.id];
+      }
+      (node.children || []).forEach(walk);
+    }
+
+    walk(currentRoot);
+    (snapshot.sources || []).forEach(function (entry) {
+      for (var i = 0; i < documentSources.length; i += 1) {
+        if (documentSources[i].id === entry.id) {
+          documentSources[i].visible = entry.visible !== false;
+          break;
+        }
+      }
+    });
+    (snapshot.nodes || []).forEach(function (entry) {
+      var node = findNode(currentRoot, entry.id);
+      var layer = layersById[entry.id];
+      if (!node || !layer || !dataGroup) {
+        return;
+      }
+      if (node.visible === false) {
+        dataGroup.removeLayer(layer);
+      } else if (!dataGroup.hasLayer(layer)) {
+        dataGroup.addLayer(layer);
+      }
+    });
+  }
+
   function getDocumentSourceRoot(sourceId) {
     for (var i = 0; i < documentSources.length; i += 1) {
       if (documentSources[i].id === sourceId) {
@@ -2667,6 +2753,9 @@
     replaceDocumentSource: replaceDocumentSource,
     removeDocumentSource: removeDocumentSource,
     setDocumentSourceVisible: setDocumentSourceVisible,
+    snapshotLayerVisibility: snapshotLayerVisibility,
+    restoreLayerVisibility: restoreLayerVisibility,
+    applyMapLayersFromNodeVisibility: applyMapLayersFromNodeVisibility,
     getDocumentSourceRoot: getDocumentSourceRoot,
     listDocumentSources: listDocumentSources,
     clearDocument: clearDocument,
@@ -2734,6 +2823,7 @@
     addMapScalePreset: addMapScalePreset,
     removeMapScalePreset: removeMapScalePreset,
     resetMapScalePresets: resetMapScalePresets,
+    loadMapScalePresetsFromStorage: loadMapScalePresetsFromStorage,
     formatMapScaleLabel: formatMapScaleLabel,
     getMapScaleDenominator: getMapScaleDenominator,
     setMapScaleDenominator: setMapScaleDenominator,

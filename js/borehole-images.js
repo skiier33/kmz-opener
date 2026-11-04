@@ -951,6 +951,9 @@
     if (fullPreviewImg) {
       fullPreviewImg.removeAttribute("src");
       fullPreviewImg.alt = "";
+      if (global.FloatingPanel && typeof global.FloatingPanel.clearImageFit === "function") {
+        global.FloatingPanel.clearImageFit(fullPreviewImg);
+      }
     }
     if (fullPreviewDialog) {
       fullPreviewDialog.classList.add("hidden");
@@ -992,8 +995,8 @@
       fullPreviewDialog.classList.remove("hidden");
       fullPreviewDialog.setAttribute("aria-hidden", "false");
     }
-    if (fullPreviewPanelController) {
-      fullPreviewPanelController.ensure();
+    if (fullPreviewPanelController && fullPreviewImg) {
+      fullPreviewPanelController.fitToImage(fullPreviewImg);
     }
     syncFullPreviewSaveButton();
   }
@@ -1448,11 +1451,7 @@
         });
       });
     }
-    var capturePromise =
-      global.BhAlignments && typeof BhAlignments.withCaptureVisibility === "function"
-        ? BhAlignments.withCaptureVisibility(runCapture)
-        : runCapture();
-    return capturePromise.then(function (captureResult) {
+    return runCapture().then(function (captureResult) {
       var fullBlob = captureResult.fullBlob;
       return blobToThumbUrl(fullBlob, thumbDims).then(function (thumbUrl) {
         return {
