@@ -78,14 +78,32 @@
     };
   }
 
-  function attachIdleSnapshot(entry, doc) {
-    if (!entry || entry.path || entry.handle || !doc || !doc.originalBuffer) {
+  function attachIdleSnapshot(entry, doc, force) {
+    if (!entry || !doc || !doc.originalBuffer) {
+      return;
+    }
+    if (!force && (entry.path || entry.handle)) {
       return;
     }
     entry.snapshot = new File([doc.originalBuffer], entry.name, { type: mimeForDoc(doc) });
   }
 
-  function buildEntry(source, gisMap, kmzSave) {
+  function buildSnapshotFromDoc(entry, doc, root, kmzSave) {
+    if (!entry || !doc || !root || !kmzSave || typeof kmzSave.buildBlob !== "function") {
+      return Promise.resolve(entry);
+    }
+    return kmzSave.buildBlob(doc, root).then(function (blob) {
+      entry.preferSnapshot = true;
+      entry.snapshot = new File([blob], entry.name, { type: blob.type || mimeForDoc(doc) });
+      return entry;
+    }).catch(function () {
+      return entry;
+    });
+  }
+
+  function buildEntry(source, gisMap, kmzSave, options) {
+    options = options || {};
+    var forceSnapshot = !!options.forceSnapshot;
     var entry = baseEntryFromSource(source);
     if (!entry) {
       return Promise.resolve(null);
@@ -97,23 +115,27 @@
     entry.hiddenNamePaths = collectHiddenNamePaths(root);
 
     if (!source.docDirty) {
-      attachIdleSnapshot(entry, doc);
+      attachIdleSnapshot(entry, doc, forceSnapshot);
+      if (forceSnapshot && !entry.snapshot) {
+        return buildSnapshotFromDoc(entry, doc, root, kmzSave).then(function (built) {
+          if (!built.path && !built.handle && !built.snapshot) {
+            return null;
+          }
+          return built;
+        });
+      }
       if (!entry.path && !entry.handle && !entry.snapshot) {
         return Promise.resolve(null);
       }
       return Promise.resolve(entry);
     }
     if (!doc || !doc.xmlDoc || !root || !kmzSave || typeof kmzSave.buildBlob !== "function") {
-      attachIdleSnapshot(entry, doc);
+      attachIdleSnapshot(entry, doc, forceSnapshot);
       return Promise.resolve(entry);
     }
-    return kmzSave.buildBlob(doc, root).then(function (blob) {
-      entry.preferSnapshot = true;
-      entry.snapshot = new File([blob], entry.name, { type: blob.type || mimeForDoc(doc) });
-      return entry;
-    }).catch(function () {
-      attachIdleSnapshot(entry, doc);
-      return entry;
+    return buildSnapshotFromDoc(entry, doc, root, kmzSave).then(function (built) {
+      attachIdleSnapshot(built, doc, forceSnapshot);
+      return built;
     });
   }
 
@@ -124,6 +146,7 @@
     var gisMap = options.gisMap;
     var kmzSave = options.kmzSave;
     var includeGui = options.includeGui !== false;
+    var forceSnapshot = !!options.forceSnapshot;
 
     var activeIndex = 0;
     for (var i = 0; i < sources.length; i += 1) {
@@ -136,7 +159,7 @@
     var chain = Promise.resolve([]);
     sources.forEach(function (source) {
       chain = chain.then(function (entries) {
-        return buildEntry(source, gisMap, kmzSave).then(function (entry) {
+        return buildEntry(source, gisMap, kmzSave, { forceSnapshot: forceSnapshot }).then(function (entry) {
           if (entry) {
             entries.push(entry);
           }
@@ -245,12 +268,16 @@
       hiddenNamePaths: Array.isArray(raw.hiddenNamePaths) ? raw.hiddenNamePaths.slice() : [],
     };
     if (raw.snapshotBase64 && typeof raw.snapshotBase64 === "string") {
-      entry.snapshot = new File(
-        [base64ToBlob(raw.snapshotBase64, raw.snapshotMime || mimeForDoc(null))],
-        entry.name,
-        { type: raw.snapshotMime || mimeForDoc(null) }
-      );
-      entry.preferSnapshot = true;
+      try {
+        entry.snapshot = new File(
+          [base64ToBlob(raw.snapshotBase64, raw.snapshotMime || mimeForDoc(null))],
+          entry.name,
+          { type: raw.snapshotMime || mimeForDoc(null) }
+        );
+        entry.preferSnapshot = true;
+      } catch (err) {
+        return null;
+      }
     }
     if (!entry.path && !entry.snapshot) {
       return null;
@@ -262,8 +289,9 @@
     if (!doc || typeof doc !== "object" || !Array.isArray(doc.entries)) {
       return null;
     }
-    var version = Number(doc.version);
-    if (!Number.isFinite(version) || version > VERSION) {
+    var version =
+      doc.version === undefined || doc.version === null ? VERSION : Number(doc.version);
+    if (!Number.isFinite(version) || version < 1 || version > VERSION) {
       return null;
     }
     var entries = doc.entries.map(normalizeImportedEntry).filter(Boolean);

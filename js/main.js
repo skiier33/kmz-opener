@@ -6365,8 +6365,12 @@
       gisMap: GisMap,
       kmzSave: KmzSave,
       includeGui: true,
+      forceSnapshot: true,
     })
       .then(function (session) {
+        if (session && session.gui) {
+          session.gui.pointChainSessions = collectPointChainSessionsForGui();
+        }
         return AppState.exportForFile(session);
       })
       .then(function (doc) {
@@ -11156,6 +11160,11 @@
     });
     return chain.then(function () {
       if (!loadedSources.length) {
+        if (options.force) {
+          throw new Error(
+            "Could not restore any files from that state. The file may only list disk paths from another machine, or the embedded data may be missing. Open your KMZ/KML files and use Save state again."
+          );
+        }
         return;
       }
       applyLoadedSessionUi(session);

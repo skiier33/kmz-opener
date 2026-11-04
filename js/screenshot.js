@@ -157,11 +157,314 @@
           takeTwoHideNames: takeTwoHideNamesToggle ? takeTwoHideNamesToggle.checked : false,
           takeTwoHideIds: readTakeTwoHideIds(),
           hiResTiles: hiResToggle ? hiResToggle.checked : true,
+          showScale: showScaleToggle ? showScaleToggle.checked : false,
+          showNorthArrow: showNorthToggle ? showNorthToggle.checked : false,
+          scaleStyle: scaleStyleSelect ? scaleStyleSelect.value : "",
+          scalePosition: scalePositionSelect ? scalePositionSelect.value : "",
+          scaleInsetPx: readInsetInput(scaleInsetInput, DEFAULT_LEGEND_INSET_PX),
+          scaleWidthPx: dimensionInputRaw(scaleWidthInput),
+          scaleHeightPx: dimensionInputRaw(scaleHeightInput),
+          scalePreserveAspectRatio: scalePreserveAspectToggle
+            ? scalePreserveAspectToggle.checked
+            : true,
+          northStyle: northStyleSelect ? northStyleSelect.value : "",
+          northPosition: northPositionSelect ? northPositionSelect.value : "",
+          northInsetPx: readInsetInput(northInsetInput, DEFAULT_LEGEND_INSET_PX),
+          northWidthPx: dimensionInputRaw(northWidthInput),
+          northHeightPx: dimensionInputRaw(northHeightInput),
+          northPreserveAspectRatio: northPreserveAspectToggle
+            ? northPreserveAspectToggle.checked
+            : true,
+          foreground: scaleColorInput ? scaleColorInput.value : "",
+          accent: northColorInput ? northColorInput.value : "",
+          showScaleRatio: showScaleRatioToggle ? showScaleRatioToggle.checked : true,
+          plateBackground: chromePlateToggle ? chromePlateToggle.checked : true,
         })
       );
+      if (global.MapExportChrome && typeof MapExportChrome.writeStoredSettings === "function") {
+        MapExportChrome.writeStoredSettings(captureChromeOptions());
+      }
     } catch (err) {
       /* ignore quota errors */
     }
+  }
+
+  function defaultChromeColors() {
+    if (global.MapExportChrome && MapExportChrome.DEFAULTS) {
+      return {
+        foreground: MapExportChrome.DEFAULTS.foreground || FALLBACK_SCALE_COLOR,
+        accent: MapExportChrome.DEFAULTS.accent || FALLBACK_NORTH_COLOR,
+      };
+    }
+    return { foreground: FALLBACK_SCALE_COLOR, accent: FALLBACK_NORTH_COLOR };
+  }
+
+  function normalizeHexColor(raw, fallback) {
+    var value = String(raw || "").trim();
+    if (/^#[0-9a-fA-F]{6}$/.test(value)) {
+      return value.toLowerCase();
+    }
+    if (/^#[0-9a-fA-F]{3}$/.test(value)) {
+      return (
+        "#"
+        + value.charAt(1)
+        + value.charAt(1)
+        + value.charAt(2)
+        + value.charAt(2)
+        + value.charAt(3)
+        + value.charAt(3)
+      ).toLowerCase();
+    }
+    return fallback;
+  }
+
+  function readInsetInput(input, fallback) {
+    if (!input) {
+      return fallback;
+    }
+    var n = parseInt(String(input.value || "").trim(), 10);
+    if (!isFinite(n) || n < 0) {
+      return fallback;
+    }
+    return n;
+  }
+
+  function dimensionInputRaw(input) {
+    if (!input) {
+      return "";
+    }
+    return String(input.value || "").trim();
+  }
+
+  function captureChromeOptions() {
+    var opts = {
+      showScale: !!(showScaleToggle && showScaleToggle.checked),
+      showNorthArrow: !!(showNorthToggle && showNorthToggle.checked),
+      scaleStyle: scaleStyleSelect ? scaleStyleSelect.value : "bar-dual",
+      scalePosition: scalePositionSelect ? scalePositionSelect.value : "bottom-right",
+      scaleInsetPx: readInsetInput(scaleInsetInput, DEFAULT_LEGEND_INSET_PX),
+      scaleWidthPx: dimensionInputRaw(scaleWidthInput),
+      scaleHeightPx: dimensionInputRaw(scaleHeightInput),
+      scalePreserveAspectRatio: !(scalePreserveAspectToggle && !scalePreserveAspectToggle.checked),
+      northStyle: northStyleSelect ? northStyleSelect.value : "classic",
+      northPosition: northPositionSelect ? northPositionSelect.value : "bottom-right",
+      northInsetPx: readInsetInput(northInsetInput, DEFAULT_LEGEND_INSET_PX),
+      northWidthPx: dimensionInputRaw(northWidthInput),
+      northHeightPx: dimensionInputRaw(northHeightInput),
+      northPreserveAspectRatio: !(northPreserveAspectToggle && !northPreserveAspectToggle.checked),
+      showScaleRatio: !(showScaleRatioToggle && !showScaleRatioToggle.checked),
+      plateBackground: !(chromePlateToggle && !chromePlateToggle.checked),
+      showCoordinates: false,
+      showCaptureDate: false,
+      scaleDenominator: null,
+      foreground: scaleColorInput
+        ? normalizeHexColor(scaleColorInput.value, defaultChromeColors().foreground)
+        : defaultChromeColors().foreground,
+      accent: northColorInput
+        ? normalizeHexColor(northColorInput.value, defaultChromeColors().accent)
+        : defaultChromeColors().accent,
+    };
+    return normalizeMapChromeOptions(opts);
+  }
+
+  function northIconSelectLabel(catalogName) {
+    var fileName = String(catalogName || "").split("/").pop() || catalogName;
+    return fileName.replace(/-01\.png$/i, "").replace(/_/g, " ");
+  }
+
+  function populateNorthStyleSelect() {
+    if (!northStyleSelect || northStyleSelect.querySelector('optgroup[data-north-icons="true"]')) {
+      return Promise.resolve();
+    }
+    return fetch(NORTH_ARROW_MANIFEST_URL)
+      .then(function (res) {
+        if (!res.ok) {
+          return null;
+        }
+        return res.json();
+      })
+      .then(function (data) {
+        var icons = data && Array.isArray(data.icons) ? data.icons : [];
+        if (!icons.length) {
+          return;
+        }
+        var group = document.createElement("optgroup");
+        group.label = "North arrow PNG icons";
+        group.setAttribute("data-north-icons", "true");
+        icons.forEach(function (catalogName) {
+          var option = document.createElement("option");
+          option.value = catalogName;
+          option.textContent = northIconSelectLabel(catalogName);
+          group.appendChild(option);
+        });
+        northStyleSelect.appendChild(group);
+        if (global.MapExportChrome && typeof MapExportChrome.loadNorthImage === "function") {
+          icons.forEach(function (catalogName) {
+            MapExportChrome.loadNorthImage(catalogName).catch(function () {
+              /* ignore preload errors */
+            });
+          });
+        }
+      })
+      .catch(function () {
+        /* manifest may be unavailable outside static hosting */
+      });
+  }
+
+  function syncNorthStyleUi() {
+    if (!northStyleSelect || !northColorInput) {
+      return;
+    }
+    var isImage =
+      global.MapExportChrome
+      && typeof MapExportChrome.isNorthImageStyle === "function"
+      && MapExportChrome.isNorthImageStyle(northStyleSelect.value);
+    northColorInput.disabled = isImage;
+    var colorField = northColorInput.closest(".borehole-images-field-color");
+    if (colorField) {
+      colorField.classList.toggle("hidden", isImage);
+      colorField.setAttribute("aria-hidden", isImage ? "true" : "false");
+    }
+  }
+
+  function syncChromePanelVisibility() {
+    if (!chromePanel) {
+      return;
+    }
+    var show =
+      !!(showScaleToggle && showScaleToggle.checked)
+      || !!(showNorthToggle && showNorthToggle.checked);
+    chromePanel.classList.toggle("hidden", !show);
+    chromePanel.setAttribute("aria-hidden", show ? "false" : "true");
+    if (show) {
+      refreshChromeStylePreviews();
+    }
+  }
+
+  function updateLegendAspectFromPreviews() {
+    if (
+      scaleStylePreviewCanvas
+      && scaleStylePreviewCanvas.width > 0
+      && scaleStylePreviewCanvas.height > 0
+    ) {
+      scaleLegendAspect = scaleStylePreviewCanvas.width / scaleStylePreviewCanvas.height;
+    }
+    if (
+      northStylePreviewCanvas
+      && northStylePreviewCanvas.width > 0
+      && northStylePreviewCanvas.height > 0
+    ) {
+      northLegendAspect = northStylePreviewCanvas.width / northStylePreviewCanvas.height;
+    }
+  }
+
+  function refreshChromeStylePreviews() {
+    if (!global.MapExportChrome) {
+      return;
+    }
+    var overrides = captureChromeOptions();
+    var scaleStyle = scaleStyleSelect ? scaleStyleSelect.value : "bar-dual";
+    var northStyle = northStyleSelect ? northStyleSelect.value : "classic";
+    if (
+      scaleStylePreviewCanvas
+      && typeof MapExportChrome.renderScaleStylePreview === "function"
+    ) {
+      MapExportChrome.renderScaleStylePreview(scaleStylePreviewCanvas, scaleStyle, overrides);
+    }
+    if (
+      northStylePreviewCanvas
+      && typeof MapExportChrome.renderNorthStylePreview === "function"
+    ) {
+      MapExportChrome.renderNorthStylePreview(northStylePreviewCanvas, northStyle, overrides);
+    }
+    updateLegendAspectFromPreviews();
+  }
+
+  function syncLegendHeightFromWidth(widthInputEl, heightInputEl, preserveToggle, aspect) {
+    if (
+      legendSizeSyncLock
+      || !preserveToggle
+      || !preserveToggle.checked
+      || !aspect
+      || !widthInputEl
+      || !heightInputEl
+    ) {
+      return;
+    }
+    var w = parseInt(String(widthInputEl.value || "").trim(), 10);
+    if (!isFinite(w) || w <= 0) {
+      return;
+    }
+    legendSizeSyncLock = true;
+    heightInputEl.value = String(Math.max(1, Math.round(w / aspect)));
+    legendSizeSyncLock = false;
+  }
+
+  function syncLegendWidthFromHeight(widthInputEl, heightInputEl, preserveToggle, aspect) {
+    if (
+      legendSizeSyncLock
+      || !preserveToggle
+      || !preserveToggle.checked
+      || !aspect
+      || !widthInputEl
+      || !heightInputEl
+    ) {
+      return;
+    }
+    var h = parseInt(String(heightInputEl.value || "").trim(), 10);
+    if (!isFinite(h) || h <= 0) {
+      return;
+    }
+    legendSizeSyncLock = true;
+    widthInputEl.value = String(Math.max(1, Math.round(h * aspect)));
+    legendSizeSyncLock = false;
+  }
+
+  function bindLegendSizeInputs(widthInputEl, heightInputEl, preserveToggle, aspectGetter) {
+    if (widthInputEl) {
+      widthInputEl.addEventListener("change", function () {
+        syncLegendHeightFromWidth(widthInputEl, heightInputEl, preserveToggle, aspectGetter());
+        onChromeDetailChange();
+      });
+    }
+    if (heightInputEl) {
+      heightInputEl.addEventListener("change", function () {
+        syncLegendWidthFromHeight(widthInputEl, heightInputEl, preserveToggle, aspectGetter());
+        onChromeDetailChange();
+      });
+    }
+    if (preserveToggle) {
+      preserveToggle.addEventListener("change", onChromeDetailChange);
+    }
+  }
+
+  function onOverlayToggleChange() {
+    syncChromePanelVisibility();
+    refreshChromeStylePreviews();
+    writeSettings();
+  }
+
+  function onChromeDetailChange() {
+    syncNorthStyleUi();
+    syncChromePanelVisibility();
+    refreshChromeStylePreviews();
+    writeSettings();
+  }
+
+  function onChromeColorInput() {
+    refreshChromeStylePreviews();
+    writeSettings();
+  }
+
+  function preloadCaptureChrome() {
+    var chromeOpts = captureChromeOptions();
+    if (
+      global.MapExportChrome
+      && typeof MapExportChrome.preloadForOptions === "function"
+    ) {
+      return MapExportChrome.preloadForOptions(chromeOpts);
+    }
+    return Promise.resolve();
   }
 
   function dimensionUnit() {
@@ -865,7 +1168,7 @@
     });
   }
 
-  function captureMapAtTileResolution(outW, outH, cropX, cropY, cropW, cropH, hadOverlay) {
+  function captureMapAtTileResolution(outW, outH, cropX, cropY, cropW, cropH, hadOverlay, chromeOpts) {
     var map = getMapFn();
     var mapEl = document.getElementById("map");
     if (!map || !mapEl) {
@@ -908,7 +1211,7 @@
           },
           map,
           { cropX: 0, cropY: 0, scale: 1 },
-          null
+          chromeOpts
         );
       })
       .then(function (canvas) {
@@ -989,12 +1292,22 @@
       overlayEl.classList.add("hidden");
     }
     var map = getMapFn ? getMapFn() : null;
+    var chromeOpts = captureChromeOptions();
     var savedImageryLabels = saveImageryLabelCaptureState();
     applyScreenshotMapDetail();
     return waitForScreenshotMapReady(map)
       .then(function () {
         if (shouldUseHiResCapture()) {
-          return captureMapAtTileResolution(outW, outH, cropX, cropY, cropW, cropH, hadOverlay);
+          return captureMapAtTileResolution(
+            outW,
+            outH,
+            cropX,
+            cropY,
+            cropW,
+            cropH,
+            hadOverlay,
+            chromeOpts
+          );
         }
         return html2canvasWithPointChain(
       mapEl,
@@ -1011,7 +1324,7 @@
       },
           map,
           { cropX: cropX, cropY: cropY, scale: scale },
-          null
+          chromeOpts
         ).then(function (canvas) {
           if (canvas.width !== outW || canvas.height !== outH) {
             var scaled = document.createElement("canvas");
@@ -1401,7 +1714,10 @@
     var frameMeta = buildMapFrameMetadata({
       captureNotes: takeTwo ? { takeTwo: true, shotIndex: 1 } : null,
     });
-    captureMapPng()
+    preloadCaptureChrome()
+      .then(function () {
+        return captureMapPng();
+      })
       .then(function (blob) {
         return persistBlob(blob, baseStem, { metadata: frameMeta }).then(function (result) {
           savedResults.push(result);
@@ -1612,7 +1928,7 @@
 
   function applyStoredSettings(stored) {
     var settings = stored || {};
-    var unit = settings.dimensionUnit === "px" ? "px" : "in";
+    var unit = settings.dimensionUnit === "in" ? "in" : "px";
     if (unitSelect) {
       unitSelect.value = unit;
       unitSelect.dataset.lastUnit = unit;
@@ -1675,7 +1991,142 @@
     if (hiResToggle) {
       hiResToggle.checked = settings.hiResTiles !== false;
     }
+    if (
+      global.MapExportChrome
+      && typeof MapExportChrome.readStoredSettings === "function"
+      && !settings.scaleStyle
+      && !settings.northStyle
+    ) {
+      settings = Object.assign({}, MapExportChrome.readStoredSettings() || {}, settings);
+    }
+    if (showScaleToggle) {
+      showScaleToggle.checked = !!settings.showScale;
+    }
+    if (showNorthToggle) {
+      showNorthToggle.checked = !!settings.showNorthArrow;
+    }
+    if (scaleStyleSelect && settings.scaleStyle) {
+      scaleStyleSelect.value = settings.scaleStyle;
+    }
+    if (scalePositionSelect && settings.scalePosition) {
+      scalePositionSelect.value = settings.scalePosition;
+    }
+    if (scaleInsetInput) {
+      var scaleInset =
+        settings.scaleInsetPx != null
+          ? settings.scaleInsetPx
+          : settings.marginPx != null
+            ? settings.marginPx
+            : DEFAULT_LEGEND_INSET_PX;
+      scaleInsetInput.value = String(scaleInset);
+    }
+    if (scaleWidthInput && settings.scaleWidthPx) {
+      scaleWidthInput.value = String(settings.scaleWidthPx);
+    }
+    if (scaleHeightInput && settings.scaleHeightPx) {
+      scaleHeightInput.value = String(settings.scaleHeightPx);
+    }
+    if (scalePreserveAspectToggle) {
+      scalePreserveAspectToggle.checked = settings.scalePreserveAspectRatio !== false;
+    }
+    if (northStyleSelect && settings.northStyle) {
+      var hasNorthStyleOption = Array.prototype.some.call(northStyleSelect.options, function (opt) {
+        return opt.value === settings.northStyle;
+      });
+      if (!hasNorthStyleOption) {
+        var storedOption = document.createElement("option");
+        storedOption.value = settings.northStyle;
+        storedOption.textContent = northIconSelectLabel(settings.northStyle);
+        northStyleSelect.appendChild(storedOption);
+      }
+      northStyleSelect.value = settings.northStyle;
+    }
+    syncNorthStyleUi();
+    if (northPositionSelect && settings.northPosition) {
+      northPositionSelect.value = settings.northPosition;
+    }
+    if (northInsetInput) {
+      var northInset =
+        settings.northInsetPx != null
+          ? settings.northInsetPx
+          : settings.marginPx != null
+            ? settings.marginPx
+            : DEFAULT_LEGEND_INSET_PX;
+      northInsetInput.value = String(northInset);
+    }
+    if (northWidthInput && settings.northWidthPx) {
+      northWidthInput.value = String(settings.northWidthPx);
+    }
+    if (northHeightInput && settings.northHeightPx) {
+      northHeightInput.value = String(settings.northHeightPx);
+    }
+    if (northPreserveAspectToggle) {
+      northPreserveAspectToggle.checked = settings.northPreserveAspectRatio !== false;
+    }
+    if (scaleColorInput && settings.foreground) {
+      scaleColorInput.value = normalizeHexColor(settings.foreground, defaultChromeColors().foreground);
+    }
+    if (northColorInput && settings.accent) {
+      northColorInput.value = normalizeHexColor(settings.accent, defaultChromeColors().accent);
+    }
+    if (showScaleRatioToggle) {
+      showScaleRatioToggle.checked = settings.showScaleRatio !== false;
+    }
+    if (chromePlateToggle) {
+      chromePlateToggle.checked = settings.plateBackground !== false;
+    }
     syncTakeTwoPanelVisibility();
+  }
+
+  function bindChromeInputs() {
+    if (showScaleToggle) {
+      showScaleToggle.addEventListener("change", onOverlayToggleChange);
+    }
+    if (showNorthToggle) {
+      showNorthToggle.addEventListener("change", onOverlayToggleChange);
+    }
+    [scaleInsetInput, northInsetInput].forEach(function (el) {
+      if (!el) {
+        return;
+      }
+      el.addEventListener("change", onChromeDetailChange);
+    });
+    bindLegendSizeInputs(
+      scaleWidthInput,
+      scaleHeightInput,
+      scalePreserveAspectToggle,
+      function () {
+        return scaleLegendAspect;
+      }
+    );
+    bindLegendSizeInputs(
+      northWidthInput,
+      northHeightInput,
+      northPreserveAspectToggle,
+      function () {
+        return northLegendAspect;
+      }
+    );
+    [
+      scaleStyleSelect,
+      scalePositionSelect,
+      northStyleSelect,
+      northPositionSelect,
+      showScaleRatioToggle,
+      chromePlateToggle,
+    ].forEach(function (el) {
+      if (!el) {
+        return;
+      }
+      el.addEventListener("change", onChromeDetailChange);
+    });
+    [scaleColorInput, northColorInput].forEach(function (el) {
+      if (!el) {
+        return;
+      }
+      el.addEventListener("input", onChromeColorInput);
+      el.addEventListener("change", onChromeDetailChange);
+    });
   }
 
   function init(options) {
@@ -1705,6 +2156,27 @@
     takeTwoHideNamesToggle = document.getElementById("screenshot-take-two-hide-names");
     takeTwoPanelEl = document.getElementById("screenshot-take-two-panel");
     takeTwoSourcesEl = document.getElementById("screenshot-take-two-sources");
+    showScaleToggle = document.getElementById("screenshot-show-scale");
+    showNorthToggle = document.getElementById("screenshot-show-north");
+    chromePanel = document.getElementById("screenshot-chrome-panel");
+    scaleStyleSelect = document.getElementById("screenshot-scale-style");
+    scalePositionSelect = document.getElementById("screenshot-scale-position");
+    scaleInsetInput = document.getElementById("screenshot-scale-inset");
+    scaleWidthInput = document.getElementById("screenshot-scale-width");
+    scaleHeightInput = document.getElementById("screenshot-scale-height");
+    scalePreserveAspectToggle = document.getElementById("screenshot-scale-preserve-aspect");
+    scaleColorInput = document.getElementById("screenshot-scale-color");
+    northStyleSelect = document.getElementById("screenshot-north-style");
+    northPositionSelect = document.getElementById("screenshot-north-position");
+    northInsetInput = document.getElementById("screenshot-north-inset");
+    northWidthInput = document.getElementById("screenshot-north-width");
+    northHeightInput = document.getElementById("screenshot-north-height");
+    northPreserveAspectToggle = document.getElementById("screenshot-north-preserve-aspect");
+    northColorInput = document.getElementById("screenshot-north-color");
+    showScaleRatioToggle = document.getElementById("screenshot-show-scale-ratio");
+    chromePlateToggle = document.getElementById("screenshot-chrome-plate");
+    scaleStylePreviewCanvas = document.getElementById("screenshot-scale-style-preview");
+    northStylePreviewCanvas = document.getElementById("screenshot-north-style-preview");
     getMapFn = options.getMap || null;
     getGisMapFn = options.getGisMap || null;
     getLoadedSourcesFn = options.getLoadedSources || null;
@@ -1722,21 +2194,27 @@
       return;
     }
 
-    applyStoredSettings(readSettings());
-    if (
-      dirInput
-      && !String(dirInput.value || "").trim()
-      && global.ViewerPathPrefs
-    ) {
-      var prefFolder = ViewerPathPrefs.getScreenshotFolder();
-      if (prefFolder) {
-        dirInput.value = prefFolder;
-      }
-    }
     bindInputs();
+    bindChromeInputs();
     bindBrowse();
     refreshTakeTwoSources();
-    setOverlayVisible(showToggle ? showToggle.checked : false);
+
+    populateNorthStyleSelect().then(function () {
+      applyStoredSettings(readSettings());
+      if (
+        dirInput
+        && !String(dirInput.value || "").trim()
+        && global.ViewerPathPrefs
+      ) {
+        var prefFolder = ViewerPathPrefs.getScreenshotFolder();
+        if (prefFolder) {
+          dirInput.value = prefFolder;
+        }
+      }
+      syncChromePanelVisibility();
+      refreshChromeStylePreviews();
+      setOverlayVisible(showToggle ? showToggle.checked : false);
+    });
 
     (ensureDesktopFn ? ensureDesktopFn() : Promise.resolve(null)).then(function (desktop) {
       if (browseBtn) {
