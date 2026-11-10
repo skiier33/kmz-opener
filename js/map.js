@@ -2492,6 +2492,73 @@
     return false;
   }
 
+  /** Depth-first walk that passes each node together with its ancestor chain (root first). */
+  function walkTreeWithAncestors(node, ancestors, fn) {
+    if (!node) {
+      return;
+    }
+    fn(node, ancestors);
+    var chain = ancestors.concat([node]);
+    (node.children || []).forEach(function (child) {
+      walkTreeWithAncestors(child, chain, fn);
+    });
+  }
+
+  /**
+   * Isolate placemarks within one document source. Placemarks for which
+   * shouldShow(node) is true are checked (along with their parent folders); every
+   * other placemark in that source is unchecked. Other sources are not changed.
+   *
+   * @param {string} sourceId - Document source id.
+   * @param {function(Object): boolean} shouldShow - Receives each placemark node.
+   * @returns {{found: boolean, shown: number, hidden: number}}
+   */
+  function isolatePlacemarksInSource(sourceId, shouldShow) {
+    var result = { found: false, shown: 0, hidden: 0 };
+    var source = getDocumentSource(sourceId);
+    if (!source || !source.root || typeof shouldShow !== "function") {
+      return result;
+    }
+    result.found = true;
+    if (source.visible === false) {
+      setDocumentSourceVisible(sourceId, true);
+    }
+    var root = currentRoot || source.root;
+    var toShow = [];
+    var toHide = [];
+    walkTreeWithAncestors(source.root, [], function (node, ancestors) {
+      if (node.type !== "placemark") {
+        return;
+      }
+      if (shouldShow(node)) {
+        toShow.push({ id: node.id, ancestors: ancestors });
+      } else {
+        toHide.push(node.id);
+      }
+    });
+    toHide.forEach(function (id) {
+      setLayerVisible(id, false, root);
+    });
+    toShow.forEach(function (entry) {
+      // Parent folders must be checked too, or the placemark is hidden in the tree.
+      // Only their flags change here; setLayerVisible would also cascade to siblings.
+      entry.ancestors.forEach(function (ancestor) {
+        var live = findNode(root, ancestor.id) || ancestor;
+        if (live.visible === false) {
+          live.visible = true;
+          var folderLayer = layersById[live.id];
+          if (folderLayer && dataGroup) {
+            dataGroup.addLayer(folderLayer);
+          }
+        }
+      });
+      setLayerVisible(entry.id, true, root);
+    });
+    result.shown = toShow.length;
+    result.hidden = toHide.length;
+    return result;
+  }
+
   function snapshotLayerVisibility() {
     var nodes = [];
 
@@ -2923,6 +2990,7 @@
     replaceDocumentSource: replaceDocumentSource,
     removeDocumentSource: removeDocumentSource,
     setDocumentSourceVisible: setDocumentSourceVisible,
+    isolatePlacemarksInSource: isolatePlacemarksInSource,
     snapshotLayerVisibility: snapshotLayerVisibility,
     restoreLayerVisibility: restoreLayerVisibility,
     applyMapLayersFromNodeVisibility: applyMapLayersFromNodeVisibility,

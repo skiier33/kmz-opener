@@ -1,19 +1,14 @@
 (function (global) {
   "use strict";
 
-  var REQUIRED_FIELDS = ["BH_ID", "LAT", "LONG"];
-
-  var FIELD_LABELS = {
-    BH_ID: "borehole id",
-    LAT: "latitude",
-    LONG: "longitude",
-  };
-
-  var FIELD_EXAMPLE_HEADERS = {
-    BH_ID: "BH_ID, Borehole, boring_id",
-    LAT: "LAT, Latitude, latitude_n",
-    LONG: "LONG, Longitude, longitude_w",
-  };
+  var CONSTANTS = global.CsvCoordsConstants;
+  if (!CONSTANTS) {
+    throw new Error("csv-coords-constants.js must load before csv-coords.js.");
+  }
+  var REQUIRED_FIELDS = CONSTANTS.REQUIRED_FIELDS;
+  var FIELD_LABELS = CONSTANTS.FIELD_LABELS;
+  var FIELD_EXAMPLE_HEADERS = CONSTANTS.FIELD_EXAMPLE_HEADERS;
+  var HEADER_ALIASES = CONSTANTS.HEADER_ALIASES;
 
   /**
    * Collapse header text for alias lookup (case, spaces, punctuation).
@@ -29,69 +24,60 @@
       .replace(/[^A-Z0-9]/g, "");
   }
 
-  var HEADER_ALIASES = {
-    BH_ID: [
-      "BH_ID",
-      "BHID",
-      "BH",
-      "BOREHOLE",
-      "BOREHOLEID",
-      "BOREHOLE_ID",
-      "BORE HOLE",
-      "BORE-HOLE",
-      "BOREHOLE ID",
-      "BOREHOLE_ID",
-      "BORING",
-      "BORINGID",
-      "BORING_ID",
-      "BORING ID",
-      "BORE_ID",
-      "BOREID",
-      "POINTID",
-      "POINT_ID",
-    ],
-    LAT: [
-      "LAT",
-      "LATITUDE",
-      "LATITUDEN",
-      "LATITUDE_N",
-      "LATITUDE N",
-      "LAT_N",
-      "LAT N",
-      "LATN",
-      "NLAT",
-      "N_LAT",
-      "GPSN",
-      "GPS_N",
-      "GPS N",
-      "NORTH",
-      "NORTHING",
-      "Y",
-    ],
-    LONG: [
-      "LONG",
-      "LON",
-      "LONGITUDE",
-      "LONGITUDEW",
-      "LONGITUDE_W",
-      "LONGITUDE W",
-      "LONG_W",
-      "LONG W",
-      "LONGW",
-      "LNG",
-      "LONW",
-      "WLON",
-      "W_LON",
-      "W LON",
-      "GPSW",
-      "GPS_W",
-      "GPS W",
-      "WEST",
-      "WESTING",
-      "EASTING",
-      "X",
-    ],
-  };
+  /**
+   * Compile one HEADER_PATTERNS entry into a RegExp.
+   * "/body/flags" is used as a regex; anything else is a wildcard ("*", "?").
+   *
+   * @param {string} pattern - Pattern text from csv-coords-constants.js.
+   * @returns {RegExp|null} Compiled pattern, or null when the regex is invalid.
+   */
+  function compileHeaderPattern(pattern) {
+    var text = String(pattern || "").trim();
+    var regexParts = /^\/(.+)\/([a-z]*)$/i.exec(text);
+    var source;
+    var flags;
+    if (regexParts) {
+      source = regexParts[1];
+      flags = "i" + regexParts[2].replace(/[^ms]/gi, "");
+    } else {
+      source =
+        "^" +
+        text
+          .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+          .replace(/\*/g, ".*")
+          .replace(/\?/g, ".") +
+        "$";
+      flags = "i";
+    }
+    try {
+      return new RegExp(source, flags);
+    } catch (err) {
+      console.warn("Ignoring invalid header pattern: " + text);
+      return null;
+    }
+  }
+
+  var COMPILED_HEADER_PATTERNS = {};
+  REQUIRED_FIELDS.forEach(function (field) {
+    COMPILED_HEADER_PATTERNS[field] = ((CONSTANTS.HEADER_PATTERNS || {})[field] || [])
+      .map(compileHeaderPattern)
+      .filter(Boolean);
+  });
+
+  /**
+   * Fallback match: fields whose wildcard/regex patterns match the header text.
+   *
+   * @param {string} text - Trimmed header text (BOM removed).
+   * @returns {string} The single matching field, or "" when none or several match.
+   */
+  function resolveHeaderByPattern(text) {
+    var matches = REQUIRED_FIELDS.filter(function (field) {
+      return COMPILED_HEADER_PATTERNS[field].some(function (re) {
+        return re.test(text);
+      });
+    });
+    return matches.length === 1 ? matches[0] : "";
+  }
 
   function buildHeaderAliasLookup() {
     var lookup = {};
@@ -119,7 +105,11 @@
     if (!key) {
       return "";
     }
-    return HEADER_ALIAS_LOOKUP[key] || "";
+    if (HEADER_ALIAS_LOOKUP[key]) {
+      return HEADER_ALIAS_LOOKUP[key];
+    }
+    var text = String(rawHeader || "").replace(/^﻿/, "").trim();
+    return text ? resolveHeaderByPattern(text) : "";
   }
 
   /**
@@ -529,6 +519,66 @@
     });
   }
 
+  /** Default % difference above which a moved point is flagged for review. */
+  var DEFAULT_FLAG_THRESHOLD_PCT = 0.1;
+
+  /**
+   * Relative difference between a prior coordinate and a CSV coordinate, as a
+   * percent of the prior value.
+   *
+   * @param {number} oldValue - Prior latitude or longitude in the KMZ/KML.
+   * @param {number} newValue - Latitude or longitude from the CSV/Excel file.
+   * @returns {number} Percent (0 when equal), Infinity when the prior value is 0 and
+   *   the new value is not, or NaN when either value is not a finite number.
+   */
+  function percentDifference(oldValue, newValue) {
+    var oldNum = Number(oldValue);
+    var newNum = Number(newValue);
+    if (!Number.isFinite(oldNum) || !Number.isFinite(newNum)) {
+      return NaN;
+    }
+    var diff = Math.abs(newNum - oldNum);
+    if (diff === 0) {
+      return 0;
+    }
+    if (oldNum === 0) {
+      return Infinity;
+    }
+    return (diff / Math.abs(oldNum)) * 100;
+  }
+
+  /**
+   * Parse the user-entered flag threshold (percent).
+   *
+   * @param {string|number} raw - Text from the threshold input.
+   * @returns {number} Threshold in percent (0 or more), or NaN when invalid.
+   */
+  function parseFlagThresholdPct(raw) {
+    var text = String(raw == null ? "" : raw).trim();
+    if (!text) {
+      return NaN;
+    }
+    var value = Number(text);
+    return Number.isFinite(value) && value >= 0 ? value : NaN;
+  }
+
+  /**
+   * True when the latitude or longitude change exceeds the threshold.
+   *
+   * @param {{oldLat: number, oldLng: number, newLat: number, newLng: number}} entry - Preview change row.
+   * @param {number} thresholdPct - Threshold in percent; NaN disables flagging.
+   * @returns {boolean}
+   */
+  function isQuestionableChange(entry, thresholdPct) {
+    if (!Number.isFinite(thresholdPct)) {
+      return false;
+    }
+    return (
+      percentDifference(entry.oldLat, entry.newLat) > thresholdPct ||
+      percentDifference(entry.oldLng, entry.newLng) > thresholdPct
+    );
+  }
+
   function resolveBhCoordRow(lookup, placemarkId) {
     if (global.BhIdMatch && global.BhIdMatch.resolveBhCoordLookup) {
       return global.BhIdMatch.resolveBhCoordLookup(lookup, placemarkId);
@@ -549,5 +599,9 @@
     resolveBhCoordRow: resolveBhCoordRow,
     resolveHeaderToField: resolveHeaderToField,
     mapBhCoordHeaderColumns: mapBhCoordHeaderColumns,
+    DEFAULT_FLAG_THRESHOLD_PCT: DEFAULT_FLAG_THRESHOLD_PCT,
+    percentDifference: percentDifference,
+    parseFlagThresholdPct: parseFlagThresholdPct,
+    isQuestionableChange: isQuestionableChange,
   };
 })(window);

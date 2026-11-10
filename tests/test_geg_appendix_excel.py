@@ -20,6 +20,7 @@ from desktop.geg_appendix_excel import (
     open_template_workbook,
     resolve_appendix_template_path,
     resolve_screenshot_png_scan,
+    title_block_cell_values,
     validate_screenshot_directory,
     validate_template_path,
 )
@@ -119,6 +120,33 @@ class TestGegAppendixExcel(unittest.TestCase):
                 self.assertIsNone(open_template_workbook(xlsm))
                 startfile.assert_called_once()
         self.assertIsNotNone(open_template_workbook(""))
+
+    def test_title_block_cell_values_maps_fields(self) -> None:
+        cells = title_block_cell_values(
+            {
+                "projectNo": " 24-0117 ",
+                "drawn": "AK",
+                "drawnBy": "",
+                "checkedBy": "JD",
+                "fileName": "B-1 diagram.xlsm",
+                "largeTitle": "BORING LOCATION PLAN",
+            }
+        )
+        self.assertEqual(
+            cells,
+            {
+                "L34": "24-0117",
+                "L35": "AK",
+                "L37": "JD",
+                "K39": "B-1 diagram.xlsm",
+                "M37": "BORING LOCATION PLAN",
+            },
+        )
+
+    def test_title_block_cell_values_blank_or_missing(self) -> None:
+        self.assertEqual(title_block_cell_values(None), {})
+        self.assertEqual(title_block_cell_values({}), {})
+        self.assertEqual(title_block_cell_values({"projectNo": "   "}), {})
 
 
 if __name__ == "__main__":

@@ -1067,6 +1067,43 @@ body.is-sidebar-mode-popout[data-sidebar-popout-mode="map"] .sidebar-mode-tabs {
   font-size: 0.8125rem;
 }
 
+.appx-pdf-title-block {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.appx-pdf-title-block legend {
+  padding: 0 4px;
+}
+
+.appx-pdf-title-hint {
+  margin: 0;
+  font-size: 0.75rem;
+}
+
+.appx-pdf-title-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 8px;
+}
+
+.appx-pdf-title-block input[type="text"] {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8125rem;
+}
+
 .appx-pdf-preview {
   display: flex;
   flex-direction: column;
@@ -3384,6 +3421,39 @@ textarea.inspect-field-input {
 
 .csv-coords-diff-new {
   font-weight: 600;
+}
+
+.csv-coords-flag-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+
+.csv-coords-flag-row input {
+  width: 72px;
+}
+
+.csv-coords-diff-pct {
+  display: block;
+  margin-top: 2px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.csv-coords-diff-row.is-flagged td {
+  background: color-mix(in srgb, #f5b942 16%, transparent);
+}
+
+.csv-coords-diff-row.is-flagged .csv-coords-diff-pct {
+  color: #f5b942;
+  font-weight: 600;
+}
+
+.csv-coords-diff-flag-mark {
+  color: #f5b942;
 }
 
 .file-point-icon-load {

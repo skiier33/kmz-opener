@@ -1011,6 +1011,7 @@ class DesktopApi:
         self,
         screenshot_directory: str = "",
         template_path: str = "",
+        title_block: Optional[dict] = None,
     ) -> dict:
         """
         Build a GEG boring-location appendix PDF from PNGs via Excel macros.
@@ -1018,6 +1019,8 @@ class DesktopApi:
         Args:
             screenshot_directory: Folder containing screenshot PNG files.
             template_path: Optional .xlsm template; defaults to bundled GEG file.
+            title_block: Optional title block values (projectNo, drawn, drawnBy,
+                checkedBy, fileName, largeTitle). Blank values keep the template.
 
         Returns:
             Result paths and counts, or ``error`` on failure.
@@ -1043,6 +1046,7 @@ class DesktopApi:
                 result = build_appendix_from_screenshots(
                     directory,
                     template_path=template,
+                    title_block=title_block if isinstance(title_block, dict) else None,
                 )
                 if template_note and isinstance(result, dict) and "error" not in result:
                     result["templateNote"] = template_note

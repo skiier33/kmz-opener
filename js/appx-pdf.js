@@ -4,6 +4,15 @@
   var REFRESH_DEBOUNCE_MS = 350;
   var SCAN_TIMEOUT_MS = 90000;
   var SHEET_PREVIEW_LIMIT = 10;
+  var TITLE_BLOCK_STORAGE_KEY = "kmz-appx-title-block";
+  var TITLE_BLOCK_FIELDS = [
+    { key: "projectNo", id: "appx-pdf-project-no" },
+    { key: "drawn", id: "appx-pdf-drawn" },
+    { key: "drawnBy", id: "appx-pdf-drawn-by" },
+    { key: "checkedBy", id: "appx-pdf-checked-by" },
+    { key: "fileName", id: "appx-pdf-file-name" },
+    { key: "largeTitle", id: "appx-pdf-large-title" },
+  ];
 
   var sidebarLeft = null;
   var dirInput = null;
@@ -23,6 +32,7 @@
   var lastPreviewData = null;
   var lastDesktopApi = null;
   var previewRequestId = 0;
+  var titleBlockInputs = {};
 
   function desktopApi() {
     var desktop = global.pywebview;
@@ -112,6 +122,41 @@
         ViewerPathPrefs.setAppendixTemplatePath(template);
       }
     }
+  }
+
+  function readTitleBlock() {
+    var values = {};
+    TITLE_BLOCK_FIELDS.forEach(function (field) {
+      var input = titleBlockInputs[field.key];
+      values[field.key] = input ? String(input.value || "").trim() : "";
+    });
+    return values;
+  }
+
+  function saveTitleBlock() {
+    try {
+      global.localStorage.setItem(TITLE_BLOCK_STORAGE_KEY, JSON.stringify(readTitleBlock()));
+    } catch (err) {
+      /* Storage unavailable (private mode); values still work for this session. */
+    }
+  }
+
+  function loadTitleBlock() {
+    var stored = null;
+    try {
+      stored = JSON.parse(global.localStorage.getItem(TITLE_BLOCK_STORAGE_KEY) || "null");
+    } catch (err) {
+      stored = null;
+    }
+    if (!stored || typeof stored !== "object") {
+      return;
+    }
+    TITLE_BLOCK_FIELDS.forEach(function (field) {
+      var input = titleBlockInputs[field.key];
+      if (input && !input.value && typeof stored[field.key] === "string") {
+        input.value = stored[field.key];
+      }
+    });
   }
 
   function syncDirectoryFieldFromPrefs() {
@@ -654,7 +699,9 @@
           setStatus("Build appendix PDF is available in the desktop app only.", true);
           return null;
         }
-        return Promise.resolve(api.build_geg_appendix_pdf(directory, template));
+        return Promise.resolve(
+          api.build_geg_appendix_pdf(directory, template, readTitleBlock())
+        );
       })
       .then(function (result) {
         if (result === null || result === undefined) {
@@ -771,6 +818,13 @@
         scheduleRefreshPreview();
       });
     }
+    TITLE_BLOCK_FIELDS.forEach(function (field) {
+      var input = titleBlockInputs[field.key];
+      if (input) {
+        input.addEventListener("change", saveTitleBlock);
+        input.addEventListener("blur", saveTitleBlock);
+      }
+    });
     var shotDir = global.document.getElementById("screenshot-directory");
     if (shotDir) {
       shotDir.addEventListener("change", function () {
@@ -799,10 +853,15 @@
     sheetPreviewsEl = global.document.getElementById("appx-pdf-sheet-previews");
     buildBtn = global.document.getElementById("appx-pdf-build");
     statusEl = global.document.getElementById("appx-pdf-status");
+    titleBlockInputs = {};
+    TITLE_BLOCK_FIELDS.forEach(function (field) {
+      titleBlockInputs[field.key] = global.document.getElementById(field.id);
+    });
 
     bindEvents();
     syncDirectoryFieldFromPrefs();
     syncTemplateFieldFromPrefs();
+    loadTitleBlock();
     if (global.SidebarModes && typeof SidebarModes.onActivate === "function") {
       SidebarModes.onActivate(SidebarModes.MODE_APPX, refreshPreview);
     }

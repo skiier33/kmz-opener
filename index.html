@@ -1345,6 +1345,44 @@
                   Edit Excel template…
                 </button>
               </label>
+              <fieldset class="appx-pdf-title-block">
+                <legend class="appx-pdf-label">Title block (written to the template)</legend>
+                <p class="muted appx-pdf-title-hint">
+                  Blank fields keep the template&apos;s existing text.
+                </p>
+                <div class="appx-pdf-title-grid">
+                  <label class="appx-pdf-field">
+                    <span class="appx-pdf-label">PROJECT NO.</span>
+                    <input id="appx-pdf-project-no" type="text" spellcheck="false" autocomplete="off" />
+                  </label>
+                  <label class="appx-pdf-field">
+                    <span class="appx-pdf-label">DRAWN:</span>
+                    <input id="appx-pdf-drawn" type="text" spellcheck="false" autocomplete="off" />
+                  </label>
+                  <label class="appx-pdf-field">
+                    <span class="appx-pdf-label">DRAWN BY:</span>
+                    <input id="appx-pdf-drawn-by" type="text" spellcheck="false" autocomplete="off" />
+                  </label>
+                  <label class="appx-pdf-field">
+                    <span class="appx-pdf-label">CHECKED BY:</span>
+                    <input id="appx-pdf-checked-by" type="text" spellcheck="false" autocomplete="off" />
+                  </label>
+                  <label class="appx-pdf-field appx-pdf-field-wide">
+                    <span class="appx-pdf-label">FILE NAME:</span>
+                    <input id="appx-pdf-file-name" type="text" spellcheck="false" autocomplete="off" />
+                  </label>
+                  <label class="appx-pdf-field appx-pdf-field-wide">
+                    <span class="appx-pdf-label">LARGE TITLE NAME</span>
+                    <input
+                      id="appx-pdf-large-title"
+                      type="text"
+                      spellcheck="false"
+                      autocomplete="off"
+                      placeholder="BORING LOCATION PLAN"
+                    />
+                  </label>
+                </div>
+              </fieldset>
               <div class="appx-pdf-preview">
                 <div class="appx-pdf-preview-toolbar">
                   <span id="appx-pdf-count" class="appx-pdf-count">0 PNG files</span>
@@ -2167,6 +2205,19 @@
                     class="csv-coords-preview-warnings muted hidden"
                     hidden
                   ></p>
+                  <div class="csv-coords-flag-row">
+                    <label for="csv-coords-flag-threshold">Flag points where the difference is above</label>
+                    <input
+                      id="csv-coords-flag-threshold"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value="0.1"
+                      inputmode="decimal"
+                      title="Percent difference from the prior latitude or longitude that marks a point as questionable"
+                    />
+                    <span class="muted">% (latitude or longitude)</span>
+                  </div>
                   <div class="csv-coords-diff-wrap">
                     <table class="csv-coords-diff-table">
                       <thead>
@@ -2204,6 +2255,14 @@
                   id="csv-coords-dialog-dismiss"
                 >
                   Close
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-subtle"
+                  id="btn-csv-coords-isolate"
+                  title="Check only the KMZ placemarks whose names match a BH_ID in the CSV or Excel file, and uncheck all others"
+                >
+                  Isolate on map
                 </button>
                 <button
                   type="button"
@@ -2251,6 +2310,7 @@
     <script src="js/kmz-loader.js"></script>
     <script src="js/kmz-save.js"></script>
     <script src="js/node-map-label.js"></script>
+    <script src="js/csv-coords-constants.js"></script>
     <script src="js/csv-coords.js"></script>
     <script src="js/map.js"></script>
     <script src="js/activity-map.js"></script>

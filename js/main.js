@@ -191,6 +191,7 @@
   var layerTreeContextMenu = null;
   var layerTreeContextMenuSourceId = null;
   var layerTreeContextMenuSaveBtn = null;
+  var layerTreeContextMenuSaveContentBtn = null;
   var layerTreeContextMenuDeleteBtn = null;
   var layerTreeContextMenuHideBtn = null;
   var layerTreeContextMenuRenameBtn = null;
@@ -3841,6 +3842,29 @@
     });
   }
 
+  /**
+   * Overwrite the loaded KMZ/KML file with the current layer content (all edits),
+   * without requiring the file to be marked dirty first.
+   */
+  function saveContentFromLayerTree(sourceId) {
+    persistActiveSourceState();
+    var source = findLoadedSource(sourceId);
+    if (!source || !source.doc || !source.doc.xmlDoc) {
+      setMessage("Open a KMZ or KML file first.");
+      return;
+    }
+    if (!sourceCanPersistToOriginal(source)) {
+      setMessage("This file has no disk path — use Export….");
+      return;
+    }
+    if (saveInFlight) {
+      return;
+    }
+    persistSourceToDisk(source).catch(function () {
+      /* persistSourceToDisk already reports the error in the status message */
+    });
+  }
+
   function createLayerTreeContextMenuCheckItem(label, getChecked, onToggle) {
     var btn = document.createElement("button");
     btn.type = "button";
@@ -4051,6 +4075,15 @@
           ? "No unsaved changes for this file"
           : "Use Export… when the file has no disk path";
     }
+    var canSaveContent =
+      !saveInFlight && hasDoc && sourceCanPersistToOriginal(source);
+    if (layerTreeContextMenuSaveContentBtn) {
+      layerTreeContextMenuSaveContentBtn.hidden = !sourceId;
+      layerTreeContextMenuSaveContentBtn.disabled = !canSaveContent;
+      layerTreeContextMenuSaveContentBtn.title = canSaveContent
+        ? "Save all layer content and overwrite the loaded file"
+        : "Use Export… when the file has no disk path";
+    }
     if (layerTreeContextMenuExportBtn) {
       layerTreeContextMenuExportBtn.hidden = !sourceId;
       layerTreeContextMenuExportBtn.disabled = !canExport;
@@ -4124,6 +4157,21 @@
       hideLayerTreeContextMenu();
       if (sourceId) {
         saveSourceFromLayerTree(sourceId);
+      }
+    });
+
+    layerTreeContextMenuSaveContentBtn = document.createElement("button");
+    layerTreeContextMenuSaveContentBtn.type = "button";
+    layerTreeContextMenuSaveContentBtn.className = "map-context-menu-item";
+    layerTreeContextMenuSaveContentBtn.setAttribute("role", "menuitem");
+    layerTreeContextMenuSaveContentBtn.textContent = "Save content";
+    layerTreeContextMenuSaveContentBtn.addEventListener("click", function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      var sourceId = layerTreeContextMenuSourceId;
+      hideLayerTreeContextMenu();
+      if (sourceId) {
+        saveContentFromLayerTree(sourceId);
       }
     });
 
@@ -4298,6 +4346,7 @@
     layerTreeContextMenu.appendChild(layerTreeContextMenuInspectBtn);
     layerTreeContextMenu.appendChild(layerTreeContextMenuGotoBtn);
     layerTreeContextMenu.appendChild(layerTreeContextMenuSaveBtn);
+    layerTreeContextMenu.appendChild(layerTreeContextMenuSaveContentBtn);
     layerTreeContextMenu.appendChild(layerTreeContextMenuDeleteBtn);
     layerTreeContextMenu.appendChild(layerTreeContextMenuHideBtn);
     layerTreeContextMenu.appendChild(layerTreeContextMenuRenameBtn);

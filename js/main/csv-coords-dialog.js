@@ -8,6 +8,7 @@ window.KmzMainCsvCoordsDialog = function (main) {
   "use strict";
 
   var btnCsvCoordsApply = document.getElementById("btn-csv-coords-apply");
+  var btnCsvCoordsIsolate = document.getElementById("btn-csv-coords-isolate");
   var csvCoordsCsvPathInput = document.getElementById("csv-coords-csv-path");
   var csvCoordsKmzPathInput = document.getElementById("csv-coords-kmz-path");
   var csvCoordsCsvSelectedEl = document.getElementById("csv-coords-csv-selected");
@@ -18,6 +19,7 @@ window.KmzMainCsvCoordsDialog = function (main) {
   var csvCoordsPreviewSummary = document.getElementById("csv-coords-preview-summary");
   var csvCoordsPreviewWarnings = document.getElementById("csv-coords-preview-warnings");
   var csvCoordsDiffBody = document.getElementById("csv-coords-diff-body");
+  var csvCoordsFlagThresholdInput = document.getElementById("csv-coords-flag-threshold");
   var csvCoordsInput = document.getElementById("csv-coords-input");
   var csvCoordsKmzInput = document.getElementById("csv-coords-kmz-input");
 
@@ -28,6 +30,8 @@ window.KmzMainCsvCoordsDialog = function (main) {
   var csvCoordsDefaultCsvDirInput = document.getElementById("csv-coords-default-csv-dir");
   var csvCoordsDefaultKmzDirInput = document.getElementById("csv-coords-default-kmz-dir");
   var csvCoordsApplyContext = null;
+  /** Last rendered preview ({ preview, fileName, summaryBase }) so the flag threshold can be re-applied. */
+  var csvCoordsPreviewState = null;
 
   function formatCsvCoordApplyMessage(stats, fileName) {
     var label = fileName || "the file";
@@ -103,6 +107,7 @@ window.KmzMainCsvCoordsDialog = function (main) {
   }
 
   function clearCsvCoordsPreviewDisplay() {
+    csvCoordsPreviewState = null;
     if (csvCoordsPreviewSection) {
       csvCoordsPreviewSection.classList.add("hidden");
       csvCoordsPreviewSection.hidden = true;
@@ -141,6 +146,16 @@ window.KmzMainCsvCoordsDialog = function (main) {
     return csvCoordsKmzPathInput ? String(csvCoordsKmzPathInput.value || "").trim() : "";
   }
 
+  function formatCsvCoordPercent(pct) {
+    if (pct === Infinity) {
+      return "prior value is 0";
+    }
+    if (typeof pct !== "number" || !Number.isFinite(pct)) {
+      return "—";
+    }
+    return pct.toFixed(4) + "%";
+  }
+
   function appendCsvCoordDiffCell(row, oldValue, newValue) {
     var cell = document.createElement("td");
     var oldSpan = document.createElement("span");
@@ -152,10 +167,82 @@ window.KmzMainCsvCoordsDialog = function (main) {
     var newSpan = document.createElement("span");
     newSpan.className = "csv-coords-diff-new";
     newSpan.textContent = formatCsvCoordNumber(newValue);
+    var pctSpan = document.createElement("span");
+    pctSpan.className = "csv-coords-diff-pct";
+    pctSpan.textContent =
+      "Δ " + formatCsvCoordPercent(CsvCoords.percentDifference(oldValue, newValue));
     cell.appendChild(oldSpan);
     cell.appendChild(arrow);
     cell.appendChild(newSpan);
+    cell.appendChild(pctSpan);
     row.appendChild(cell);
+  }
+
+  /**
+   * Rebuild the preview table rows and summary using the current flag threshold.
+   * Flagged rows are highlighted; the threshold comes from the threshold input.
+   *
+   * @returns {boolean} False when the threshold input is not a number of 0 or more.
+   */
+  function refreshCsvCoordsPreviewFlags() {
+    var state = csvCoordsPreviewState;
+    if (!state || !csvCoordsDiffBody) {
+      return true;
+    }
+    var thresholdPct = CsvCoords.parseFlagThresholdPct(
+      csvCoordsFlagThresholdInput ? csvCoordsFlagThresholdInput.value : ""
+    );
+    var thresholdValid = Number.isFinite(thresholdPct);
+    var flagged = 0;
+    csvCoordsDiffBody.innerHTML = "";
+    state.preview.changes.forEach(function (entry) {
+      var isFlagged = CsvCoords.isQuestionableChange(entry, thresholdPct);
+      var row = document.createElement("tr");
+      if (isFlagged) {
+        flagged += 1;
+        row.className = "csv-coords-diff-row is-flagged";
+        row.title = "Differs by more than " + thresholdPct + "% in latitude or longitude";
+      }
+      var idCell = document.createElement("td");
+      idCell.className = "csv-coords-diff-id";
+      if (isFlagged) {
+        var mark = document.createElement("span");
+        mark.className = "csv-coords-diff-flag-mark";
+        mark.setAttribute("aria-label", "Questionable point");
+        mark.textContent = "⚠ ";
+        idCell.appendChild(mark);
+      }
+      idCell.appendChild(document.createTextNode(entry.bhId || "—"));
+      if (entry.name && entry.name !== entry.bhId) {
+        var nameSpan = document.createElement("span");
+        nameSpan.className = "csv-coords-diff-name";
+        nameSpan.textContent = entry.name;
+        idCell.appendChild(nameSpan);
+      }
+      row.appendChild(idCell);
+      appendCsvCoordDiffCell(row, entry.oldLat, entry.newLat);
+      appendCsvCoordDiffCell(row, entry.oldLng, entry.newLng);
+      csvCoordsDiffBody.appendChild(row);
+    });
+    var summary = state.summaryBase;
+    if (thresholdValid) {
+      summary +=
+        " " +
+        flagged +
+        " point(s) flagged: difference above " +
+        thresholdPct +
+        "% in latitude or longitude.";
+    }
+    if (csvCoordsPreviewSummary) {
+      csvCoordsPreviewSummary.textContent = summary;
+    }
+    return thresholdValid;
+  }
+
+  function onCsvCoordsFlagThresholdInput() {
+    if (csvCoordsPreviewState) {
+      setCsvCoordsPreviewStatus(refreshCsvCoordsPreviewFlags());
+    }
   }
 
   function renderCsvCoordsPreview(preview, fileName) {
@@ -202,33 +289,28 @@ window.KmzMainCsvCoordsDialog = function (main) {
         preview.stats.unusedCsvIds.length + " unused CSV row(s): " + unusedPreview + unusedExtra + "."
       );
     }
-    if (csvCoordsPreviewSummary) {
-      csvCoordsPreviewSummary.textContent = summaryParts.join(" ");
-    }
     if (preview.warnings && preview.warnings.length && csvCoordsPreviewWarnings) {
       csvCoordsPreviewWarnings.textContent = preview.warnings.join(" ");
       csvCoordsPreviewWarnings.classList.remove("hidden");
       csvCoordsPreviewWarnings.hidden = false;
     }
-    if (csvCoordsDiffBody) {
-      preview.changes.forEach(function (entry) {
-        var row = document.createElement("tr");
-        var idCell = document.createElement("td");
-        idCell.className = "csv-coords-diff-id";
-        idCell.textContent = entry.bhId || "—";
-        if (entry.name && entry.name !== entry.bhId) {
-          var nameSpan = document.createElement("span");
-          nameSpan.className = "csv-coords-diff-name";
-          nameSpan.textContent = entry.name;
-          idCell.appendChild(nameSpan);
-        }
-        row.appendChild(idCell);
-        appendCsvCoordDiffCell(row, entry.oldLat, entry.newLat);
-        appendCsvCoordDiffCell(row, entry.oldLng, entry.newLng);
-        csvCoordsDiffBody.appendChild(row);
-      });
+    csvCoordsPreviewState = {
+      preview: preview,
+      fileName: label,
+      summaryBase: summaryParts.join(" "),
+    };
+    setCsvCoordsPreviewStatus(refreshCsvCoordsPreviewFlags());
+  }
+
+  function setCsvCoordsPreviewStatus(thresholdValid) {
+    if (thresholdValid) {
+      setCsvCoordsDialogStatus("Review the changes below, then apply them to the open file.", false);
+    } else {
+      setCsvCoordsDialogStatus(
+        "Enter a flag threshold of 0 or more to highlight questionable points.",
+        true
+      );
     }
-    setCsvCoordsDialogStatus("Review the changes below, then apply them to the open file.", false);
   }
 
   function finishCsvCoordApply(sourceId, lookup, fileName, sourcePath) {
@@ -641,8 +723,84 @@ window.KmzMainCsvCoordsDialog = function (main) {
     });
   }
 
+  /**
+   * Check only the KMZ placemarks whose names match a BH_ID in the CSV/Excel file,
+   * and uncheck every other placemark in that KMZ. Uses the same id matching as
+   * the coordinate update (e.g. B6A matches B-6A).
+   */
+  function isolateCsvCoordsOnMap() {
+    if (!csvCoordsCsvPathValue() && !csvCoordsBrowserCsvFile) {
+      setCsvCoordsDialogStatus("Choose a CSV or Excel file first.", true);
+      return Promise.resolve();
+    }
+    if (!csvCoordsKmzPathValue() && !csvCoordsBrowserKmzFile && !csvCoordsTargetSourceId) {
+      setCsvCoordsDialogStatus("Choose a KMZ or KML file first.", true);
+      return Promise.resolve();
+    }
+    if (!window.CsvCoords || !window.BhIdMatch || typeof GisMap.isolatePlacemarksInSource !== "function") {
+      setCsvCoordsDialogStatus("Isolate on map is unavailable.", true);
+      return Promise.resolve();
+    }
+    setCsvCoordsDialogStatus("Reading borehole ids and isolating placemarks…", false);
+    main.setMessage("Isolating placemarks by BH_ID…");
+    return readCsvCoordsTable()
+      .then(function (parsed) {
+        var idCount = Object.keys(parsed.byId || {}).length;
+        if (!idCount) {
+          throw new Error((parsed.errors && parsed.errors[0]) || "The file has no borehole ids.");
+        }
+        return ensureCsvCoordsKmzSource().then(function (loaded) {
+          var result = GisMap.isolatePlacemarksInSource(loaded.sourceId, function (node) {
+            return !!CsvCoords.resolveBhCoordRow(parsed.lookup, node.name);
+          });
+          if (!result.found) {
+            throw new Error("Could not find " + loaded.fileName + " in the layers pane.");
+          }
+          main.renderTree(GisMap.getRoot());
+          main.persistLoadedSession();
+          var msg = result.shown
+            ? "Isolated " +
+              result.shown +
+              " placemark(s) matching " +
+              idCount +
+              " BH_ID(s) in " +
+              loaded.fileName +
+              "; unchecked " +
+              result.hidden +
+              "."
+            : "No placemark names in " +
+              loaded.fileName +
+              " match the " +
+              idCount +
+              " BH_ID(s) in the file. Unchecked all " +
+              result.hidden +
+              " placemark(s).";
+          setCsvCoordsDialogStatus(msg, !result.shown);
+          main.setMessage(msg);
+        });
+      })
+      .catch(function (err) {
+        var msg = (err && err.message) || "Could not isolate placemarks on the map.";
+        setCsvCoordsDialogStatus(msg, true);
+        main.setMessage(msg);
+      });
+  }
+
+  if (btnCsvCoordsIsolate) {
+    btnCsvCoordsIsolate.addEventListener("click", function () {
+      isolateCsvCoordsOnMap();
+    });
+  }
+
+  if (csvCoordsFlagThresholdInput) {
+    // The popout tool window forwards typing as "change" (see tool-window.js onInput/onChange).
+    csvCoordsFlagThresholdInput.addEventListener("input", onCsvCoordsFlagThresholdInput);
+    csvCoordsFlagThresholdInput.addEventListener("change", onCsvCoordsFlagThresholdInput);
+  }
+
   return {
     applyCsvCoordsChanges: applyCsvCoordsChanges,
+    isolateCsvCoordsOnMap: isolateCsvCoordsOnMap,
     applyCsvCoordsChosenFile: applyCsvCoordsChosenFile,
     applyCsvCoordsChosenPath: applyCsvCoordsChosenPath,
     browseCsvCoordsCsv: browseCsvCoordsCsv,

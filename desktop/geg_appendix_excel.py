@@ -247,11 +247,55 @@ def _apply_page_setup(sheet: Any) -> None:
     ps.FitToPagesTall = 1
 
 
+TITLE_BLOCK_CELLS: Dict[str, str] = {
+    "projectNo": "L34",  # label PROJECT NO. in K34
+    "drawn": "L35",  # label DRAWN: in K35
+    "drawnBy": "L36",  # label DRAWN BY: in K36
+    "checkedBy": "L37",  # label CHECKED BY: in K37
+    "fileName": "K39",  # merged K39:L40, under the FILE NAME: label
+    "largeTitle": "M37",  # merged M37:P40, large title block
+}
+
+
+def title_block_cell_values(title_block: Optional[Dict[str, Any]]) -> Dict[str, str]:
+    """
+    Map title block inputs to template cell addresses, skipping blank fields.
+
+    Args:
+        title_block: Values keyed by field name (see ``TITLE_BLOCK_CELLS``).
+
+    Returns:
+        Cell address to text. Blank fields are omitted so the template keeps
+        its existing text for them.
+    """
+    if not isinstance(title_block, dict):
+        return {}
+    out: Dict[str, str] = {}
+    for key, address in TITLE_BLOCK_CELLS.items():
+        text = str(title_block.get(key) or "").strip()
+        if text:
+            out[address] = text
+    return out
+
+
+def _apply_title_block(workbook: Any, cell_values: Dict[str, str]) -> None:
+    """Write title block text into every worksheet of the working workbook."""
+    if not cell_values:
+        return
+    for sheet in workbook.Worksheets:
+        for address, text in cell_values.items():
+            rng = sheet.Range(address)
+            # Text format keeps values such as "0123" or "=…" as literal text.
+            rng.NumberFormat = "@"
+            rng.Value = text
+
+
 def build_appendix_from_screenshots(
     screenshot_dir: str,
     *,
     template_path: str,
     viewer_root: Optional[str] = None,
+    title_block: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Copy the GEG template, insert each PNG on its own figure sheet, export PDF.
@@ -260,6 +304,8 @@ def build_appendix_from_screenshots(
         screenshot_dir: Folder containing borehole screenshot PNG files.
         template_path: Source .xlsm template path.
         viewer_root: Unused; reserved for future template resolution.
+        title_block: Optional PROJECT NO./DRAWN/DRAWN BY/CHECKED BY/FILE NAME/
+            LARGE TITLE NAME values written into the working copy only.
 
     Returns:
         Dict with xlsmPath, pdfPath, imageCount, sheetCount, pngFiles.
@@ -317,6 +363,8 @@ def build_appendix_from_screenshots(
                 _insert_picture_over_cell_com(sheet, abs_png)
                 _insert_picture_in_cell_com(sheet, abs_png)
             _apply_page_setup(sheet)
+
+        _apply_title_block(workbook, title_block_cell_values(title_block))
 
         for sheet in workbook.Worksheets:
             _apply_page_setup(sheet)
