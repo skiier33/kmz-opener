@@ -8455,7 +8455,7 @@
       return null;
     }
     return {
-      api: window.__kmzDesktopApi || {},
+      api: getDesktopApi() || window.__kmzDesktopApi || {},
       token: window.__kmzDesktopToken,
     };
   }
@@ -8700,6 +8700,60 @@
     });
   }
 
+  /**
+   * Export a KMZ via the browser's native Save As dialog.
+   *
+   * The picker is opened before building the blob so it runs inside the
+   * originating click's user activation window.
+   */
+  function saveAsKmzWithBrowserPicker(doc, root, source, downloadName) {
+    var pickerOptions = {
+      suggestedName: downloadName,
+      types: [
+        {
+          description: "KMZ",
+          accept: { "application/vnd.google-earth.kmz": [".kmz"] },
+        },
+      ],
+    };
+    if (doc.handle) {
+      pickerOptions.startIn = doc.handle;
+    }
+    var picked;
+    try {
+      picked = window.showSaveFilePicker(pickerOptions);
+    } catch (err) {
+      setMessage((err && err.message) || "Could not open the save dialog.");
+      return;
+    }
+    saveInFlight = true;
+    updateFileActions();
+    Promise.resolve(picked)
+      .then(function (saveHandle) {
+        setMessage("Saving " + saveHandle.name + "…");
+        return KmzSave.buildKmzBlob(doc, root, !source.docDirty).then(function (blob) {
+          return saveHandle.createWritable().then(function (writable) {
+            return writable.write(blob).then(function () {
+              return writable.close();
+            });
+          });
+        }).then(function () {
+          setMessage("Saved " + saveHandle.name + ".");
+        });
+      })
+      .catch(function (err) {
+        if (err && err.name === "AbortError") {
+          setMessage("Save cancelled.");
+          return;
+        }
+        setMessage((err && err.message) || "Could not save the KMZ.");
+      })
+      .then(function () {
+        saveInFlight = false;
+        updateFileActions();
+      });
+  }
+
   function saveAsKmz(optionalSourceId) {
     persistActiveSourceState();
     var source = optionalSourceId
@@ -8719,6 +8773,12 @@
       return;
     }
     var downloadName = KmzSave.kmzFileName(doc.fileName);
+    var desktopApi = getDesktopApi();
+    var useDesktopDialog = !!(desktopApi && typeof desktopApi.choose_export_path === "function");
+    if (!useDesktopDialog && typeof window.showSaveFilePicker === "function") {
+      saveAsKmzWithBrowserPicker(doc, root, source, downloadName);
+      return;
+    }
     saveInFlight = true;
     updateFileActions();
     setMessage("Saving " + downloadName + "…");
@@ -8748,9 +8808,6 @@
                 });
               });
             });
-          }
-          if (typeof window.showSaveFilePicker === "function") {
-            return saveWithBrowser(blob, downloadName, doc.handle);
           }
           downloadNamedBlob(
             blob,

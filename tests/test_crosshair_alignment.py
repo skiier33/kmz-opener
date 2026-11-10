@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import Any, Dict, Union
 
 import pytest
-from playwright.sync_api import Page, sync_playwright
+
+pytest.importorskip("playwright.sync_api", reason="playwright is not installed")
+from playwright.sync_api import Page, sync_playwright  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 SAMPLE = ROOT / "examples" / "sample.kml"

@@ -30,6 +30,55 @@
     clearOverlay();
   };
 
+  function postMarkerContext(job, originalEvent) {
+    if (
+      !window.chrome
+      || !window.chrome.webview
+      || typeof window.chrome.webview.postMessage !== "function"
+    ) {
+      return;
+    }
+    var x = 0;
+    var y = 0;
+    if (originalEvent && typeof originalEvent.clientX === "number") {
+      x = originalEvent.clientX;
+      y = originalEvent.clientY;
+    }
+    window.chrome.webview.postMessage(
+      JSON.stringify({
+        type: "activity_marker_context",
+        job: job,
+        x: x,
+        y: y,
+      })
+    );
+  }
+
+  function postMarkerHover(job, active, originalEvent) {
+    if (
+      !window.chrome
+      || !window.chrome.webview
+      || typeof window.chrome.webview.postMessage !== "function"
+    ) {
+      return;
+    }
+    var x = 0;
+    var y = 0;
+    if (originalEvent && typeof originalEvent.clientX === "number") {
+      x = originalEvent.clientX;
+      y = originalEvent.clientY;
+    }
+    window.chrome.webview.postMessage(
+      JSON.stringify({
+        type: "activity_marker_hover",
+        job: job,
+        x: x,
+        y: y,
+        active: !!active,
+      })
+    );
+  }
+
   global.kmzHostSetActivityOverlay = function (payload) {
     var map = getMap();
     if (!map || !global.L) {
@@ -73,9 +122,18 @@
         fillOpacity: 0.58,
       });
       var label = point.label || "Job";
-      marker.bindTooltip(
-        label + " — " + String(point.count || 0) + " recent file(s)"
-      );
+      marker.on("mouseover", function (e) {
+        postMarkerHover(label, true, e.originalEvent);
+      });
+      marker.on("mouseout", function () {
+        postMarkerHover(label, false, null);
+      });
+      marker.on("contextmenu", function (e) {
+        if (e.originalEvent && typeof e.originalEvent.preventDefault === "function") {
+          e.originalEvent.preventDefault();
+        }
+        postMarkerContext(label, e.originalEvent);
+      });
       marker.addTo(group);
     });
 
