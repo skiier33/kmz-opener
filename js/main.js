@@ -1,6 +1,63 @@
 (function () {
   "use strict";
 
+  /**
+   * Live bridge for modules split out of this file (js/main/*.js). Functions are
+   * passed directly; variables go through getters/setters so modules always see
+   * current values.
+   */
+  var main = {
+    get activeSourceId() {
+      return activeSourceId;
+    },
+    buildLoadedPointSourceSelectHtml: buildLoadedPointSourceSelectHtml,
+    desktopProjectRootInitial: desktopProjectRootInitial,
+    downloadNamedBlob: downloadNamedBlob,
+    ensureDesktop: ensureDesktop,
+    escapeText: escapeText,
+    findLoadedSource: findLoadedSource,
+    findLoadedSourceByPath: findLoadedSourceByPath,
+    hideLayerTreeContextMenu: hideLayerTreeContextMenu,
+    hideMapContextMenu: hideMapContextMenu,
+    get launchWindowParams() {
+      return launchWindowParams;
+    },
+    get layersAddLabelsBtn() {
+      return layersAddLabelsBtn;
+    },
+    get layersInspectToggleBtn() {
+      return layersInspectToggleBtn;
+    },
+    get loadedSources() {
+      return loadedSources;
+    },
+    loadedSourcesWithPointPlacemarks: loadedSourcesWithPointPlacemarks,
+    get map() {
+      return map;
+    },
+    markSourceEdited: markSourceEdited,
+    nodeIsMapPoint: nodeIsMapPoint,
+    noteEdit: noteEdit,
+    openCsvCoordsDialog: openCsvCoordsDialog,
+    openFile: openFile,
+    persistActiveSourceState: persistActiveSourceState,
+    persistLoadedSession: persistLoadedSession,
+    persistSourceToDisk: persistSourceToDisk,
+    persistViewerGuiPrefs: persistViewerGuiPrefs,
+    readDesktopFile: readDesktopFile,
+    renderTree: renderTree,
+    setMessage: setMessage,
+    get SIDEBAR_INSPECT_SECTION_SLUG() {
+      return SIDEBAR_INSPECT_SECTION_SLUG;
+    },
+    sourceCanPersistToOriginal: sourceCanPersistToOriginal,
+    sourceIdFromNodeId: sourceIdFromNodeId,
+    get TOGGLE_ICON() {
+      return TOGGLE_ICON;
+    },
+    updateFileActions: updateFileActions,
+  };
+
   var hostMatch = /[?&]host=([^&]+)/.exec(window.location.search || "");
   if (hostMatch && hostMatch[1]) {
     var hostSlug = hostMatch[1].replace(/[^a-z0-9_-]/gi, "");
@@ -99,901 +156,19 @@
   var popupTimer = null;
   var TOGGLE_ICON =
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6z"/></svg>';
-  var SIDEBAR_SECTION_STORAGE_KEY = "kmz-sidebar-sections-collapsed";
-  var SIDEBAR_SECTION_HIDDEN_STORAGE_KEY = "kmz-sidebar-sections-hidden";
-  var sidebarSectionRegistry = [];
-  var sidebarSectionHiddenState = {};
-  var sidebarSectionContextMenu = null;
-  var sidebarSectionContextMenuSlug = null;
-  var sidebarSectionContextMenuToggleBtn = null;
-  var syncSidebarInspectSplitHandle = function () {};
-  var SIDEBAR_INSPECT_HEIGHT_KEY = "kmz-sidebar-inspect-height";
-  var SIDEBAR_WIDTH_KEY = "kmz-sidebar-width";
-  var SIDEBAR_COLLAPSED_KEY = "kmz-sidebar-collapsed";
-  var RIGHT_PANE_WIDTH_KEY = "kmz-right-pane-width";
-  var RIGHT_PANE_COLLAPSED_KEY = "kmz-right-pane-collapsed";
-  var SIDEBAR_INSPECT_MIN_H = 72;
-  var SIDEBAR_UPPER_MIN_H = 96;
-  var POINT_CHAIN_ORDER_HEIGHT_KEY = "kmz-point-chain-order-height";
-  var POINT_CHAIN_ORDER_MIN_H = 72;
-  var POINT_CHAIN_ORDER_MAX_H = 520;
+
+  // Sidebar sections, folding, and pane resizing (js/main/sidebar-layout.js)
+  var sidebarLayout = window.KmzMainSidebarLayout(main);
+
+  // Point chain sidebar panel (js/main/point-chain-panel.js)
+  var pointChainPanel = window.KmzMainPointChainPanel(main);
   var ICON_PICKER_SCROLL_HEIGHT_KEY = "kmz-icon-picker-scroll-height";
   var ICON_PICKER_SCROLL_MIN_H = 72;
   var ICON_PICKER_SCROLL_MAX_H = 520;
   var ICON_PICKER_SCROLL_DEFAULT_MAX_H = 168;
-  var NODE_MAP_LABEL_PER_POINT_SCROLL_HEIGHT_KEY = "kmz-node-map-label-per-point-scroll-height";
-  var NODE_MAP_LABEL_PER_POINT_SCROLL_MIN_H = 88;
-  var NODE_MAP_LABEL_PER_POINT_SCROLL_MAX_H = 480;
-  var NODE_MAP_LABEL_PER_POINT_VISIBLE_ROWS = 3;
-  var SIDEBAR_WIDTH_MIN = 220;
-  var SIDEBAR_WIDTH_MAX = 560;
-  var sidebarWidthInvalidateTimer = null;
 
-  function sidebarSectionSlug(section, index) {
-    var parts = section.className.split(/\s+/);
-    for (var i = 0; i < parts.length; i += 1) {
-      var part = parts[i];
-      if (part.indexOf("sidebar-") === 0 && part !== "sidebar-section") {
-        return part.replace(/^sidebar-/, "");
-      }
-    }
-    return "section-" + index;
-  }
-
-  function readSidebarCollapsedState() {
-    try {
-      var raw = localStorage.getItem(SIDEBAR_SECTION_STORAGE_KEY);
-      if (!raw) {
-        return {};
-      }
-      var parsed = JSON.parse(raw);
-      return parsed && typeof parsed === "object" ? parsed : {};
-    } catch (err) {
-      return {};
-    }
-  }
-
-  function writeSidebarCollapsedState(state) {
-    try {
-      localStorage.setItem(SIDEBAR_SECTION_STORAGE_KEY, JSON.stringify(state));
-    } catch (err) {
-      /* ignore quota / private mode */
-    }
-  }
-
-  function setSidebarSectionCollapsed(section, head, collapsed, slug, state) {
-    section.classList.toggle("collapsed", collapsed);
-    head.setAttribute("aria-expanded", collapsed ? "false" : "true");
-    var label = head.querySelector(".sidebar-section-title");
-    var title = (label && label.textContent) || "section";
-    head.setAttribute(
-      "aria-label",
-      (collapsed ? "Expand " : "Collapse ") + title + " section"
-    );
-    if (slug && state) {
-      if (collapsed) {
-        state[slug] = true;
-      } else {
-        delete state[slug];
-      }
-      writeSidebarCollapsedState(state);
-    }
-  }
-
-  function sidebarSectionDirectH2(section) {
-    var child = section.firstElementChild;
-    while (child) {
-      if (child.tagName === "H2") {
-        return child;
-      }
-      if (child.classList && child.classList.contains("sidebar-section-head")) {
-        return null;
-      }
-      child = child.nextElementSibling;
-    }
-    return null;
-  }
-
-  function readSidebarHiddenState() {
-    try {
-      var raw = localStorage.getItem(SIDEBAR_SECTION_HIDDEN_STORAGE_KEY);
-      if (!raw) {
-        return {};
-      }
-      var parsed = JSON.parse(raw);
-      return parsed && typeof parsed === "object" ? parsed : {};
-    } catch (err) {
-      return {};
-    }
-  }
-
-  function writeSidebarHiddenState(state) {
-    try {
-      localStorage.setItem(SIDEBAR_SECTION_HIDDEN_STORAGE_KEY, JSON.stringify(state));
-    } catch (err) {
-      /* ignore quota / private mode */
-    }
-  }
-
-  function findSidebarSectionEntry(slug) {
-    for (var i = 0; i < sidebarSectionRegistry.length; i += 1) {
-      if (sidebarSectionRegistry[i].slug === slug) {
-        return sidebarSectionRegistry[i];
-      }
-    }
-    return null;
-  }
-
-  function sidebarSectionDisplayTitle(section, head) {
-    if (head) {
-      var label = head.querySelector(".sidebar-section-title");
-      if (label && label.textContent) {
-        return label.textContent.trim();
-      }
-    }
-    var h2 = section.querySelector("h2");
-    return (h2 && h2.textContent.trim()) || "Section";
-  }
-
-  function isSidebarSectionUserHidden(slug) {
-    return sidebarSectionHiddenState[slug] === true;
-  }
-
-  function syncLayersInspectToggleButton() {
-    if (!layersInspectToggleBtn) {
-      return;
-    }
-    var visible = !isSidebarSectionUserHidden(SIDEBAR_INSPECT_SECTION_SLUG);
-    layersInspectToggleBtn.setAttribute("aria-pressed", visible ? "true" : "false");
-    var label = visible ? "Hide Inspect panel" : "Show Inspect panel";
-    layersInspectToggleBtn.title = label;
-    layersInspectToggleBtn.setAttribute("aria-label", label);
-  }
-
-  function applySidebarSectionUserHidden(section, slug, hidden) {
-    section.classList.toggle("sidebar-section-user-hidden", hidden);
-    var entry = findSidebarSectionEntry(slug);
-    if (entry && entry.menuItem) {
-      entry.menuItem.setAttribute("aria-checked", hidden ? "false" : "true");
-    }
-    if (entry && entry.toolsMenuItem) {
-      entry.toolsMenuItem.setAttribute("aria-checked", hidden ? "false" : "true");
-    }
-    if (slug === SIDEBAR_INSPECT_SECTION_SLUG) {
-      syncLayersInspectToggleButton();
-    }
-    syncSidebarInspectSplitHandle();
-  }
-
-  function setSidebarSectionUserHidden(slug, hidden) {
-    var entry = findSidebarSectionEntry(slug);
-    if (!entry) {
-      return;
-    }
-    if (hidden) {
-      sidebarSectionHiddenState[slug] = true;
-    } else {
-      delete sidebarSectionHiddenState[slug];
-    }
-    writeSidebarHiddenState(sidebarSectionHiddenState);
-    applySidebarSectionUserHidden(entry.section, slug, hidden);
-  }
-
-  function toggleSidebarSectionUserHidden(slug) {
-    setSidebarSectionUserHidden(slug, !isSidebarSectionUserHidden(slug));
-  }
-
-  function showAllSidebarSections() {
-    sidebarSectionRegistry.forEach(function (entry) {
-      if (isSidebarSectionUserHidden(entry.slug)) {
-        setSidebarSectionUserHidden(entry.slug, false);
-      }
-    });
-  }
-
-  function hideAllSidebarSections() {
-    sidebarSectionRegistry.forEach(function (entry) {
-      if (!isSidebarSectionUserHidden(entry.slug)) {
-        setSidebarSectionUserHidden(entry.slug, true);
-      }
-    });
-  }
-
-  function hideSidebarSectionContextMenu() {
-    sidebarSectionContextMenuSlug = null;
-    if (sidebarSectionContextMenu) {
-      sidebarSectionContextMenu.classList.add("hidden");
-    }
-  }
-
-  function showSidebarSectionContextMenu(slug, clientX, clientY) {
-    if (!sidebarSectionContextMenu || !slug) {
-      return;
-    }
-    hideMapContextMenu();
-    hideLayerTreeContextMenu();
-    sidebarSectionContextMenuSlug = slug;
-    var hidden = isSidebarSectionUserHidden(slug);
-    if (sidebarSectionContextMenuToggleBtn) {
-      sidebarSectionContextMenuToggleBtn.textContent = hidden ? "Show section" : "Hide section";
-    }
-    sidebarSectionContextMenu.classList.remove("hidden");
-    sidebarSectionContextMenu.style.left = "0px";
-    sidebarSectionContextMenu.style.top = "0px";
-    var width = sidebarSectionContextMenu.offsetWidth;
-    var height = sidebarSectionContextMenu.offsetHeight;
-    var left = Math.max(8, Math.min(clientX, window.innerWidth - width - 8));
-    var top = Math.max(8, Math.min(clientY, window.innerHeight - height - 8));
-    sidebarSectionContextMenu.style.left = left + "px";
-    sidebarSectionContextMenu.style.top = top + "px";
-  }
-
-  function onSidebarSectionContextMenu(event) {
-    var head = event.target.closest(".sidebar-section-head");
-    if (!head) {
-      return;
-    }
-    var section = head.closest(".sidebar-section");
-    if (
-      !section
-      || (
-        !section.closest(".sidebar-left")
-        && !(section.classList.contains("sidebar-inspect") && section.closest(".sidebar-right"))
-      )
-    ) {
-      return;
-    }
-    var slug = section.dataset.sidebarSectionSlug;
-    if (!slug) {
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    showSidebarSectionContextMenu(slug, event.clientX, event.clientY);
-  }
-
-  function buildSidebarSectionRegistry() {
-    sidebarSectionRegistry = [];
-    var sections = document.querySelectorAll(
-      ".sidebar-left .sidebar-section, .sidebar-right .sidebar-section.sidebar-inspect"
-    );
-    sidebarSectionHiddenState = readSidebarHiddenState();
-    for (var i = 0; i < sections.length; i += 1) {
-      var section = sections[i];
-      var slug = section.dataset.sidebarSectionSlug || sidebarSectionSlug(section, i);
-      section.dataset.sidebarSectionSlug = slug;
-      var head = section.querySelector(":scope > .sidebar-section-head");
-      var title = sidebarSectionDisplayTitle(section, head);
-      sidebarSectionRegistry.push({
-        section: section,
-        slug: slug,
-        title: title,
-        menuItem: null,
-      });
-      applySidebarSectionUserHidden(
-        section,
-        slug,
-        sidebarSectionHiddenState[slug] === true
-      );
-    }
-  }
-
-  function populateViewMenuSidebarSections() {
-    var container = document.getElementById("menubar-view-sidebar-sections");
-    if (!container) {
-      return;
-    }
-    container.innerHTML = "";
-    sidebarSectionRegistry.forEach(function (entry) {
-      var btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "menubar-menu-item menubar-menu-item-check";
-      btn.setAttribute("role", "menuitemcheckbox");
-      btn.setAttribute("data-section-slug", entry.slug);
-      btn.setAttribute(
-        "aria-checked",
-        isSidebarSectionUserHidden(entry.slug) ? "false" : "true"
-      );
-      btn.innerHTML =
-        '<span class="menubar-checkmark" aria-hidden="true">✓</span>' +
-        '<span class="menubar-menu-item-label"></span>';
-      btn.querySelector(".menubar-menu-item-label").textContent = entry.title;
-      btn.title = "Show or hide the " + entry.title + " section in the sidebar";
-      entry.menuItem = btn;
-      container.appendChild(btn);
-    });
-  }
-
-  function createSidebarSectionContextMenu() {
-    sidebarSectionContextMenu = document.createElement("div");
-    sidebarSectionContextMenu.id = "sidebar-section-context-menu";
-    sidebarSectionContextMenu.className = "map-context-menu hidden";
-    sidebarSectionContextMenu.setAttribute("role", "menu");
-
-    sidebarSectionContextMenuToggleBtn = document.createElement("button");
-    sidebarSectionContextMenuToggleBtn.type = "button";
-    sidebarSectionContextMenuToggleBtn.className = "map-context-menu-item";
-    sidebarSectionContextMenuToggleBtn.setAttribute("role", "menuitem");
-    sidebarSectionContextMenuToggleBtn.textContent = "Hide section";
-    sidebarSectionContextMenuToggleBtn.addEventListener("click", function (event) {
-      event.preventDefault();
-      event.stopPropagation();
-      var slug = sidebarSectionContextMenuSlug;
-      hideSidebarSectionContextMenu();
-      if (slug) {
-        toggleSidebarSectionUserHidden(slug);
-      }
-    });
-
-    sidebarSectionContextMenu.appendChild(sidebarSectionContextMenuToggleBtn);
-    document.body.appendChild(sidebarSectionContextMenu);
-
-    document.addEventListener(
-      "mousedown",
-      function (event) {
-        if (
-          sidebarSectionContextMenu &&
-          !sidebarSectionContextMenu.classList.contains("hidden") &&
-          !sidebarSectionContextMenu.contains(event.target)
-        ) {
-          hideSidebarSectionContextMenu();
-        }
-      },
-      true
-    );
-    document.addEventListener("keydown", function (event) {
-      if (event.key === "Escape") {
-        hideSidebarSectionContextMenu();
-      }
-    });
-    window.addEventListener("blur", hideSidebarSectionContextMenu);
-  }
-
-  function initSidebarSectionVisibility() {
-    buildSidebarSectionRegistry();
-    populateViewMenuSidebarSections();
-    createSidebarSectionContextMenu();
-    var sidebarLeft = document.querySelector(".sidebar-left");
-    if (sidebarLeft) {
-      sidebarLeft.addEventListener("contextmenu", onSidebarSectionContextMenu);
-    }
-    var sidebarRight = document.querySelector(".sidebar-right");
-    if (sidebarRight) {
-      sidebarRight.addEventListener("contextmenu", onSidebarSectionContextMenu);
-    }
-  }
-
-  function initSidebarSectionFolding() {
-    var sections = document.querySelectorAll(
-      ".sidebar-left .sidebar-section, .sidebar-right .sidebar-section.sidebar-inspect"
-    );
-    if (!sections.length) {
-      return;
-    }
-    var collapsedState = readSidebarCollapsedState();
-    for (var i = 0; i < sections.length; i += 1) {
-      var section = sections[i];
-      if (section.firstElementChild && section.firstElementChild.classList.contains("sidebar-section-head")) {
-        if (!section.dataset.sidebarSectionSlug) {
-          section.dataset.sidebarSectionSlug = sidebarSectionSlug(section, i);
-        }
-        continue;
-      }
-      var heading = sidebarSectionDirectH2(section);
-      if (!heading) {
-        continue;
-      }
-      var slug = sidebarSectionSlug(section, i);
-      section.dataset.sidebarSectionSlug = slug;
-      var bodyId = "sidebar-body-" + slug;
-      var title = heading.textContent.trim();
-      var head = document.createElement("button");
-      head.type = "button";
-      head.className = "sidebar-section-head";
-      head.setAttribute("aria-controls", bodyId);
-      head.setAttribute("aria-expanded", "true");
-      head.innerHTML =
-        '<span class="sidebar-section-chevron">' +
-        TOGGLE_ICON +
-        '</span><span class="sidebar-section-title"></span>';
-      head.querySelector(".sidebar-section-title").textContent = title;
-      heading.remove();
-
-      var body = document.createElement("div");
-      body.className = "sidebar-section-body";
-      body.id = bodyId;
-      while (section.firstChild) {
-        body.appendChild(section.firstChild);
-      }
-      section.appendChild(head);
-      section.appendChild(body);
-
-      var startCollapsed = collapsedState[slug] === true;
-      setSidebarSectionCollapsed(section, head, startCollapsed, null, null);
-      (function (sec, hd, sl, state) {
-        hd.addEventListener("click", function () {
-          var collapsed = !sec.classList.contains("collapsed");
-          setSidebarSectionCollapsed(sec, hd, collapsed, sl, state);
-        });
-      })(section, head, slug, collapsedState);
-    }
-  }
-
-  function readSidebarInspectHeight() {
-    try {
-      var raw = localStorage.getItem(SIDEBAR_INSPECT_HEIGHT_KEY);
-      if (!raw) {
-        return null;
-      }
-      var value = parseFloat(raw);
-      return Number.isFinite(value) && value > 0 ? value : null;
-    } catch (err) {
-      return null;
-    }
-  }
-
-  function writeSidebarInspectHeight(px) {
-    try {
-      localStorage.setItem(SIDEBAR_INSPECT_HEIGHT_KEY, String(Math.round(px)));
-    } catch (err) {
-      /* ignore */
-    }
-  }
-
-  function clearSidebarInspectHeightStorage() {
-    try {
-      localStorage.removeItem(SIDEBAR_INSPECT_HEIGHT_KEY);
-    } catch (err) {
-      /* ignore */
-    }
-  }
-
-  function setSidebarInspectHeightCustom(sidebar, custom) {
-    sidebar.classList.toggle("is-inspect-height-custom", custom);
-    if (!custom) {
-      sidebar.style.removeProperty("--sidebar-inspect-h");
-    }
-  }
-
-  function clampSidebarInspectHeight(sidebar, inspectSection, desiredPx) {
-    var sidebarH = sidebar.clientHeight;
-    var handleH =
-      inspectSection && !inspectSection.classList.contains("collapsed") ? 7 : 0;
-    var maxInspect = Math.max(
-      SIDEBAR_INSPECT_MIN_H,
-      sidebarH - handleH - SIDEBAR_UPPER_MIN_H
-    );
-    return Math.min(Math.max(desiredPx, SIDEBAR_INSPECT_MIN_H), maxInspect);
-  }
-
-  function applySidebarInspectHeight(sidebar, inspectSection, px, persist) {
-    var clamped = clampSidebarInspectHeight(sidebar, inspectSection, px);
-    setSidebarInspectHeightCustom(sidebar, true);
-    sidebar.style.setProperty("--sidebar-inspect-h", clamped + "px");
-    if (persist) {
-      writeSidebarInspectHeight(clamped);
-    }
-    return clamped;
-  }
-
-  function resetSidebarInspectHeight(sidebar) {
-    setSidebarInspectHeightCustom(sidebar, false);
-  }
-
-  function initSidebarPanelResize() {
-    var sidebar = document.querySelector(".sidebar-right");
-    var inspectSection = document.querySelector(".sidebar-right .sidebar-inspect");
-    var handle = document.querySelector(".sidebar-right .sidebar-split-handle");
-    if (!sidebar || !inspectSection || !handle) {
-      return;
-    }
-
-    var stored = readSidebarInspectHeight();
-    if (stored !== null) {
-      applySidebarInspectHeight(sidebar, inspectSection, stored, false);
-    } else {
-      resetSidebarInspectHeight(sidebar);
-    }
-
-    function splitResizeEnabled() {
-      return (
-        !inspectSection.classList.contains("collapsed") &&
-        !inspectSection.classList.contains("sidebar-section-user-hidden")
-      );
-    }
-
-    function syncSplitHandle() {
-      var enabled = splitResizeEnabled();
-      handle.hidden = !enabled;
-      handle.setAttribute("aria-hidden", enabled ? "false" : "true");
-    }
-
-    syncSplitHandle();
-    var collapseObserver = new MutationObserver(syncSplitHandle);
-    collapseObserver.observe(inspectSection, { attributes: true, attributeFilter: ["class"] });
-    syncSidebarInspectSplitHandle = syncSplitHandle;
-
-    window.addEventListener("resize", function () {
-      if (!splitResizeEnabled() || !sidebar.classList.contains("is-inspect-height-custom")) {
-        return;
-      }
-      var current = parseFloat(
-        getComputedStyle(sidebar).getPropertyValue("--sidebar-inspect-h")
-      );
-      if (!Number.isFinite(current)) {
-        current = inspectSection.offsetHeight;
-      }
-      applySidebarInspectHeight(sidebar, inspectSection, current, true);
-    });
-
-    var drag = null;
-
-    function finishDrag() {
-      if (!drag) {
-        return;
-      }
-      handle.classList.remove("is-dragging");
-      document.body.classList.remove("sidebar-panel-resizing");
-      drag = null;
-    }
-
-    function onPointerMove(event) {
-      if (!drag) {
-        return;
-      }
-      var delta = event.clientY - drag.startY;
-      applySidebarInspectHeight(
-        sidebar,
-        inspectSection,
-        drag.startHeight - delta,
-        false
-      );
-    }
-
-    function onPointerUp() {
-      if (!drag) {
-        return;
-      }
-      var current = parseFloat(
-        getComputedStyle(sidebar).getPropertyValue("--sidebar-inspect-h")
-      );
-      if (Number.isFinite(current)) {
-        writeSidebarInspectHeight(current);
-      }
-      finishDrag();
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", onPointerUp);
-      window.removeEventListener("pointercancel", onPointerUp);
-    }
-
-    handle.addEventListener("pointerdown", function (event) {
-      if (!splitResizeEnabled() || event.button !== 0) {
-        return;
-      }
-      event.preventDefault();
-      var current = inspectSection.offsetHeight;
-      drag = { startY: event.clientY, startHeight: current };
-      handle.classList.add("is-dragging");
-      document.body.classList.add("sidebar-panel-resizing");
-      handle.setPointerCapture(event.pointerId);
-      window.addEventListener("pointermove", onPointerMove);
-      window.addEventListener("pointerup", onPointerUp);
-      window.addEventListener("pointercancel", onPointerUp);
-    });
-
-    handle.addEventListener("keydown", function (event) {
-      if (!splitResizeEnabled()) {
-        return;
-      }
-      var step = event.shiftKey ? 24 : 8;
-      var dir = 0;
-      if (event.key === "ArrowUp") {
-        dir = 1;
-      } else if (event.key === "ArrowDown") {
-        dir = -1;
-      } else {
-        return;
-      }
-      event.preventDefault();
-      var current = inspectSection.offsetHeight;
-      applySidebarInspectHeight(
-        sidebar,
-        inspectSection,
-        current + dir * step,
-        true
-      );
-    });
-  }
-
-  function readStoredPaneWidth(storageKey) {
-    try {
-      var raw = localStorage.getItem(storageKey);
-      if (!raw) {
-        return null;
-      }
-      var value = parseFloat(raw);
-      return Number.isFinite(value) && value > 0 ? value : null;
-    } catch (err) {
-      return null;
-    }
-  }
-
-  function writeStoredPaneWidth(storageKey, px) {
-    try {
-      localStorage.setItem(storageKey, String(Math.round(px)));
-    } catch (err) {
-      /* ignore */
-    }
-  }
-
-  function readStoredPaneCollapsed(storageKey) {
-    try {
-      return localStorage.getItem(storageKey) === "1";
-    } catch (err) {
-      return false;
-    }
-  }
-
-  function writeStoredPaneCollapsed(storageKey, collapsed) {
-    try {
-      if (collapsed) {
-        localStorage.setItem(storageKey, "1");
-      } else {
-        localStorage.removeItem(storageKey);
-      }
-    } catch (err) {
-      /* ignore */
-    }
-  }
-
-  function readCssPx(varName) {
-    var value = parseFloat(
-      getComputedStyle(document.documentElement).getPropertyValue(varName)
-    );
-    return Number.isFinite(value) ? value : 0;
-  }
-
-  function otherPaneReservedWidth(workspace, collapsedClass, cssVar) {
-    if (!workspace || workspace.classList.contains(collapsedClass)) {
-      return 0;
-    }
-    return readCssPx(cssVar);
-  }
-
-  function clampPaneWidth(px, workspace, collapsedClass, cssVar, otherCollapsedClass, otherCssVar) {
-    var otherW = otherPaneReservedWidth(workspace, otherCollapsedClass, otherCssVar);
-    var maxW = Math.min(
-      SIDEBAR_WIDTH_MAX,
-      Math.max(SIDEBAR_WIDTH_MIN, window.innerWidth - 280 - otherW)
-    );
-    return Math.min(Math.max(px, SIDEBAR_WIDTH_MIN), maxW);
-  }
-
-  function scheduleSidebarMapInvalidate() {
-    if (sidebarWidthInvalidateTimer) {
-      clearTimeout(sidebarWidthInvalidateTimer);
-    }
-    sidebarWidthInvalidateTimer = setTimeout(function () {
-      sidebarWidthInvalidateTimer = null;
-      if (!window.GisMap || typeof GisMap.getMap !== "function") {
-        return;
-      }
-      var mapInstance = GisMap.getMap();
-      if (mapInstance && typeof mapInstance.invalidateSize === "function") {
-        mapInstance.invalidateSize();
-      }
-    }, 0);
-  }
-
-  function applyPaneWidth(workspace, cssVar, storageKey, px, persist, clampOptions) {
-    var clamped = clampPaneWidth(
-      px,
-      workspace,
-      clampOptions.collapsedClass,
-      clampOptions.cssVar,
-      clampOptions.otherCollapsedClass,
-      clampOptions.otherCssVar
-    );
-    document.documentElement.style.setProperty(cssVar, clamped + "px");
-    if (persist) {
-      writeStoredPaneWidth(storageKey, clamped);
-    }
-    scheduleSidebarMapInvalidate();
-    return clamped;
-  }
-
-  function setWorkspacePaneCollapsed(workspace, toggleBtn, collapsed, persist, options) {
-    workspace.classList.toggle(options.collapsedClass, collapsed);
-    if (toggleBtn) {
-      toggleBtn.setAttribute("aria-expanded", collapsed ? "false" : "true");
-      toggleBtn.title = collapsed ? options.expandLabel : options.collapseLabel;
-      toggleBtn.setAttribute(
-        "aria-label",
-        collapsed ? options.expandLabel : options.collapseLabel
-      );
-    }
-    if (persist) {
-      writeStoredPaneCollapsed(options.collapsedStorageKey, collapsed);
-    }
-    scheduleSidebarMapInvalidate();
-  }
-
-  function initWorkspacePaneWidthResize(options) {
-    var workspace = document.querySelector(".workspace");
-    var edge = document.querySelector(options.edgeSelector);
-    var toggleBtn = document.getElementById(options.toggleId);
-    if (!workspace || !edge) {
-      return;
-    }
-
-    var clampOptions = {
-      collapsedClass: options.collapsedClass,
-      cssVar: options.cssVar,
-      otherCollapsedClass: options.otherCollapsedClass,
-      otherCssVar: options.otherCssVar,
-    };
-
-    var storedWidth = readStoredPaneWidth(options.widthStorageKey);
-    if (storedWidth !== null) {
-      applyPaneWidth(workspace, options.cssVar, options.widthStorageKey, storedWidth, false, clampOptions);
-    }
-
-    var startCollapsed = readStoredPaneCollapsed(options.collapsedStorageKey);
-    setWorkspacePaneCollapsed(workspace, toggleBtn, startCollapsed, false, options);
-
-    window.addEventListener("resize", function () {
-      if (workspace.classList.contains(options.collapsedClass)) {
-        return;
-      }
-      var current = readCssPx(options.cssVar);
-      if (!current) {
-        current = SIDEBAR_WIDTH_MIN;
-      }
-      applyPaneWidth(workspace, options.cssVar, options.widthStorageKey, current, true, clampOptions);
-    });
-
-    if (toggleBtn) {
-      toggleBtn.addEventListener("click", function (event) {
-        event.stopPropagation();
-        var collapsed = !workspace.classList.contains(options.collapsedClass);
-        setWorkspacePaneCollapsed(workspace, toggleBtn, collapsed, true, options);
-      });
-      toggleBtn.addEventListener("pointerdown", function (event) {
-        event.stopPropagation();
-      });
-    }
-
-    var drag = null;
-
-    function finishWidthDrag() {
-      if (!drag) {
-        return;
-      }
-      edge.classList.remove("is-dragging");
-      document.body.classList.remove("sidebar-width-resizing");
-      drag = null;
-    }
-
-    function onWidthPointerMove(event) {
-      if (!drag) {
-        return;
-      }
-      if (workspace.classList.contains(options.collapsedClass)) {
-        setWorkspacePaneCollapsed(workspace, toggleBtn, false, true, options);
-      }
-      var delta = event.clientX - drag.startX;
-      applyPaneWidth(
-        workspace,
-        options.cssVar,
-        options.widthStorageKey,
-        drag.startWidth + delta * options.dragSign,
-        false,
-        clampOptions
-      );
-    }
-
-    function onWidthPointerUp() {
-      if (!drag) {
-        return;
-      }
-      var current = readCssPx(options.cssVar);
-      if (Number.isFinite(current)) {
-        writeStoredPaneWidth(options.widthStorageKey, current);
-      }
-      finishWidthDrag();
-      window.removeEventListener("pointermove", onWidthPointerMove);
-      window.removeEventListener("pointerup", onWidthPointerUp);
-      window.removeEventListener("pointercancel", onWidthPointerUp);
-    }
-
-    edge.addEventListener("pointerdown", function (event) {
-      if (event.button !== 0 || (toggleBtn && toggleBtn.contains(event.target))) {
-        return;
-      }
-      event.preventDefault();
-      if (workspace.classList.contains(options.collapsedClass)) {
-        setWorkspacePaneCollapsed(workspace, toggleBtn, false, true, options);
-      }
-      var current = readCssPx(options.cssVar);
-      if (!current) {
-        current = SIDEBAR_WIDTH_MIN;
-      }
-      drag = { startX: event.clientX, startWidth: current };
-      edge.classList.add("is-dragging");
-      document.body.classList.add("sidebar-width-resizing");
-      edge.setPointerCapture(event.pointerId);
-      window.addEventListener("pointermove", onWidthPointerMove);
-      window.addEventListener("pointerup", onWidthPointerUp);
-      window.addEventListener("pointercancel", onWidthPointerUp);
-    });
-
-    edge.addEventListener("keydown", function (event) {
-      if (workspace.classList.contains(options.collapsedClass)) {
-        if (event.key === options.expandKey) {
-          event.preventDefault();
-          setWorkspacePaneCollapsed(workspace, toggleBtn, false, true, options);
-        }
-        return;
-      }
-      var step = event.shiftKey ? 24 : 8;
-      var dir = 0;
-      if (event.key === options.widenKey) {
-        dir = 1;
-      } else if (event.key === options.narrowKey) {
-        dir = -1;
-      } else {
-        return;
-      }
-      event.preventDefault();
-      var current = readCssPx(options.cssVar);
-      if (!current) {
-        current = SIDEBAR_WIDTH_MIN;
-      }
-      applyPaneWidth(
-        workspace,
-        options.cssVar,
-        options.widthStorageKey,
-        current + dir * step,
-        true,
-        clampOptions
-      );
-    });
-  }
-
-  function initSidebarWidthResize() {
-    initWorkspacePaneWidthResize({
-      edgeSelector: ".sidebar-edge-left",
-      toggleId: "sidebar-collapse-toggle",
-      cssVar: "--sidebar-w",
-      widthStorageKey: SIDEBAR_WIDTH_KEY,
-      collapsedStorageKey: SIDEBAR_COLLAPSED_KEY,
-      collapsedClass: "is-sidebar-collapsed",
-      otherCollapsedClass: "is-right-pane-collapsed",
-      otherCssVar: "--right-pane-w",
-      dragSign: 1,
-      expandKey: "ArrowRight",
-      widenKey: "ArrowLeft",
-      narrowKey: "ArrowRight",
-      collapseLabel: "Collapse sidebar",
-      expandLabel: "Expand sidebar",
-    });
-    initWorkspacePaneWidthResize({
-      edgeSelector: ".sidebar-edge-right",
-      toggleId: "right-pane-collapse-toggle",
-      cssVar: "--right-pane-w",
-      widthStorageKey: RIGHT_PANE_WIDTH_KEY,
-      collapsedStorageKey: RIGHT_PANE_COLLAPSED_KEY,
-      collapsedClass: "is-right-pane-collapsed",
-      otherCollapsedClass: "is-sidebar-collapsed",
-      otherCssVar: "--sidebar-w",
-      dragSign: -1,
-      expandKey: "ArrowLeft",
-      widenKey: "ArrowLeft",
-      narrowKey: "ArrowRight",
-      collapseLabel: "Collapse layers panel",
-      expandLabel: "Expand layers panel",
-    });
-  }
+  // Node map label dialog and bulk labels (js/main/node-map-label-dialog.js)
+  var nodeMapLabelUi = window.KmzMainNodeMapLabelDialog(main);
 
   var EYE_ICON =
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 5C7 5 2.7 8.1 1 12c1.7 3.9 6 7 11 7s9.3-3.1 11-7c-1.7-3.9-6-7-11-7zm0 11.5A4.5 4.5 0 1 1 12 7.5a4.5 4.5 0 0 1 0 9z"/><path fill="currentColor" d="M12 10.2a1.8 1.8 0 1 0 .01 0z"/></svg>';
@@ -1041,23 +216,6 @@
     scale: 1,
   };
   var layerNodeIconSaveToKmz = true;
-  var nodeMapLabelDialog = document.getElementById("node-map-label-dialog");
-  var nodeMapLabelSubtitle = document.getElementById("node-map-label-subtitle");
-  var nodeMapLabelTitle = document.getElementById("node-map-label-title");
-  var nodeMapLabelApplyBtn = document.getElementById("node-map-label-apply");
-  var nodeMapLabelRemoveBtn = document.getElementById("node-map-label-remove");
-  var nodeMapLabelSession = null;
-  var nodeMapLabelSaveToKmz = true;
-  var nodeMapLabelPreviewBtn = document.getElementById("node-map-label-preview");
-  var nodeMapLabelFloatingController = null;
-  var MAP_LABEL_FONT_OPTIONS = [
-    { value: "system-ui, Segoe UI, sans-serif", label: "System UI" },
-    { value: "Segoe UI, sans-serif", label: "Segoe UI" },
-    { value: "Arial, Helvetica, sans-serif", label: "Arial" },
-    { value: "Georgia, serif", label: "Georgia" },
-    { value: "Times New Roman, Times, serif", label: "Times New Roman" },
-    { value: "Courier New, Courier, monospace", label: "Courier New" },
-  ];
   var sourceOverwriteDialog = document.getElementById("source-overwrite-dialog");
   var sourceOverwriteSubtitle = document.getElementById("source-overwrite-subtitle");
   var sourceOverwriteMessage = document.getElementById("source-overwrite-message");
@@ -1103,28 +261,12 @@
   var pointIconsSectionEl = document.getElementById("point-icons-section");
   var filePointIconsEl = document.getElementById("file-point-icons");
   var btnCsvCoordsPreview = document.getElementById("btn-csv-coords-preview");
-  var btnCsvCoordsApply = document.getElementById("btn-csv-coords-apply");
-  var csvCoordsCsvPathInput = document.getElementById("csv-coords-csv-path");
-  var csvCoordsKmzPathInput = document.getElementById("csv-coords-kmz-path");
-  var csvCoordsCsvSelectedEl = document.getElementById("csv-coords-csv-selected");
-  var csvCoordsKmzSelectedEl = document.getElementById("csv-coords-kmz-selected");
+
+  // CSV/Excel GPS coordinates to KMZ dialog (js/main/csv-coords-dialog.js)
+  var csvCoordsUi = window.KmzMainCsvCoordsDialog(main);
   var csvCoordsBrowseCsvBtn = document.getElementById("csv-coords-browse-csv");
   var csvCoordsBrowseKmzBtn = document.getElementById("csv-coords-browse-kmz");
-  var csvCoordsStatusEl = document.getElementById("csv-coords-status");
-  var csvCoordsPreviewSection = document.getElementById("csv-coords-preview-section");
-  var csvCoordsPreviewSummary = document.getElementById("csv-coords-preview-summary");
-  var csvCoordsPreviewWarnings = document.getElementById("csv-coords-preview-warnings");
-  var csvCoordsDiffBody = document.getElementById("csv-coords-diff-body");
-  var csvCoordsInput = document.getElementById("csv-coords-input");
-  var csvCoordsKmzInput = document.getElementById("csv-coords-kmz-input");
   var csvCoordsDialog = document.getElementById("csv-coords-dialog");
-  var csvCoordsBrowserCsvFile = null;
-  var csvCoordsBrowserKmzFile = null;
-  /** Loaded source targeted from the layer tree when it has no disk path. */
-  var csvCoordsTargetSourceId = null;
-  var csvCoordsDefaultCsvDirInput = document.getElementById("csv-coords-default-csv-dir");
-  var csvCoordsDefaultKmzDirInput = document.getElementById("csv-coords-default-kmz-dir");
-  var csvCoordsApplyContext = null;
   var customIconsCatalog = [];
   var customIconsUserFolder = "";
   var customIconThumbUrls = {};
@@ -1136,27 +278,6 @@
   var filePointIconSourceId = null;
   var filePointIconSourceUserPick = false;
   var filePointIconSaveToKmz = true;
-  var pointChainSectionEl = document.getElementById("point-chain-section");
-  var pointChainPanelEl = document.getElementById("point-chain-panel");
-  var pointChainSourceId = null;
-  var pointChainSourceUserPick = false;
-  var pointChainStartDirection = "N";
-  var pointChainDraftPath = null;
-  var pointChainDragIndex = null;
-  var pointChainLineStyle = {
-    color: "#e8710a",
-    weight: 3,
-    opacity: 0.92,
-    dash: "solid",
-  };
-  var pointChainCommittedSegments = [];
-  var pointChainUndoStack = [];
-  var pointChainUsedKeys = {};
-  var pointChainStartNodeKey = null;
-  var pointChainShowEndpointMarkers = true;
-  var pointChainMapVisible = true;
-  var pointChainAutoAddToLayers = false;
-  var pointChainSavedBySourceId = {};
   var saveInFlight = false;
   var desktopSession = null;
   var desktopExternalEditAvailable = false;
@@ -2295,7 +1416,7 @@
     }
     if (!enabled) {
       filePointIconsEl.innerHTML = "";
-      refreshPointChainPanel();
+      pointChainPanel.refreshPointChainPanel();
       return;
     }
     var hint =
@@ -2376,1593 +1497,7 @@
         desktop ? desktop.token : ""
       );
     });
-    refreshPointChainPanel();
-  }
-
-  function resolvePointChainSourceId() {
-    var candidates = loadedSourcesWithPointPlacemarks();
-    if (!candidates.length) {
-      return null;
-    }
-    if (pointChainSourceUserPick && pointChainSourceId) {
-      for (var i = 0; i < candidates.length; i += 1) {
-        if (candidates[i].id === pointChainSourceId) {
-          return pointChainSourceId;
-        }
-      }
-      pointChainSourceUserPick = false;
-      pointChainSourceId = null;
-    }
-    if (activeSourceId && GisMap.countSourcePointPlacemarks(activeSourceId) > 0) {
-      return activeSourceId;
-    }
-    return candidates[0].id;
-  }
-
-  function resolvePointChainSourceIdFromSelect(selectEl) {
-    var sourceId = resolvePointChainSourceId();
-    if (selectEl && selectEl.value) {
-      sourceId = selectEl.value;
-    }
-    return sourceId;
-  }
-
-  function buildPointChainSourceSelectHtml(selectedSourceId) {
-    return buildLoadedPointSourceSelectHtml(selectedSourceId, {
-      selectId: "point-chain-source",
-      labelText: "KMZ / KML file",
-    });
-  }
-
-  function buildPointChainStyleHtml(style) {
-    style = style || pointChainLineStyle;
-    var opacityPct = Math.round((style.opacity || 0.92) * 100);
-    return (
-      '<fieldset class="point-chain-style">' +
-      '<legend class="point-chain-style-legend">Line style</legend>' +
-      '<p class="muted point-chain-style-hint">Adjust anytime; updates the map line live after you draw.</p>' +
-      '<label class="point-chain-style-row point-chain-style-color">' +
-      '<span>Color</span>' +
-      '<input id="point-chain-line-color" type="color" value="' +
-      escapeText(style.color || "#e8710a") +
-      '" aria-label="Chain line color" />' +
-      "</label>" +
-      '<label class="point-chain-style-row">' +
-      '<span>Width <strong id="point-chain-line-weight-value">' +
-      (style.weight || 3) +
-      " px</strong></span>" +
-      '<input id="point-chain-line-weight" type="range" min="1" max="12" step="1" value="' +
-      (style.weight || 3) +
-      '" aria-valuemin="1" aria-valuemax="12" aria-valuenow="' +
-      (style.weight || 3) +
-      '" aria-label="Chain line width" />' +
-      "</label>" +
-      '<label class="point-chain-style-row">' +
-      '<span>Opacity <strong id="point-chain-line-opacity-value">' +
-      opacityPct +
-      "%</strong></span>" +
-      '<input id="point-chain-line-opacity" type="range" min="10" max="100" step="5" value="' +
-      opacityPct +
-      '" aria-valuemin="10" aria-valuemax="100" aria-valuenow="' +
-      opacityPct +
-      '" aria-label="Chain line opacity" />' +
-      "</label>" +
-      '<label class="point-chain-style-row point-chain-style-dash">' +
-      "<span>Pattern</span>" +
-      '<select id="point-chain-line-dash" aria-label="Chain line pattern">' +
-      '<option value="solid"' +
-      (style.dash === "solid" || !style.dash ? " selected" : "") +
-      ">Solid</option>" +
-      '<option value="dashed"' +
-      (style.dash === "dashed" ? " selected" : "") +
-      ">Dashed</option>" +
-      '<option value="dotted"' +
-      (style.dash === "dotted" ? " selected" : "") +
-      ">Dotted</option>" +
-      "</select></label>" +
-      '<label class="point-chain-style-row point-chain-style-markers">' +
-      '<input id="point-chain-show-end-markers" type="checkbox"' +
-      (pointChainShowEndpointMarkers ? " checked" : "") +
-      " /> Show segment end markers on map</label>" +
-      '<label class="point-chain-style-row point-chain-style-markers">' +
-      '<input id="point-chain-show-on-map" type="checkbox"' +
-      (pointChainMapVisible ? " checked" : "") +
-      ' /> Show preview line on map <span class="muted">(L)</span></label>' +
-      '<label class="point-chain-style-row point-chain-style-markers">' +
-      '<input id="point-chain-auto-add-layers" type="checkbox"' +
-      (pointChainAutoAddToLayers ? " checked" : "") +
-      " /> Add each drawn segment to the layer tree</label></fieldset>"
-    );
-  }
-
-  function readPointChainStyleFromUi() {
-    var colorEl = document.getElementById("point-chain-line-color");
-    var weightEl = document.getElementById("point-chain-line-weight");
-    var opacityEl = document.getElementById("point-chain-line-opacity");
-    var dashEl = document.getElementById("point-chain-line-dash");
-    var opacityPct = opacityEl ? parseInt(opacityEl.value, 10) : 92;
-    if (Number.isNaN(opacityPct)) {
-      opacityPct = 92;
-    }
-    return {
-      color: (colorEl && colorEl.value) || pointChainLineStyle.color,
-      weight: weightEl ? parseInt(weightEl.value, 10) : pointChainLineStyle.weight,
-      opacity: opacityPct / 100,
-      dash: (dashEl && dashEl.value) || pointChainLineStyle.dash,
-    };
-  }
-
-  function syncPointChainStyleValueLabels(style) {
-    var weightValueEl = document.getElementById("point-chain-line-weight-value");
-    var opacityValueEl = document.getElementById("point-chain-line-opacity-value");
-    if (weightValueEl) {
-      weightValueEl.textContent = (style.weight || 3) + " px";
-    }
-    if (opacityValueEl) {
-      opacityValueEl.textContent = Math.round((style.opacity || 0.92) * 100) + "%";
-    }
-  }
-
-  function applyPointChainLineStyleLive() {
-    pointChainLineStyle = readPointChainStyleFromUi();
-    syncPointChainStyleValueLabels(pointChainLineStyle);
-    var markersEl = document.getElementById("point-chain-show-end-markers");
-    if (markersEl) {
-      pointChainShowEndpointMarkers = markersEl.checked;
-    }
-    var mapVisibleEl = document.getElementById("point-chain-show-on-map");
-    if (mapVisibleEl) {
-      pointChainMapVisible = mapVisibleEl.checked;
-    }
-    var autoAddEl = document.getElementById("point-chain-auto-add-layers");
-    if (autoAddEl) {
-      pointChainAutoAddToLayers = autoAddEl.checked;
-    }
-    if (window.PointChain) {
-      PointChain.setLineStyle(pointChainLineStyle);
-      PointChain.setShowEndpointMarkers(pointChainShowEndpointMarkers);
-      applyPointChainMapVisibility();
-    }
-  }
-
-  function applyPointChainMapVisibility() {
-    if (window.PointChain) {
-      PointChain.setLayerVisible(pointChainMapVisible);
-    }
-    syncPointChainMapVisibilityUi();
-  }
-
-  function syncPointChainMapVisibilityUi() {
-    var toggle = document.getElementById("point-chain-show-on-map");
-    if (!toggle) {
-      return;
-    }
-    var hasPreview =
-      pointChainHasCommittedLine()
-      || (window.PointChain && PointChain.hasChainOnMap && PointChain.hasChainOnMap());
-    toggle.checked = pointChainMapVisible;
-    toggle.disabled = !hasPreview;
-  }
-
-  function togglePointChainMapVisibility() {
-    if (
-      !pointChainHasCommittedLine()
-      && (!window.PointChain || !PointChain.hasChainOnMap || !PointChain.hasChainOnMap())
-    ) {
-      return false;
-    }
-    pointChainMapVisible = !pointChainMapVisible;
-    applyPointChainMapVisibility();
-    setMessage(
-      pointChainMapVisible
-        ? "Point chain preview lines are shown on the map."
-        : "Point chain preview lines are hidden on the map."
-    );
-    return true;
-  }
-
-  function syncPointChainSegmentsToLayerTree(options) {
-    options = options || {};
-    var sourceId = resolvePointChainSourceId();
-    var source = findLoadedSource(sourceId);
-    if (!source || !source.doc || !source.doc.xmlDoc) {
-      setMessage("Select a loaded KMZ/KML file for the point chain.");
-      return false;
-    }
-    if (!pointChainHasCommittedLine()) {
-      setMessage("Draw at least one segment before adding layer nodes.");
-      return false;
-    }
-    if (
-      !window.PointChainPersist
-      || !window.KmzSave
-      || !GisMap.syncPointChainFolderInTree
-    ) {
-      setMessage("Could not add point chain segments to the layer tree.");
-      return false;
-    }
-    pointChainStashCurrentToMemory();
-    var payload = pointChainExportSerializableState();
-    if (!PointChainPersist.writeIntoSource(source, payload)) {
-      setMessage("Could not write point chain lines into " + source.doc.fileName + ".");
-      return false;
-    }
-    var folderNodeId = GisMap.syncPointChainFolderInTree(
-      sourceId,
-      source.doc.xmlDoc,
-      function (href) {
-        return href || "";
-      }
-    );
-    markSourceEdited(source);
-    renderTree(GisMap.getRoot());
-    if (options.hidePreviewOverlay) {
-      pointChainMapVisible = false;
-      applyPointChainMapVisibility();
-    }
-    if (options.setStatus !== false) {
-      var folderName = KmzSave.POINT_CHAIN_FOLDER_NAME || "kmz-opener Point chain";
-      setMessage(
-        folderNodeId
-          ? "Added line segments to the layer tree under \"" +
-              folderName +
-              "\". Show or hide them with the layer tree checkboxes."
-          : "Updated point chain layers in " + source.doc.fileName + "."
-      );
-    }
-    return !!folderNodeId;
-  }
-
-  function bindPointChainStyleControls() {
-    var colorEl = document.getElementById("point-chain-line-color");
-    var weightEl = document.getElementById("point-chain-line-weight");
-    var opacityEl = document.getElementById("point-chain-line-opacity");
-    var dashEl = document.getElementById("point-chain-line-dash");
-    var markersEl = document.getElementById("point-chain-show-end-markers");
-    var mapVisibleEl = document.getElementById("point-chain-show-on-map");
-    var autoAddEl = document.getElementById("point-chain-auto-add-layers");
-    if (colorEl) {
-      colorEl.addEventListener("input", applyPointChainLineStyleLive);
-    }
-    if (weightEl) {
-      weightEl.addEventListener("input", applyPointChainLineStyleLive);
-    }
-    if (opacityEl) {
-      opacityEl.addEventListener("input", applyPointChainLineStyleLive);
-    }
-    if (dashEl) {
-      dashEl.addEventListener("change", applyPointChainLineStyleLive);
-    }
-    if (markersEl) {
-      markersEl.addEventListener("change", applyPointChainLineStyleLive);
-    }
-    if (mapVisibleEl) {
-      mapVisibleEl.addEventListener("change", applyPointChainLineStyleLive);
-    }
-    if (autoAddEl) {
-      autoAddEl.addEventListener("change", applyPointChainLineStyleLive);
-    }
-  }
-
-  function pointChainHasCommittedLine() {
-    return pointChainCommittedSegments.some(function (segment) {
-      return segment && segment.length >= 2;
-    });
-  }
-
-  function pointChainCommittedStats() {
-    var pointCount = 0;
-    var lengthMeters = 0;
-    pointChainCommittedSegments.forEach(function (segment) {
-      if (!segment || !segment.length) {
-        return;
-      }
-      pointCount += segment.length;
-      if (segment.length >= 2 && window.PointChain) {
-        lengthMeters += PointChain.pathLengthMeters(segment);
-      }
-    });
-    return { pointCount: pointCount, lengthMeters: lengthMeters };
-  }
-
-  function drawPointChainCommittedOnMap(fitBounds) {
-    if (!window.PointChain) {
-      return null;
-    }
-    var summary = PointChain.drawChain(null, {
-      segments: pointChainCommittedSegments,
-      fitBounds: fitBounds !== false,
-      style: pointChainLineStyle,
-      showEndpointMarkers: pointChainShowEndpointMarkers,
-    });
-    applyPointChainMapVisibility();
-    return summary;
-  }
-
-  function pointChainCloneSegment(segment) {
-    if (!segment || !segment.length) {
-      return [];
-    }
-    return segment.map(function (entry) {
-      return {
-        nodeId: entry.nodeId,
-        name: entry.name,
-        lat: entry.lat,
-        lng: entry.lng,
-      };
-    });
-  }
-
-  function pointChainExportSerializableState() {
-    if (!pointChainHasCommittedLine()) {
-      return null;
-    }
-    return {
-      segments: pointChainCommittedSegments.map(pointChainCloneSegment),
-      style: {
-        color: pointChainLineStyle.color,
-        weight: pointChainLineStyle.weight,
-        opacity: pointChainLineStyle.opacity,
-        dash: pointChainLineStyle.dash,
-      },
-      showEndpointMarkers: pointChainShowEndpointMarkers,
-      mapVisible: pointChainMapVisible,
-      startDirection: pointChainStartDirection,
-      startNodeKey: pointChainStartNodeKey,
-      draft:
-        pointChainDraftPath && pointChainDraftPath.length >= 2
-          ? pointChainCloneSegment(pointChainDraftPath)
-          : null,
-    };
-  }
-
-  function pointChainApplySerializableState(state) {
-    resetPointChainRoute();
-    if (!state || !state.segments || !state.segments.length) {
-      renderPointChainOrderList();
-      syncPointChainSegmentUi();
-      return;
-    }
-    pointChainCommittedSegments = state.segments.map(pointChainCloneSegment);
-    rebuildPointChainUsedKeysFromCommitted();
-    pointChainLineStyle = {
-      color: (state.style && state.style.color) || pointChainLineStyle.color,
-      weight: (state.style && state.style.weight) || pointChainLineStyle.weight,
-      opacity:
-        state.style && state.style.opacity != null
-          ? state.style.opacity
-          : pointChainLineStyle.opacity,
-      dash: (state.style && state.style.dash) || pointChainLineStyle.dash,
-    };
-    pointChainShowEndpointMarkers = state.showEndpointMarkers !== false;
-    pointChainMapVisible = state.mapVisible !== false;
-    pointChainStartDirection = state.startDirection || pointChainStartDirection;
-    pointChainStartNodeKey = state.startNodeKey || null;
-    if (state.draft && state.draft.length >= 2) {
-      pointChainDraftPath = pointChainCloneSegment(state.draft);
-    }
-    if (window.PointChain) {
-      PointChain.setShowEndpointMarkers(pointChainShowEndpointMarkers);
-      drawPointChainCommittedOnMap(false);
-    }
-    renderPointChainOrderList();
-    syncPointChainSegmentUi();
-  }
-
-  function pointChainStorageKey(sourceId) {
-    var source = findLoadedSource(sourceId);
-    if (!source || !source.doc) {
-      return String(sourceId || "");
-    }
-    return source.doc.sourcePath || source.doc.fileName || String(sourceId);
-  }
-
-  function pointChainStashCurrentToMemory() {
-    var sourceId = resolvePointChainSourceId();
-    if (!sourceId) {
-      return;
-    }
-    var storageKey = pointChainStorageKey(sourceId);
-    if (!pointChainHasCommittedLine()) {
-      delete pointChainSavedBySourceId[storageKey];
-      return;
-    }
-    var payload = pointChainExportSerializableState();
-    if (payload) {
-      pointChainSavedBySourceId[storageKey] = payload;
-    } else {
-      delete pointChainSavedBySourceId[storageKey];
-    }
-  }
-
-  function loadPointChainForSource(sourceId) {
-    if (!sourceId) {
-      resetPointChainRoute();
-      renderPointChainOrderList();
-      syncPointChainSegmentUi();
-      return;
-    }
-    var storageKey = pointChainStorageKey(sourceId);
-    var memoryState = pointChainSavedBySourceId[storageKey];
-    if (memoryState) {
-      pointChainApplySerializableState(memoryState);
-      return;
-    }
-    var source = findLoadedSource(sourceId);
-    if (source && window.PointChainPersist) {
-      var fromDoc = PointChainPersist.readFromSource(source);
-      if (fromDoc) {
-        pointChainApplySerializableState(fromDoc);
-        pointChainSavedBySourceId[storageKey] = fromDoc;
-        return;
-      }
-    }
-    resetPointChainRoute();
-    renderPointChainOrderList();
-    syncPointChainSegmentUi();
-  }
-
-  function collectPointChainSessionsForGui() {
-    pointChainStashCurrentToMemory();
-    return Object.assign({}, pointChainSavedBySourceId);
-  }
-
-  function savePointChainLinesIntoSourceKmz() {
-    var sourceId = resolvePointChainSourceId();
-    var source = findLoadedSource(sourceId);
-    if (!source || !source.doc || !source.doc.xmlDoc) {
-      setMessage("Select a loaded KMZ/KML file for the point chain.");
-      return;
-    }
-    if (!pointChainHasCommittedLine()) {
-      setMessage("Draw at least one segment before saving lines into a file.");
-      return;
-    }
-    if (!window.PointChainPersist) {
-      setMessage("Point chain save is unavailable.");
-      return;
-    }
-    pointChainStashCurrentToMemory();
-    var payload = pointChainExportSerializableState();
-    if (!PointChainPersist.writeIntoSource(source, payload)) {
-      setMessage("Could not write point chain data into " + source.doc.fileName + ".");
-      return;
-    }
-    if (GisMap.syncPointChainFolderInTree) {
-      GisMap.syncPointChainFolderInTree(
-        sourceId,
-        source.doc.xmlDoc,
-        function (href) {
-          return href || "";
-        }
-      );
-      renderTree(GisMap.getRoot());
-    }
-    markSourceEdited(source);
-    setMessage(
-      "Stored point chain lines in " +
-        source.doc.fileName +
-        ". Layer tree updated — save the file to disk when ready."
-    );
-  }
-
-  function exportPointChainAsNewKmz() {
-    if (!pointChainHasCommittedLine()) {
-      setMessage("Draw at least one segment before exporting a KMZ.");
-      return;
-    }
-    if (!window.PointChainPersist || !window.KmzSave) {
-      setMessage("Point chain export is unavailable.");
-      return;
-    }
-    pointChainStashCurrentToMemory();
-    var payload = pointChainExportSerializableState();
-    var source = findLoadedSource(resolvePointChainSourceId());
-    var baseName =
-      (source && source.doc && source.doc.fileName) || "point-chain.kmz";
-    var downloadName = KmzSave.kmzFileName(baseName).replace(
-      /\.kmz$/i,
-      "-point-chain.kmz"
-    );
-    PointChainPersist.buildExportKmzBlob(payload, downloadName)
-      .then(function (blob) {
-        downloadNamedBlob(
-          blob,
-          downloadName,
-          "Exported " + downloadName + " with point chain lines."
-        );
-      })
-      .catch(function (err) {
-        setMessage((err && err.message) || "Could not export point chain KMZ.");
-      });
-  }
-
-  function applyPointChainSessionsFromGui(sessions) {
-    if (!sessions || typeof sessions !== "object") {
-      return;
-    }
-    pointChainSavedBySourceId = Object.assign({}, sessions);
-    var sourceId = resolvePointChainSourceId() || activeSourceId;
-    if (sourceId) {
-      loadPointChainForSource(sourceId);
-    }
-  }
-
-  function resetPointChainRoute() {
-    pointChainCommittedSegments = [];
-    pointChainUndoStack = [];
-    pointChainUsedKeys = {};
-    pointChainDraftPath = null;
-    pointChainStartNodeKey = null;
-    if (window.PointChain) {
-      PointChain.clear();
-    }
-  }
-
-  function pointChainCaptureStepsListState() {
-    return {
-      draft: pointChainDraftPath ? pointChainDraftPath.slice() : null,
-      startNodeKey: pointChainStartNodeKey,
-    };
-  }
-
-  function pointChainRestoreStepsListState(state) {
-    if (!state) {
-      pointChainDraftPath = null;
-      return;
-    }
-    if (state.startNodeKey) {
-      pointChainStartNodeKey = state.startNodeKey;
-    }
-    if (state.draft && state.draft.length >= 2) {
-      pointChainDraftPath = state.draft.slice();
-    } else {
-      pointChainDraftPath = null;
-    }
-  }
-
-  function pointChainPushUndoEntry(entry) {
-    pointChainUndoStack.push(entry);
-    syncPointChainUndoButton();
-  }
-
-  function rebuildPointChainUsedKeysFromCommitted() {
-    pointChainUsedKeys = {};
-    pointChainCommittedSegments.forEach(function (segment) {
-      markPointChainKeysUsed(segment);
-    });
-  }
-
-  function syncPointChainUndoButton() {
-    var undoBtn = document.getElementById("point-chain-undo");
-    if (!undoBtn) {
-      return;
-    }
-    undoBtn.disabled = pointChainUndoStack.length === 0;
-  }
-
-  function undoPointChainLastAction() {
-    if (!pointChainUndoStack.length || !window.PointChain) {
-      return;
-    }
-    var entry = pointChainUndoStack.pop();
-    var statusMessage = "Restored the step list from before the last change.";
-    if (entry.type === "add") {
-      if (pointChainCommittedSegments.length) {
-        pointChainCommittedSegments.pop();
-      }
-      statusMessage = "Undid segment draw/append and restored the previous step list.";
-    } else if (entry.type === "trim") {
-      if (
-        entry.segmentIndex >= 0
-        && entry.segmentIndex < pointChainCommittedSegments.length
-        && entry.segmentBefore
-        && entry.segmentBefore.length >= 2
-      ) {
-        pointChainCommittedSegments[entry.segmentIndex] = entry.segmentBefore.slice();
-      }
-      statusMessage = "Undid segment trim and restored the previous step list.";
-    }
-    rebuildPointChainUsedKeysFromCommitted();
-    pointChainRestoreStepsListState(entry.stepsList);
-    pointChainLineStyle = readPointChainStyleFromUi();
-    if (pointChainHasCommittedLine()) {
-      drawPointChainCommittedOnMap(false);
-    } else {
-      PointChain.clear();
-    }
-    renderPointChainOrderList();
-    syncPointChainSegmentUi();
-    syncPointChainUndoButton();
-    pointChainStashCurrentToMemory();
-    setMessage(statusMessage);
-  }
-
-  function pointChainEntryByKey(sourceId, key) {
-    if (!sourceId || !key || !window.PointChain) {
-      return null;
-    }
-    var all = GisMap.listSourcePointLatLngs(sourceId);
-    for (var i = 0; i < all.length; i += 1) {
-      if (PointChain.entryKey(all[i]) === key) {
-        return all[i];
-      }
-    }
-    return null;
-  }
-
-  function getPointChainUnvisitedEntries(sourceId) {
-    if (!sourceId || !window.PointChain) {
-      return [];
-    }
-    return GisMap.listSourcePointLatLngs(sourceId).filter(function (entry) {
-      return !pointChainUsedKeys[PointChain.entryKey(entry)];
-    });
-  }
-
-  function markPointChainKeysUsed(path) {
-    if (!path || !window.PointChain) {
-      return;
-    }
-    path.forEach(function (entry) {
-      pointChainUsedKeys[PointChain.entryKey(entry)] = true;
-    });
-  }
-
-  function mergeDraftIntoCommittedPath(draft) {
-    if (!draft || draft.length < 2 || !window.PointChain) {
-      return false;
-    }
-    pointChainCommittedSegments.push(draft.slice());
-    markPointChainKeysUsed(draft);
-    return true;
-  }
-
-  function syncPointChainStartNodeSelect() {
-    var select = document.getElementById("point-chain-start-node");
-    if (!select || !window.PointChain) {
-      return;
-    }
-    var sourceSelect = document.getElementById("point-chain-source");
-    var sourceId = resolvePointChainSourceIdFromSelect(sourceSelect);
-    var all = sourceId ? GisMap.listSourcePointLatLngs(sourceId) : [];
-    if (!all.length) {
-      select.innerHTML = "";
-      return;
-    }
-    var defaultKey = pointChainStartNodeKey;
-    select.innerHTML = all
-      .map(function (entry) {
-        var key = PointChain.entryKey(entry);
-        var label =
-          (entry.name || "Point") +
-          " (" +
-          entry.lat.toFixed(5) +
-          ", " +
-          entry.lng.toFixed(5) +
-          ")";
-        if (pointChainUsedKeys[key]) {
-          label += " — on line";
-        }
-        return (
-          '<option value="' +
-          escapeText(key) +
-          '"' +
-          (key === defaultKey ? " selected" : "") +
-          ">" +
-          escapeText(label) +
-          "</option>"
-        );
-      })
-      .join("");
-    pointChainStartNodeKey = select.value || defaultKey || null;
-  }
-
-  function pointChainFindEntryIndexInSegment(segment, key) {
-    if (!segment || !key || !window.PointChain) {
-      return -1;
-    }
-    for (var i = 0; i < segment.length; i += 1) {
-      if (PointChain.entryKey(segment[i]) === key) {
-        return i;
-      }
-    }
-    return -1;
-  }
-
-  function syncPointChainTrimUi() {
-    var wrap = document.getElementById("point-chain-trim-wrap");
-    var actions = document.getElementById("point-chain-trim-actions");
-    var hasCommitted = pointChainHasCommittedLine();
-    if (wrap) {
-      wrap.hidden = !hasCommitted;
-    }
-    if (actions) {
-      actions.hidden = !hasCommitted;
-    }
-    if (!hasCommitted || !window.PointChain) {
-      return;
-    }
-    var segSelect = document.getElementById("point-chain-trim-segment");
-    var fromSelect = document.getElementById("point-chain-trim-from");
-    var trimBtn = document.getElementById("point-chain-trim");
-    if (!segSelect || !fromSelect) {
-      return;
-    }
-    var previousSeg = parseInt(segSelect.value, 10);
-    var previousFromKey = fromSelect.value || null;
-    segSelect.innerHTML = pointChainCommittedSegments
-      .map(function (segment, index) {
-        if (!segment || segment.length < 2) {
-          return "";
-        }
-        var startName = segment[0].name || "Start";
-        var endName = segment[segment.length - 1].name || "End";
-        return (
-          '<option value="' +
-          index +
-          '">Segment ' +
-          (index + 1) +
-          ": " +
-          escapeText(startName) +
-          " → " +
-          escapeText(endName) +
-          " (" +
-          segment.length +
-          " pts)</option>"
-        );
-      })
-      .join("");
-    if (!segSelect.options.length) {
-      fromSelect.innerHTML = "";
-      if (trimBtn) {
-        trimBtn.disabled = true;
-      }
-      return;
-    }
-    var segIndex = previousSeg;
-    if (
-      Number.isNaN(segIndex)
-      || segIndex < 0
-      || segIndex >= pointChainCommittedSegments.length
-      || !pointChainCommittedSegments[segIndex]
-      || pointChainCommittedSegments[segIndex].length < 2
-    ) {
-      segIndex = pointChainCommittedSegments.length - 1;
-      while (
-        segIndex > 0
-        && (
-          !pointChainCommittedSegments[segIndex]
-          || pointChainCommittedSegments[segIndex].length < 2
-        )
-      ) {
-        segIndex -= 1;
-      }
-    }
-    segSelect.value = String(segIndex);
-    var segment = pointChainCommittedSegments[segIndex];
-    fromSelect.innerHTML = segment
-      .map(function (entry, index) {
-        var key = PointChain.entryKey(entry);
-        var label =
-          (entry.name || "Point") +
-          " (stop " +
-          (index + 1) +
-          ")";
-        if (index === 0) {
-          label += " — current start";
-        } else if (index === segment.length - 1) {
-          label += " — current end";
-        }
-        return (
-          '<option value="' +
-          escapeText(key) +
-          '">' +
-          escapeText(label) +
-          "</option>"
-        );
-      })
-      .join("");
-    var fromIndex = Math.max(1, segment.length - 2);
-    if (previousFromKey) {
-      var preservedIndex = pointChainFindEntryIndexInSegment(segment, previousFromKey);
-      if (preservedIndex > 0 && preservedIndex < segment.length - 1) {
-        fromIndex = preservedIndex;
-      }
-    }
-    if (fromIndex >= segment.length - 1) {
-      fromIndex = Math.max(1, segment.length - 2);
-    }
-    fromSelect.value = PointChain.entryKey(segment[fromIndex]);
-    if (trimBtn) {
-      trimBtn.disabled = segment.length < 3;
-    }
-  }
-
-  function trimPointChainSegmentFromPoint() {
-    if (!window.PointChain || !pointChainHasCommittedLine()) {
-      setMessage("Draw at least one segment before trimming.");
-      return;
-    }
-    var segSelect = document.getElementById("point-chain-trim-segment");
-    var fromSelect = document.getElementById("point-chain-trim-from");
-    if (!segSelect || !fromSelect) {
-      return;
-    }
-    var segIndex = parseInt(segSelect.value, 10);
-    if (
-      Number.isNaN(segIndex)
-      || segIndex < 0
-      || segIndex >= pointChainCommittedSegments.length
-    ) {
-      setMessage("Choose a segment to trim.");
-      return;
-    }
-    var segment = pointChainCommittedSegments[segIndex];
-    if (!segment || segment.length < 2) {
-      setMessage("That segment cannot be trimmed.");
-      return;
-    }
-    var fromKey = fromSelect.value;
-    var fromIndex = pointChainFindEntryIndexInSegment(segment, fromKey);
-    if (fromIndex <= 0) {
-      setMessage("Pick a point after the segment start to end the line at.");
-      return;
-    }
-    if (fromIndex >= segment.length - 1) {
-      setMessage("Pick a point before the segment end — stops after it will be removed.");
-      return;
-    }
-    var trimmed = segment.slice(0, fromIndex + 1);
-    if (trimmed.length < 2) {
-      setMessage(
-        "Trim would leave fewer than two stops — pick a later point or undo the segment."
-      );
-      return;
-    }
-    var removedCount = segment.length - trimmed.length;
-    pointChainPushUndoEntry({
-      type: "trim",
-      segmentIndex: segIndex,
-      segmentBefore: segment.slice(),
-      stepsList: pointChainCaptureStepsListState(),
-    });
-    pointChainCommittedSegments[segIndex] = trimmed;
-    rebuildPointChainUsedKeysFromCommitted();
-    pointChainLineStyle = readPointChainStyleFromUi();
-    drawPointChainCommittedOnMap(false);
-    syncPointChainSegmentUi();
-    pointChainStashCurrentToMemory();
-    setMessage(
-      "Trimmed segment " +
-        (segIndex + 1) +
-        ": removed " +
-        removedCount +
-        " stop(s) after " +
-        (trimmed[trimmed.length - 1].name || "point") +
-        "."
-    );
-  }
-
-  function syncPointChainSegmentUi() {
-    var startWrap = document.getElementById("point-chain-start-wrap");
-    var committedSummary = document.getElementById("point-chain-committed-summary");
-    var drawBtn = document.getElementById("point-chain-draw");
-    var dirLabel = document.getElementById("point-chain-direction-label");
-    var hasCommitted = pointChainHasCommittedLine();
-    if (startWrap) {
-      startWrap.hidden = !hasCommitted;
-    }
-    if (dirLabel) {
-      dirLabel.textContent = hasCommitted
-        ? "Segment direction (end at opposite extreme among remaining points)"
-        : "Start direction (first segment)";
-    }
-    if (committedSummary) {
-      if (hasCommitted && window.PointChain) {
-        var committedStats = pointChainCommittedStats();
-        committedSummary.hidden = false;
-        committedSummary.textContent =
-          "On map: " +
-          pointChainCommittedSegments.length +
-          " segment(s), " +
-          committedStats.pointCount +
-          " point(s), " +
-          PointChain.formatDistance(committedStats.lengthMeters) +
-          ". Pick a segment start, suggest order, edit the list, then append.";
-      } else {
-        committedSummary.hidden = true;
-        committedSummary.textContent = "";
-      }
-    }
-    if (drawBtn) {
-      drawBtn.textContent = hasCommitted ? "Append segment" : "Draw segment on map";
-    }
-    if (hasCommitted) {
-      syncPointChainStartNodeSelect();
-    }
-    syncPointChainTrimUi();
-    syncPointChainUndoButton();
-    syncPointChainMapVisibilityUi();
-    var addLayersBtn = document.getElementById("point-chain-add-to-layers");
-    if (addLayersBtn) {
-      addLayersBtn.disabled = !hasCommitted;
-    }
-  }
-
-  function buildPointChainDirectionSelectHtml(selectedDirection) {
-    var dir = selectedDirection || "N";
-    var options = [
-      { value: "N", label: "North — end at southernmost in set" },
-      { value: "S", label: "South — end at northernmost in set" },
-      { value: "E", label: "East — end at westernmost in set" },
-      { value: "W", label: "West — end at easternmost in set" },
-    ];
-    var html = options
-      .map(function (row) {
-        return (
-          '<option value="' +
-          row.value +
-          '"' +
-          (row.value === dir ? " selected" : "") +
-          ">" +
-          escapeText(row.label) +
-          "</option>"
-        );
-      })
-      .join("");
-    return (
-      '<div class="file-point-icon-target">' +
-      '<label id="point-chain-direction-label" for="point-chain-direction">Start direction (first segment)</label>' +
-      '<select id="point-chain-direction" aria-label="Cardinal direction for chain start">' +
-      html +
-      "</select></div>"
-    );
-  }
-
-  function pointChainOrderLabel(entry, index, total) {
-    var name = (entry && entry.name) || "Point";
-    if (index === 0) {
-      return name + " (start)";
-    }
-    if (index === total - 1) {
-      return name + " (end)";
-    }
-    return name;
-  }
-
-  function updatePointChainOrderSummary() {
-    var summaryEl = document.getElementById("point-chain-order-summary");
-    var drawBtn = document.getElementById("point-chain-draw");
-    if (
-      !pointChainDraftPath
-      || pointChainDraftPath.length < 2
-      || !window.PointChain
-    ) {
-      if (summaryEl) {
-        summaryEl.textContent = "";
-      }
-      if (drawBtn) {
-        drawBtn.disabled = true;
-      }
-      return;
-    }
-    if (drawBtn) {
-      drawBtn.disabled = false;
-    }
-    if (summaryEl) {
-      var draftText =
-        "Segment draft: " +
-        pointChainDraftPath.length +
-        " stops · " +
-        PointChain.formatDistance(PointChain.pathLengthMeters(pointChainDraftPath));
-      if (pointChainHasCommittedLine()) {
-        var committedStats = pointChainCommittedStats();
-        draftText =
-          "On map: " +
-          committedStats.pointCount +
-          " pts · " +
-          draftText;
-      }
-      summaryEl.textContent = draftText;
-    }
-    syncPointChainSegmentUi();
-  }
-
-  function renderPointChainOrderList() {
-    var listEl = document.getElementById("point-chain-order-list");
-    var emptyEl = document.getElementById("point-chain-order-empty");
-    if (!listEl || !window.PointChain) {
-      return;
-    }
-    if (!pointChainDraftPath || !pointChainDraftPath.length) {
-      listEl.innerHTML = "";
-      if (emptyEl) {
-        emptyEl.hidden = false;
-      }
-      updatePointChainOrderSummary();
-      return;
-    }
-    if (emptyEl) {
-      emptyEl.hidden = true;
-    }
-    var total = pointChainDraftPath.length;
-    listEl.innerHTML = pointChainDraftPath
-      .map(function (entry, index) {
-        var key = PointChain.entryKey(entry);
-        var label = pointChainOrderLabel(entry, index, total);
-        var coords = entry.lat.toFixed(5) + ", " + entry.lng.toFixed(5);
-        var canRemove = total > 2;
-        return (
-          '<li class="point-chain-order-item" draggable="true" data-key="' +
-          escapeText(key) +
-          '" data-index="' +
-          index +
-          '">' +
-          '<span class="point-chain-order-grip" aria-hidden="true" title="Drag to reorder">⋮⋮</span>' +
-          '<span class="point-chain-order-num">' +
-          (index + 1) +
-          "</span>" +
-          '<span class="point-chain-order-body">' +
-          '<span class="point-chain-order-name">' +
-          escapeText(label) +
-          "</span>" +
-          '<span class="point-chain-order-coords muted">' +
-          escapeText(coords) +
-          "</span>" +
-          "</span>" +
-          '<span class="point-chain-order-move">' +
-          '<button type="button" class="point-chain-move-btn point-chain-up" data-index="' +
-          index +
-          '" title="Move up" aria-label="Move up"' +
-          (index === 0 ? " disabled" : "") +
-          ">↑</button>" +
-          '<button type="button" class="point-chain-move-btn point-chain-down" data-index="' +
-          index +
-          '" title="Move down" aria-label="Move down"' +
-          (index === total - 1 ? " disabled" : "") +
-          ">↓</button>" +
-          (canRemove
-            ? '<button type="button" class="btn-dismiss point-chain-remove" data-index="' +
-              index +
-              '" title="Remove from chain" aria-label="Remove from chain">×</button>'
-            : "") +
-          "</span></li>"
-        );
-      })
-      .join("");
-    listEl.querySelectorAll(".point-chain-up").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        movePointChainDraftItem(parseInt(btn.getAttribute("data-index"), 10), -1);
-      });
-    });
-    listEl.querySelectorAll(".point-chain-down").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        movePointChainDraftItem(parseInt(btn.getAttribute("data-index"), 10), 1);
-      });
-    });
-    listEl.querySelectorAll(".point-chain-remove").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        removePointChainDraftItem(parseInt(btn.getAttribute("data-index"), 10));
-      });
-    });
-    bindPointChainOrderListDrag(listEl);
-    updatePointChainOrderSummary();
-  }
-
-  function movePointChainDraftItem(index, delta) {
-    if (!pointChainDraftPath) {
-      return;
-    }
-    var nextIndex = index + delta;
-    if (nextIndex < 0 || nextIndex >= pointChainDraftPath.length) {
-      return;
-    }
-    var path = pointChainDraftPath.slice();
-    var swap = path[index];
-    path[index] = path[nextIndex];
-    path[nextIndex] = swap;
-    pointChainDraftPath = path;
-    renderPointChainOrderList();
-  }
-
-  function removePointChainDraftItem(index) {
-    if (!pointChainDraftPath || pointChainDraftPath.length <= 2) {
-      return;
-    }
-    pointChainDraftPath = pointChainDraftPath.filter(function (_entry, i) {
-      return i !== index;
-    });
-    renderPointChainOrderList();
-  }
-
-  function bindPointChainOrderListDrag(listEl) {
-    listEl.querySelectorAll(".point-chain-order-item").forEach(function (item) {
-      item.addEventListener("dragstart", function (event) {
-        pointChainDragIndex = parseInt(item.getAttribute("data-index"), 10);
-        item.classList.add("point-chain-order-item-dragging");
-        if (event.dataTransfer) {
-          event.dataTransfer.effectAllowed = "move";
-          event.dataTransfer.setData("text/plain", String(pointChainDragIndex));
-        }
-      });
-      item.addEventListener("dragend", function () {
-        item.classList.remove("point-chain-order-item-dragging");
-        pointChainDragIndex = null;
-        listEl.querySelectorAll(".point-chain-order-item").forEach(function (row) {
-          row.classList.remove("point-chain-order-item-drop-target");
-        });
-      });
-      item.addEventListener("dragover", function (event) {
-        event.preventDefault();
-        if (event.dataTransfer) {
-          event.dataTransfer.dropEffect = "move";
-        }
-        item.classList.add("point-chain-order-item-drop-target");
-      });
-      item.addEventListener("dragleave", function () {
-        item.classList.remove("point-chain-order-item-drop-target");
-      });
-      item.addEventListener("drop", function (event) {
-        event.preventDefault();
-        item.classList.remove("point-chain-order-item-drop-target");
-        if (!pointChainDraftPath || pointChainDragIndex == null) {
-          return;
-        }
-        var toIndex = parseInt(item.getAttribute("data-index"), 10);
-        if (Number.isNaN(toIndex) || toIndex === pointChainDragIndex) {
-          return;
-        }
-        var path = pointChainDraftPath.slice();
-        var moved = path.splice(pointChainDragIndex, 1)[0];
-        path.splice(toIndex, 0, moved);
-        pointChainDraftPath = path;
-        pointChainDragIndex = null;
-        renderPointChainOrderList();
-      });
-    });
-  }
-
-  function suggestPointChainOrder(setStatusMessage) {
-    if (!window.PointChain) {
-      return;
-    }
-    var sourceSelect = document.getElementById("point-chain-source");
-    var dirSelect = document.getElementById("point-chain-direction");
-    var sourceId = resolvePointChainSourceIdFromSelect(sourceSelect);
-    if (!sourceId) {
-      pointChainDraftPath = null;
-      renderPointChainOrderList();
-      return;
-    }
-    var entries = GisMap.listSourcePointLatLngs(sourceId);
-    if (entries.length < 2) {
-      pointChainDraftPath = null;
-      renderPointChainOrderList();
-      return;
-    }
-    var direction = (dirSelect && dirSelect.value) || pointChainStartDirection || "N";
-    pointChainStartDirection = direction;
-    var built;
-    if (pointChainHasCommittedLine()) {
-      var startSelect = document.getElementById("point-chain-start-node");
-      var startKey = (startSelect && startSelect.value) || pointChainStartNodeKey;
-      var startEntry = pointChainEntryByKey(sourceId, startKey);
-      if (!startEntry) {
-        pointChainDraftPath = null;
-        renderPointChainOrderList();
-        if (setStatusMessage) {
-          setMessage("Choose a segment start point for the next segment.");
-        }
-        return;
-      }
-      pointChainStartNodeKey = startKey;
-      var unvisited = getPointChainUnvisitedEntries(sourceId);
-      var segmentEntries = unvisited.slice();
-      if (
-        !segmentEntries.some(function (entry) {
-          return PointChain.sameEntry(entry, startEntry);
-        })
-      ) {
-        segmentEntries = [startEntry].concat(segmentEntries);
-      }
-      if (segmentEntries.length < 2) {
-        pointChainDraftPath = null;
-        renderPointChainOrderList();
-        if (setStatusMessage) {
-          setMessage("No remaining points for another segment (need at least two stops).");
-        }
-        return;
-      }
-      built = PointChain.buildNearestNeighborChain(segmentEntries, direction, startEntry);
-    } else {
-      built = PointChain.buildNearestNeighborChain(entries, direction);
-    }
-    if (built.error) {
-      pointChainDraftPath = null;
-      renderPointChainOrderList();
-      if (setStatusMessage) {
-        setMessage(built.error);
-      }
-      return;
-    }
-    pointChainDraftPath = built.path ? built.path.slice() : [];
-    renderPointChainOrderList();
-    if (setStatusMessage) {
-      var fileName =
-        (findLoadedSource(sourceId) && findLoadedSource(sourceId).doc.fileName) || "file";
-      var segmentHint = pointChainHasCommittedLine()
-        ? "Next segment for " + fileName
-        : "First segment for " + fileName;
-      setMessage(
-        segmentHint +
-          " (" +
-          direction +
-          " → " +
-          PointChain.oppositeDirection(direction) +
-          "). Edit the list, then " +
-          (pointChainHasCommittedLine() ? "append to the line." : "draw on the map.")
-      );
-    }
-  }
-
-  function confirmPointChainDraw() {
-    if (!window.PointChain) {
-      return;
-    }
-    if (!pointChainDraftPath || pointChainDraftPath.length < 2) {
-      setMessage("Suggest or build a point order with at least two stops before drawing.");
-      return;
-    }
-    var sourceSelect = document.getElementById("point-chain-source");
-    var sourceId = resolvePointChainSourceIdFromSelect(sourceSelect);
-    var isFirstSegment = !pointChainHasCommittedLine();
-    if (!isFirstSegment) {
-      var startSelect = document.getElementById("point-chain-start-node");
-      var requiredStartKey =
-        (startSelect && startSelect.value) || pointChainStartNodeKey;
-      if (
-        !requiredStartKey
-        || PointChain.entryKey(pointChainDraftPath[0]) !== requiredStartKey
-      ) {
-        setMessage(
-          "The segment must begin at the point chosen in Segment start point."
-        );
-        return;
-      }
-    }
-    var stepsListBeforeCommit = pointChainCaptureStepsListState();
-    if (!mergeDraftIntoCommittedPath(pointChainDraftPath)) {
-      setMessage("Could not append that segment.");
-      return;
-    }
-    pointChainPushUndoEntry({
-      type: "add",
-      stepsList: stepsListBeforeCommit,
-    });
-    pointChainDraftPath = null;
-    renderPointChainOrderList();
-    pointChainLineStyle = readPointChainStyleFromUi();
-    var summary = drawPointChainCommittedOnMap(true);
-    var fileName =
-      (findLoadedSource(sourceId) && findLoadedSource(sourceId).doc.fileName) || "file";
-    if (!summary || summary.pointCount < 2) {
-      setMessage("Could not draw a chain for " + fileName + ".");
-      return;
-    }
-    syncPointChainSegmentUi();
-    pointChainStashCurrentToMemory();
-    if (pointChainAutoAddToLayers) {
-      syncPointChainSegmentsToLayerTree({
-        hidePreviewOverlay: true,
-        setStatus: false,
-      });
-    }
-    var unvisitedLeft = getPointChainUnvisitedEntries(sourceId).length;
-    setMessage(
-      (isFirstSegment ? "Drew first segment — " : "Appended segment — ") +
-        summary.pointCount +
-        " point(s) on the map for " +
-        fileName +
-        ". Path length: " +
-        summary.lengthText +
-        (pointChainAutoAddToLayers ? " Added to the layer tree; preview line hidden." : "") +
-        (unvisitedLeft > 0 ? " (" + unvisitedLeft + " point(s) not on the line yet.)" : ".")
-    );
-  }
-
-  function readPointChainOrderHeight() {
-    try {
-      var raw = localStorage.getItem(POINT_CHAIN_ORDER_HEIGHT_KEY);
-      if (!raw) {
-        return null;
-      }
-      var parsed = parseFloat(raw);
-      return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-    } catch (err) {
-      return null;
-    }
-  }
-
-  function writePointChainOrderHeight(px) {
-    try {
-      localStorage.setItem(POINT_CHAIN_ORDER_HEIGHT_KEY, String(px));
-    } catch (err) {
-      /* ignore quota / private mode */
-    }
-  }
-
-  function clearPointChainOrderHeightStorage() {
-    try {
-      localStorage.removeItem(POINT_CHAIN_ORDER_HEIGHT_KEY);
-    } catch (err) {
-      /* ignore quota / private mode */
-    }
-  }
-
-  function clampPointChainOrderHeight(px) {
-    return Math.min(
-      POINT_CHAIN_ORDER_MAX_H,
-      Math.max(POINT_CHAIN_ORDER_MIN_H, px)
-    );
-  }
-
-  function resetPointChainOrderHeight() {
-    var scroller = document.getElementById("point-chain-order-scroller");
-    if (!scroller) {
-      return;
-    }
-    scroller.classList.remove("is-height-custom");
-    scroller.style.height = "";
-  }
-
-  function applyPointChainOrderHeight(px, persist) {
-    var scroller = document.getElementById("point-chain-order-scroller");
-    if (!scroller) {
-      return null;
-    }
-    if (px == null || !Number.isFinite(px)) {
-      resetPointChainOrderHeight();
-      if (persist) {
-        clearPointChainOrderHeightStorage();
-      }
-      return null;
-    }
-    var clamped = clampPointChainOrderHeight(px);
-    scroller.classList.add("is-height-custom");
-    scroller.style.height = clamped + "px";
-    if (persist) {
-      writePointChainOrderHeight(clamped);
-    }
-    return clamped;
-  }
-
-  function bindPointChainOrderListResize() {
-    var handle = document.getElementById("point-chain-order-resize");
-    var scroller = document.getElementById("point-chain-order-scroller");
-    if (!handle || !scroller) {
-      return;
-    }
-    var storedOrderHeight = readPointChainOrderHeight();
-    if (storedOrderHeight !== null) {
-      applyPointChainOrderHeight(storedOrderHeight, false);
-    } else {
-      applyPointChainOrderHeight(null, false);
-    }
-
-    var drag = null;
-
-    function finishDrag() {
-      if (!drag) {
-        return;
-      }
-      handle.classList.remove("is-dragging");
-      document.body.classList.remove("point-chain-order-resizing");
-      drag = null;
-    }
-
-    function onPointerMove(event) {
-      if (!drag) {
-        return;
-      }
-      var delta = event.clientY - drag.startY;
-      applyPointChainOrderHeight(drag.startHeight + delta, false);
-    }
-
-    function onPointerUp() {
-      if (!drag) {
-        return;
-      }
-      var current = scroller.offsetHeight;
-      if (Number.isFinite(current)) {
-        applyPointChainOrderHeight(current, true);
-      }
-      finishDrag();
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", onPointerUp);
-      window.removeEventListener("pointercancel", onPointerUp);
-    }
-
-    handle.addEventListener("pointerdown", function (event) {
-      if (event.button !== 0) {
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      drag = { startY: event.clientY, startHeight: scroller.offsetHeight };
-      handle.classList.add("is-dragging");
-      document.body.classList.add("point-chain-order-resizing");
-      handle.setPointerCapture(event.pointerId);
-      window.addEventListener("pointermove", onPointerMove);
-      window.addEventListener("pointerup", onPointerUp);
-      window.addEventListener("pointercancel", onPointerUp);
-    });
-
-    handle.addEventListener("keydown", function (event) {
-      var step = event.shiftKey ? 24 : 8;
-      var dir = 0;
-      if (event.key === "ArrowDown") {
-        dir = 1;
-      } else if (event.key === "ArrowUp") {
-        dir = -1;
-      } else {
-        return;
-      }
-      event.preventDefault();
-      applyPointChainOrderHeight(scroller.offsetHeight + dir * step, true);
-    });
-  }
-
-  function bindPointChainPanelControls() {
-    var sourceSelect = document.getElementById("point-chain-source");
-    if (sourceSelect) {
-      sourceSelect.addEventListener("change", function () {
-        pointChainStashCurrentToMemory();
-        pointChainSourceId = sourceSelect.value || null;
-        pointChainSourceUserPick = !!pointChainSourceId;
-        loadPointChainForSource(pointChainSourceId);
-        if (!pointChainDraftPath) {
-          suggestPointChainOrder(false);
-        }
-      });
-    }
-    var startSelect = document.getElementById("point-chain-start-node");
-    if (startSelect) {
-      startSelect.addEventListener("change", function () {
-        pointChainStartNodeKey = startSelect.value || null;
-        if (pointChainHasCommittedLine()) {
-          suggestPointChainOrder(false);
-        }
-      });
-    }
-    var dirSelect = document.getElementById("point-chain-direction");
-    if (dirSelect) {
-      dirSelect.addEventListener("change", function () {
-        pointChainStartDirection = dirSelect.value || "N";
-        suggestPointChainOrder(false);
-      });
-    }
-    var suggestBtn = document.getElementById("point-chain-suggest");
-    if (suggestBtn) {
-      suggestBtn.addEventListener("click", function () {
-        suggestPointChainOrder(true);
-      });
-    }
-    var drawBtn = document.getElementById("point-chain-draw");
-    if (drawBtn) {
-      drawBtn.addEventListener("click", confirmPointChainDraw);
-    }
-    var clearBtn = document.getElementById("point-chain-clear");
-    if (clearBtn) {
-      clearBtn.addEventListener("click", function () {
-        resetPointChainRoute();
-        renderPointChainOrderList();
-        syncPointChainSegmentUi();
-        pointChainStashCurrentToMemory();
-        setMessage("Cleared point chain and segment progress.");
-      });
-    }
-    var addLayersBtn = document.getElementById("point-chain-add-to-layers");
-    if (addLayersBtn) {
-      addLayersBtn.addEventListener("click", function () {
-        syncPointChainSegmentsToLayerTree({ hidePreviewOverlay: true });
-      });
-    }
-    var saveLinesBtn = document.getElementById("point-chain-save-to-kmz");
-    if (saveLinesBtn) {
-      saveLinesBtn.addEventListener("click", savePointChainLinesIntoSourceKmz);
-    }
-    var exportLinesBtn = document.getElementById("point-chain-export-kmz");
-    if (exportLinesBtn) {
-      exportLinesBtn.addEventListener("click", exportPointChainAsNewKmz);
-    }
-    var undoBtn = document.getElementById("point-chain-undo");
-    if (undoBtn) {
-      undoBtn.addEventListener("click", undoPointChainLastAction);
-    }
-    var trimSegSelect = document.getElementById("point-chain-trim-segment");
-    if (trimSegSelect) {
-      trimSegSelect.addEventListener("change", syncPointChainTrimUi);
-    }
-    var trimBtn = document.getElementById("point-chain-trim");
-    if (trimBtn) {
-      trimBtn.addEventListener("click", trimPointChainSegmentFromPoint);
-    }
-  }
-
-  function refreshPointChainPanel() {
-    if (!pointChainPanelEl) {
-      return;
-    }
-    var sourceId = resolvePointChainSourceId();
-    var entries = sourceId ? GisMap.listSourcePointLatLngs(sourceId) : [];
-    var pointCount = entries.length;
-    if (pointChainSectionEl) {
-      pointChainSectionEl.hidden = pointCount < 2;
-    }
-    if (pointCount < 2) {
-      pointChainPanelEl.innerHTML =
-        '<p class="muted icon-picker-hint">Load a file with at least two point placemarks to build a chain.</p>';
-      resetPointChainRoute();
-      return;
-    }
-    pointChainPanelEl.innerHTML =
-      '<p class="muted icon-picker-hint">' +
-      "Build one segment at a time: suggest order, edit the list, then draw. " +
-      "Later segments need a start point and direction (remaining points only).</p>" +
-      '<p id="point-chain-committed-summary" class="point-chain-committed-summary muted" hidden></p>' +
-      buildPointChainSourceSelectHtml(sourceId) +
-      '<div id="point-chain-start-wrap" class="file-point-icon-target" hidden>' +
-      '<label for="point-chain-start-node">Segment start point</label>' +
-      '<select id="point-chain-start-node" aria-label="Start point for additional segment"></select>' +
-      "</div>" +
-      buildPointChainDirectionSelectHtml(pointChainStartDirection) +
-      '<div class="point-chain-actions">' +
-      '<button type="button" class="btn btn-subtle" id="point-chain-suggest">Suggest order</button>' +
-      "</div>" +
-      '<div class="point-chain-order-wrap">' +
-      '<p id="point-chain-order-empty" class="muted point-chain-order-empty">No order yet — choose options and click Suggest order.</p>' +
-      '<div id="point-chain-order-scroller" class="point-chain-order-scroller">' +
-      '<ol id="point-chain-order-list" class="point-chain-order-list" aria-label="Point visit order"></ol>' +
-      "</div>" +
-      '<div id="point-chain-order-resize" class="point-chain-order-resize" role="separator" aria-orientation="horizontal" aria-label="Drag to resize point order list" tabindex="0"></div>' +
-      '<p id="point-chain-order-summary" class="point-chain-order-summary muted"></p>' +
-      "</div>" +
-      '<div class="point-chain-actions">' +
-      '<button type="button" class="btn" id="point-chain-draw" disabled>Draw segment on map</button>' +
-      '<button type="button" class="btn btn-subtle" id="point-chain-undo" disabled>Undo last change</button>' +
-      '<button type="button" class="btn btn-subtle" id="point-chain-clear">Clear all</button>' +
-      "</div>" +
-      '<div id="point-chain-trim-wrap" class="file-point-icon-target point-chain-trim-wrap" hidden>' +
-      '<p class="muted point-chain-trim-hint">Remove stops after your chosen point on a committed segment; the line keeps everything up to and including that stop.</p>' +
-      '<label for="point-chain-trim-segment">Segment to trim</label>' +
-      '<select id="point-chain-trim-segment" aria-label="Committed segment to trim"></select>' +
-      '<label for="point-chain-trim-from">End line at point</label>' +
-      '<select id="point-chain-trim-from" aria-label="Keep line through this point; remove later stops"></select>' +
-      "</div>" +
-      '<div class="point-chain-actions" id="point-chain-trim-actions" hidden>' +
-      '<button type="button" class="btn btn-subtle" id="point-chain-trim">Trim segment</button>' +
-      "</div>" +
-      buildPointChainStyleHtml(pointChainLineStyle) +
-      '<div class="point-chain-actions point-chain-save-actions">' +
-      '<button type="button" class="btn btn-subtle" id="point-chain-add-to-layers">Add segments to layer tree</button>' +
-      '<button type="button" class="btn btn-subtle" id="point-chain-save-to-kmz">Save lines into selected file</button>' +
-      '<button type="button" class="btn btn-subtle" id="point-chain-export-kmz">Export lines as new KMZ</button>' +
-      "</div>" +
-      '<p class="muted point-chain-save-hint">Add to layer tree creates KML line placemarks you can show or hide in the left panel. Save also embeds JSON in ExtendedData. Export builds a standalone KMZ.</p>';
-    bindPointChainPanelControls();
-    bindPointChainOrderListResize();
-    bindPointChainStyleControls();
-    syncPointChainSegmentUi();
-    if (pointChainHasCommittedLine() && window.PointChain) {
-      drawPointChainCommittedOnMap(false);
-    } else if (window.PointChain && PointChain.hasChainOnMap()) {
-      PointChain.setLineStyle(pointChainLineStyle);
-    }
-    renderPointChainOrderList();
-    if (!pointChainDraftPath) {
-      suggestPointChainOrder(false);
-    }
+    pointChainPanel.refreshPointChainPanel();
   }
 
   function applyIconPngFile(file, info, applyShared) {
@@ -4251,652 +1786,8 @@
     layersNoneBtn.disabled = !hasLayers;
     layersExpandBtn.disabled = !hasLayers;
     layersCollapseBtn.disabled = !hasLayers;
-    updateLayersAddLabelsButton();
+    nodeMapLabelUi.updateLayersAddLabelsButton();
     updateEditButtons();
-  }
-
-  function updateLayersAddLabelsButton() {
-    if (!layersAddLabelsBtn) {
-      return;
-    }
-    var candidates = loadedSourcesWithPointPlacemarks();
-    layersAddLabelsBtn.disabled = !candidates.length;
-  }
-
-  function resolveDefaultMapLabelSourceId(preferredSourceId) {
-    if (
-      preferredSourceId
-      && GisMap.countSourcePointPlacemarks(preferredSourceId) > 0
-    ) {
-      return preferredSourceId;
-    }
-    if (activeSourceId && GisMap.countSourcePointPlacemarks(activeSourceId) > 0) {
-      return activeSourceId;
-    }
-    var candidates = loadedSourcesWithPointPlacemarks();
-    return candidates.length ? candidates[0].id : null;
-  }
-
-  function populateNodeMapLabelSourceSelect(selectedSourceId) {
-    var select = document.getElementById("node-map-label-source");
-    if (!select) {
-      return null;
-    }
-    var candidates = loadedSourcesWithPointPlacemarks();
-    if (!candidates.length) {
-      select.innerHTML = "";
-      return null;
-    }
-    select.innerHTML = candidates
-      .map(function (source) {
-        var name = source.doc.fileName || "Untitled";
-        var count = GisMap.countSourcePointPlacemarks(source.id);
-        var label = name + " (" + count + " point" + (count === 1 ? "" : "s") + ")";
-        return (
-          '<option value="' +
-          escapeText(source.id) +
-          '"' +
-          (source.id === selectedSourceId ? " selected" : "") +
-          ">" +
-          escapeText(label) +
-          "</option>"
-        );
-      })
-      .join("");
-    if (selectedSourceId) {
-      select.value = selectedSourceId;
-    }
-    return select.value || candidates[0].id;
-  }
-
-  function resolveMapLabelSourceIdFromDialog(session) {
-    if (!session || session.mode !== "source") {
-      return null;
-    }
-    var select = document.getElementById("node-map-label-source");
-    if (select && select.value) {
-      return select.value;
-    }
-    return session.sourceId || resolveDefaultMapLabelSourceId(null);
-  }
-
-  function mapLabelFontSelectOptions(selectedValue) {
-    return MAP_LABEL_FONT_OPTIONS.map(function (row) {
-      return (
-        '<option value="' +
-        escapeText(row.value) +
-        '"' +
-        (row.value === selectedValue ? " selected" : "") +
-        ">" +
-        escapeText(row.label) +
-        "</option>"
-      );
-    }).join("");
-  }
-
-  function updateNodeMapLabelBulkSubtitle(sourceId) {
-    if (!nodeMapLabelSubtitle || !sourceId) {
-      return;
-    }
-    var source = findLoadedSource(sourceId);
-    var subtitle = (source && source.doc && source.doc.fileName) || "File";
-    var count = GisMap.countSourcePointPlacemarks(sourceId);
-    subtitle += " — " + count + " point" + (count === 1 ? "" : "s");
-    nodeMapLabelSubtitle.textContent = subtitle;
-  }
-
-  function clampNodeMapLabelPerPointScrollHeight(px) {
-    return Math.min(
-      NODE_MAP_LABEL_PER_POINT_SCROLL_MAX_H,
-      Math.max(NODE_MAP_LABEL_PER_POINT_SCROLL_MIN_H, px)
-    );
-  }
-
-  function readNodeMapLabelPerPointScrollHeight() {
-    try {
-      var raw = localStorage.getItem(NODE_MAP_LABEL_PER_POINT_SCROLL_HEIGHT_KEY);
-      if (raw == null || raw === "") {
-        return null;
-      }
-      var parsed = Number(raw);
-      if (!Number.isFinite(parsed)) {
-        return null;
-      }
-      return clampNodeMapLabelPerPointScrollHeight(parsed);
-    } catch (err) {
-      return null;
-    }
-  }
-
-  function writeNodeMapLabelPerPointScrollHeight(px) {
-    try {
-      localStorage.setItem(NODE_MAP_LABEL_PER_POINT_SCROLL_HEIGHT_KEY, String(px));
-    } catch (err) {
-      /* ignore quota / private mode */
-    }
-  }
-
-  function measureNodeMapLabelPerPointScrollDefaultHeight(scroller) {
-    if (!scroller) {
-      return NODE_MAP_LABEL_PER_POINT_SCROLL_MIN_H;
-    }
-    var table = scroller.querySelector(".node-map-label-per-point-table");
-    if (!table) {
-      return NODE_MAP_LABEL_PER_POINT_SCROLL_MIN_H;
-    }
-    var headerRow = table.querySelector("thead tr");
-    var bodyRow = table.querySelector("tbody tr");
-    var headerHeight = headerRow ? headerRow.offsetHeight : 28;
-    var rowHeight = bodyRow ? bodyRow.offsetHeight : 28;
-    return clampNodeMapLabelPerPointScrollHeight(
-      headerHeight + rowHeight * NODE_MAP_LABEL_PER_POINT_VISIBLE_ROWS + 2
-    );
-  }
-
-  function applyNodeMapLabelPerPointScrollHeight(scroller, px, persist) {
-    if (!scroller || px == null || !Number.isFinite(px)) {
-      return;
-    }
-    var clamped = clampNodeMapLabelPerPointScrollHeight(px);
-    scroller.classList.add("is-height-custom");
-    scroller.style.height = Math.round(clamped) + "px";
-    scroller.style.maxHeight = Math.round(clamped) + "px";
-    if (persist) {
-      writeNodeMapLabelPerPointScrollHeight(clamped);
-    }
-  }
-
-  function syncNodeMapLabelPerPointScrollHeight(scroller) {
-    if (!scroller) {
-      return;
-    }
-    var stored = readNodeMapLabelPerPointScrollHeight();
-    if (stored !== null) {
-      applyNodeMapLabelPerPointScrollHeight(scroller, stored, false);
-      return;
-    }
-    applyNodeMapLabelPerPointScrollHeight(
-      scroller,
-      measureNodeMapLabelPerPointScrollDefaultHeight(scroller),
-      false
-    );
-  }
-
-  function bindNodeMapLabelPerPointScrollResize() {
-    var handle = document.getElementById("node-map-label-per-point-resize");
-    var scroller = document.getElementById("node-map-label-per-point-scroll");
-    if (!handle || !scroller || handle.dataset.resizeBound === "1") {
-      return;
-    }
-    handle.dataset.resizeBound = "1";
-
-    var stored = readNodeMapLabelPerPointScrollHeight();
-    if (stored !== null) {
-      applyNodeMapLabelPerPointScrollHeight(scroller, stored, false);
-    }
-
-    var drag = null;
-
-    function finishDrag() {
-      if (!drag) {
-        return;
-      }
-      handle.classList.remove("is-dragging");
-      document.body.classList.remove("node-map-label-per-point-scroll-resizing");
-      drag = null;
-    }
-
-    function onPointerMove(event) {
-      if (!drag) {
-        return;
-      }
-      var delta = event.clientY - drag.startY;
-      applyNodeMapLabelPerPointScrollHeight(scroller, drag.startHeight + delta, false);
-    }
-
-    function onPointerUp() {
-      if (!drag) {
-        return;
-      }
-      var current = scroller.offsetHeight;
-      if (Number.isFinite(current)) {
-        applyNodeMapLabelPerPointScrollHeight(scroller, current, true);
-      }
-      finishDrag();
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", onPointerUp);
-      window.removeEventListener("pointercancel", onPointerUp);
-    }
-
-    handle.addEventListener("pointerdown", function (event) {
-      if (event.button !== 0) {
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      if (!scroller.classList.contains("is-height-custom")) {
-        syncNodeMapLabelPerPointScrollHeight(scroller);
-      }
-      drag = { startY: event.clientY, startHeight: scroller.offsetHeight };
-      handle.classList.add("is-dragging");
-      document.body.classList.add("node-map-label-per-point-scroll-resizing");
-      handle.setPointerCapture(event.pointerId);
-      window.addEventListener("pointermove", onPointerMove);
-      window.addEventListener("pointerup", onPointerUp);
-      window.addEventListener("pointercancel", onPointerUp);
-    });
-
-    handle.addEventListener("keydown", function (event) {
-      var step = event.shiftKey ? 24 : 8;
-      var dir = 0;
-      if (event.key === "ArrowDown") {
-        dir = 1;
-      } else if (event.key === "ArrowUp") {
-        dir = -1;
-      } else {
-        return;
-      }
-      event.preventDefault();
-      if (!scroller.classList.contains("is-height-custom")) {
-        syncNodeMapLabelPerPointScrollHeight(scroller);
-      }
-      applyNodeMapLabelPerPointScrollHeight(scroller, scroller.offsetHeight + dir * step, true);
-    });
-  }
-
-  function setNodeMapLabelPerPointPanelOpen(open) {
-    var session = nodeMapLabelSession;
-    var panel = document.getElementById("node-map-label-per-point-panel");
-    var toggleBtn = document.getElementById("node-map-label-per-point-toggle");
-    if (session && session.mode === "source") {
-      session.perPointOpen = !!open;
-    }
-    if (panel) {
-      panel.classList.toggle("hidden", !open);
-      panel.hidden = !open;
-    }
-    if (toggleBtn) {
-      toggleBtn.textContent = open ? "Hide per-point list" : "Per-point positioning…";
-      toggleBtn.setAttribute("aria-expanded", open ? "true" : "false");
-    }
-    if (open) {
-      renderNodeMapLabelPerPointTable();
-      var scroller = document.getElementById("node-map-label-per-point-scroll");
-      if (scroller) {
-        syncNodeMapLabelPerPointScrollHeight(scroller);
-      }
-      if (nodeMapLabelFloatingController && nodeMapLabelFloatingController.ensure) {
-        nodeMapLabelFloatingController.ensure();
-      }
-    }
-  }
-
-  function readPerPointRowOverride(tr) {
-    if (!tr) {
-      return null;
-    }
-    var alignEl = tr.querySelector('[data-field="align"]');
-    var bgTransparentEl = tr.querySelector('[data-field="bgTransparent"]');
-    var bgColorEl = tr.querySelector('[data-field="bgColor"]');
-    var backgroundColor = "transparent";
-    if (bgTransparentEl && !bgTransparentEl.checked && bgColorEl) {
-      backgroundColor = bgColorEl.value || "transparent";
-    }
-    return {
-      align: alignEl ? alignEl.value : "right",
-      padding: tr.querySelector('[data-field="padding"]').value,
-      offsetLeft: tr.querySelector('[data-field="offsetLeft"]').value,
-      offsetRight: tr.querySelector('[data-field="offsetRight"]').value,
-      offsetUp: tr.querySelector('[data-field="offsetUp"]').value,
-      offsetDown: tr.querySelector('[data-field="offsetDown"]').value,
-      fontFamily: tr.querySelector('[data-field="fontFamily"]').value,
-      fontSize: tr.querySelector('[data-field="fontSize"]').value,
-      color: tr.querySelector('[data-field="color"]').value,
-      bold: tr.querySelector('[data-field="bold"]').checked,
-      italic: tr.querySelector('[data-field="italic"]').checked,
-      underline: tr.querySelector('[data-field="underline"]').checked,
-      backgroundColor: backgroundColor,
-    };
-  }
-
-  function syncPointOverridesFromPerPointTable() {
-    var session = nodeMapLabelSession;
-    if (!session || session.mode !== "source" || !session.perPointOpen) {
-      return;
-    }
-    var tbody = document.getElementById("node-map-label-per-point-body");
-    if (!tbody) {
-      return;
-    }
-    var overrides = {};
-    Array.prototype.forEach.call(tbody.querySelectorAll("tr[data-node-id]"), function (tr) {
-      var nodeId = tr.getAttribute("data-node-id");
-      if (nodeId) {
-        overrides[nodeId] = readPerPointRowOverride(tr);
-      }
-    });
-    session.pointOverrides = overrides;
-  }
-
-  function syncPerPointRowBgControls(tr) {
-    if (!tr) {
-      return;
-    }
-    var bgTransparentEl = tr.querySelector('[data-field="bgTransparent"]');
-    var bgColorEl = tr.querySelector('[data-field="bgColor"]');
-    if (bgColorEl && bgTransparentEl) {
-      bgColorEl.disabled = bgTransparentEl.checked;
-    }
-  }
-
-  function renderNodeMapLabelPerPointTable() {
-    var session = nodeMapLabelSession;
-    if (!session || session.mode !== "source" || !window.NodeMapLabel) {
-      return;
-    }
-    var sourceId = resolveMapLabelSourceIdFromDialog(session);
-    var tbody = document.getElementById("node-map-label-per-point-body");
-    var thead = document.getElementById("node-map-label-per-point-head");
-    if (!tbody || !sourceId) {
-      return;
-    }
-    var template = NodeMapLabel.normalizeStyleTemplate(readNodeMapLabelForm());
-    if (!template) {
-      tbody.innerHTML = "";
-      return;
-    }
-    if (thead && !thead.innerHTML) {
-      thead.innerHTML =
-        "<tr>" +
-        "<th>Point</th>" +
-        "<th>Side</th>" +
-        "<th>Pad</th>" +
-        "<th>L</th>" +
-        "<th>R</th>" +
-        "<th>Up</th>" +
-        "<th>Dn</th>" +
-        "<th>Font</th>" +
-        "<th>Size</th>" +
-        "<th>Color</th>" +
-        "<th>B</th>" +
-        "<th>I</th>" +
-        "<th>U</th>" +
-        "<th>Tr</th>" +
-        "<th>Bg</th>" +
-        "</tr>";
-    }
-    syncPointOverridesFromPerPointTable();
-    var points = GisMap.listSourcePointNodes(sourceId);
-    tbody.innerHTML = "";
-    points.forEach(function (point) {
-      var override = (session.pointOverrides && session.pointOverrides[point.id]) || null;
-      var style = NodeMapLabel.mergeStyleTemplate(template, override) || template;
-      var tr = document.createElement("tr");
-      tr.setAttribute("data-node-id", point.id);
-      var transparent = !style.backgroundColor || style.backgroundColor === "transparent";
-      tr.innerHTML =
-        '<td title="' +
-        escapeText(point.name) +
-        '">' +
-        escapeText(point.name) +
-        "</td>" +
-        '<td><select data-field="align" aria-label="Side for ' +
-        escapeText(point.name) +
-        '">' +
-        '<option value="left"' +
-        (style.align === "left" ? " selected" : "") +
-        ">Left</option>" +
-        '<option value="right"' +
-        (style.align === "right" ? " selected" : "") +
-        ">Right</option>" +
-        '<option value="top"' +
-        (style.align === "top" ? " selected" : "") +
-        ">Top</option>" +
-        '<option value="bottom"' +
-        (style.align === "bottom" ? " selected" : "") +
-        ">Bottom</option>" +
-        "</select></td>" +
-        '<td><input data-field="padding" type="number" min="0" max="128" step="1" value="' +
-        style.padding +
-        '" /></td>' +
-        '<td><input data-field="offsetLeft" type="number" min="-512" max="512" step="1" value="' +
-        style.offsetLeft +
-        '" /></td>' +
-        '<td><input data-field="offsetRight" type="number" min="-512" max="512" step="1" value="' +
-        style.offsetRight +
-        '" /></td>' +
-        '<td><input data-field="offsetUp" type="number" min="-512" max="512" step="1" value="' +
-        style.offsetUp +
-        '" /></td>' +
-        '<td><input data-field="offsetDown" type="number" min="-512" max="512" step="1" value="' +
-        style.offsetDown +
-        '" /></td>' +
-        '<td><select data-field="fontFamily">' +
-        mapLabelFontSelectOptions(style.fontFamily) +
-        "</select></td>" +
-        '<td><input data-field="fontSize" type="number" min="6" max="96" step="1" value="' +
-        style.fontSize +
-        '" /></td>' +
-        '<td><input data-field="color" type="color" value="' +
-        escapeText(style.color) +
-        '" /></td>' +
-        '<td><input data-field="bold" type="checkbox"' +
-        (style.bold ? " checked" : "") +
-        " /></td>" +
-        '<td><input data-field="italic" type="checkbox"' +
-        (style.italic ? " checked" : "") +
-        " /></td>" +
-        '<td><input data-field="underline" type="checkbox"' +
-        (style.underline ? " checked" : "") +
-        " /></td>" +
-        '<td><input data-field="bgTransparent" type="checkbox"' +
-        (transparent ? " checked" : "") +
-        " /></td>" +
-        '<td><input data-field="bgColor" type="color" value="' +
-        escapeText(transparent ? "#121417" : style.backgroundColor) +
-        '"' +
-        (transparent ? " disabled" : "") +
-        " /></td>";
-      tr.addEventListener("change", function () {
-        syncPerPointRowBgControls(tr);
-        syncPointOverridesFromPerPointTable();
-      });
-      tr.addEventListener("input", function () {
-        syncPointOverridesFromPerPointTable();
-      });
-      tbody.appendChild(tr);
-      syncPerPointRowBgControls(tr);
-    });
-    if (session.perPointOpen) {
-      var perPointScroller = document.getElementById("node-map-label-per-point-scroll");
-      if (perPointScroller) {
-        syncNodeMapLabelPerPointScrollHeight(perPointScroller);
-      }
-    }
-  }
-
-  function onNodeMapLabelSourceChanged() {
-    var session = nodeMapLabelSession;
-    if (!session || session.mode !== "source") {
-      return;
-    }
-    var sourceId = resolveMapLabelSourceIdFromDialog(session);
-    if (!sourceId) {
-      return;
-    }
-    session.sourceId = sourceId;
-    session.pointOverrides = {};
-    session.bulkSnapshot = GisMap.snapshotSourceMapLabels(sourceId);
-    updateNodeMapLabelBulkSubtitle(sourceId);
-    if (session.perPointOpen) {
-      renderNodeMapLabelPerPointTable();
-    }
-  }
-
-  function commitBulkMapLabelsFromDialog(options) {
-    options = options || {};
-    var session = nodeMapLabelSession;
-    if (!session || session.mode !== "source" || !window.NodeMapLabel) {
-      return 0;
-    }
-    var sourceId = resolveMapLabelSourceIdFromDialog(session);
-    if (!sourceId) {
-      setMessage("Choose a KMZ or KML file.");
-      return 0;
-    }
-    var styleTemplate = NodeMapLabel.normalizeStyleTemplate(readNodeMapLabelForm());
-    if (!styleTemplate) {
-      setMessage("Could not read label style options.");
-      return 0;
-    }
-    syncPointOverridesFromPerPointTable();
-    var saveToKmz = options.saveToKmz;
-    if (saveToKmz === undefined) {
-      var saveToggle = document.getElementById("node-map-label-save-kmz");
-      saveToKmz = saveToggle ? saveToggle.checked : nodeMapLabelSaveToKmz;
-      nodeMapLabelSaveToKmz = saveToKmz;
-    }
-    if (options.preview) {
-      saveToKmz = false;
-    }
-    var applyOptions = { saveToKmz: saveToKmz, skipInspect: true };
-    var applied = GisMap.applySourceMapLabelStyles(
-      sourceId,
-      styleTemplate,
-      applyOptions,
-      session.pointOverrides || {}
-    );
-    if (!applied) {
-      setMessage("No point placemarks in that file received labels (missing names or no points).");
-      return 0;
-    }
-    if (saveToKmz && !options.preview) {
-      var bulkSource = findLoadedSource(sourceId);
-      if (bulkSource) {
-        markSourceEdited(bulkSource);
-      }
-    }
-    if (options.preview) {
-      setMessage(
-        "Previewing labels on " + applied + " point" + (applied === 1 ? "" : "s") + "."
-      );
-    } else {
-      setMessage(
-        "Applied label styles to " + applied + " point" + (applied === 1 ? "" : "s") + "."
-      );
-    }
-    return applied;
-  }
-
-  function previewNodeMapLabelDialog() {
-    commitBulkMapLabelsFromDialog({ preview: true, saveToKmz: false });
-  }
-
-  function resetNodeMapLabelPanelLayout() {
-    if (!nodeMapLabelDialog) {
-      return;
-    }
-    var panel = nodeMapLabelDialog.querySelector(".node-map-label-panel");
-    if (!panel) {
-      return;
-    }
-    panel.style.width = "";
-    panel.style.height = "";
-    panel.style.left = "";
-    panel.style.top = "";
-    panel.classList.remove("floating-panel");
-    nodeMapLabelDialog.classList.remove("floating-panel-backdrop");
-  }
-
-  function syncNodeMapLabelDialogUi() {
-    var session = nodeMapLabelSession;
-    var bulk = !!(session && session.mode === "source");
-    var fileTarget = document.getElementById("node-map-label-file-target");
-    var bulkHint = document.getElementById("node-map-label-bulk-hint");
-    var bulkActions = document.getElementById("node-map-label-bulk-actions");
-    var textLabel = document.getElementById("node-map-label-text-label");
-    var textEl = document.getElementById("node-map-label-text");
-    if (fileTarget) {
-      fileTarget.classList.toggle("hidden", !bulk);
-      fileTarget.hidden = !bulk;
-    }
-    if (bulkHint) {
-      bulkHint.classList.toggle("hidden", !bulk);
-      bulkHint.hidden = !bulk;
-    }
-    if (bulkActions) {
-      bulkActions.classList.toggle("hidden", !bulk);
-      bulkActions.hidden = !bulk;
-    }
-    if (textLabel) {
-      textLabel.hidden = bulk;
-    }
-    if (textEl) {
-      textEl.hidden = bulk;
-      textEl.disabled = bulk;
-    }
-    if (nodeMapLabelPreviewBtn) {
-      nodeMapLabelPreviewBtn.hidden = !bulk;
-    }
-    if (nodeMapLabelRemoveBtn) {
-      nodeMapLabelRemoveBtn.textContent = bulk ? "Remove all labels" : "Remove label";
-      if (bulk) {
-        nodeMapLabelRemoveBtn.hidden = false;
-      }
-    }
-    if (!bulk) {
-      setNodeMapLabelPerPointPanelOpen(false);
-    } else if (session && !session.perPointOpen) {
-      setNodeMapLabelPerPointPanelOpen(false);
-    }
-    if (nodeMapLabelDialog) {
-      nodeMapLabelDialog.classList.toggle("node-map-label-dialog--bulk", bulk);
-    }
-    var panel = nodeMapLabelDialog && nodeMapLabelDialog.querySelector(".node-map-label-panel");
-    if (bulk && panel) {
-      nodeMapLabelDialog.classList.add("floating-panel-backdrop");
-      panel.classList.add("floating-panel");
-      if (nodeMapLabelFloatingController && nodeMapLabelFloatingController.ensure) {
-        nodeMapLabelFloatingController.ensure();
-      }
-    } else {
-      resetNodeMapLabelPanelLayout();
-    }
-  }
-
-  function openBulkMapLabelsDialog(sourceId) {
-    if (!nodeMapLabelDialog || !window.NodeMapLabel) {
-      return;
-    }
-    var resolvedSourceId = resolveDefaultMapLabelSourceId(sourceId);
-    if (!resolvedSourceId) {
-      setMessage("Open a KMZ or KML with point placemarks to add labels.");
-      return;
-    }
-    nodeMapLabelSession = {
-      mode: "source",
-      sourceId: resolvedSourceId,
-      pointOverrides: {},
-      perPointOpen: false,
-      bulkSnapshot: GisMap.snapshotSourceMapLabels(resolvedSourceId),
-    };
-    populateNodeMapLabelSourceSelect(resolvedSourceId);
-    fillNodeMapLabelForm(NodeMapLabel.defaultSpec(null));
-    updateNodeMapLabelBulkSubtitle(resolvedSourceId);
-    if (nodeMapLabelTitle) {
-      nodeMapLabelTitle.textContent = "Add labels";
-    }
-    var saveToggle = document.getElementById("node-map-label-save-kmz");
-    if (saveToggle) {
-      saveToggle.checked = nodeMapLabelSaveToKmz;
-    }
-    syncNodeMapLabelBgControls();
-    syncNodeMapLabelDialogUi();
-    if (nodeMapLabelFloatingController && nodeMapLabelFloatingController.reset) {
-      nodeMapLabelFloatingController.reset(true);
-    }
-    nodeMapLabelDialog.classList.remove("hidden");
-    nodeMapLabelDialog.setAttribute("aria-hidden", "false");
   }
 
   function setAllLayersVisible(visible) {
@@ -5217,9 +2108,9 @@
     }
     if (
       revealPanel
-      && isSidebarSectionUserHidden(SIDEBAR_INSPECT_SECTION_SLUG)
+      && sidebarLayout.isSidebarSectionUserHidden(SIDEBAR_INSPECT_SECTION_SLUG)
     ) {
-      setSidebarSectionUserHidden(SIDEBAR_INSPECT_SECTION_SLUG, false);
+      sidebarLayout.setSidebarSectionUserHidden(SIDEBAR_INSPECT_SECTION_SLUG, false);
     }
     cancelInspectPopup();
     GisMap.selectFeature(nodeId, false, "layers");
@@ -6320,7 +3211,7 @@
           return LoadedSession.clear();
         }
         session.gui = session.gui || {};
-        session.gui.pointChainSessions = collectPointChainSessionsForGui();
+        session.gui.pointChainSessions = pointChainPanel.collectPointChainSessionsForGui();
         return LoadedSession.save({
           entries: session.entries,
           activeIndex: session.activeIndex,
@@ -6342,16 +3233,16 @@
       gisMap: GisMap,
       map: map,
       basemapSelect: document.getElementById("basemap-select"),
-      mapScaleSelect: mapScaleSelect,
+      mapScaleSelect: mapScaleUi.mapScaleSelect,
       cursorCoordsInput: cursorCoordsInput,
       syncCursorCoordsOverlay: syncCursorCoordsOverlay,
       chooseTool: chooseTool,
     });
     syncImageryLabelsControl();
     if (!launchWindowParams) {
-      syncMapScaleSelect();
+      mapScaleUi.syncMapScaleSelect();
     }
-    applyPointChainSessionsFromGui(gui.pointChainSessions);
+    pointChainPanel.applyPointChainSessionsFromGui(gui.pointChainSessions);
   }
 
   function saveAppStateToFile() {
@@ -6374,7 +3265,7 @@
     })
       .then(function (session) {
         if (session && session.gui) {
-          session.gui.pointChainSessions = collectPointChainSessionsForGui();
+          session.gui.pointChainSessions = pointChainPanel.collectPointChainSessionsForGui();
         }
         return AppState.exportForFile(session);
       })
@@ -6452,7 +3343,7 @@
     if (!loadedSources.length) {
       resetSelectionState();
       Directions.clear();
-      resetPointChainRoute();
+      pointChainPanel.resetPointChainRoute();
     }
     refreshFileLabel();
     updateFileActions();
@@ -6471,7 +3362,7 @@
     activeSourceId = null;
     GisMap.clearDocument();
     Directions.clear();
-    resetPointChainRoute();
+    pointChainPanel.resetPointChainRoute();
     resetFileUi();
     persistLoadedSession();
   }
@@ -6484,9 +3375,9 @@
     docDirty = false;
     filePointIconSourceId = null;
     filePointIconSourceUserPick = false;
-    pointChainSourceId = null;
-    pointChainSourceUserPick = false;
-    resetPointChainRoute();
+    pointChainPanel.pointChainSourceId = null;
+    pointChainPanel.pointChainSourceUserPick = false;
+    pointChainPanel.resetPointChainRoute();
     refreshFileLabel();
     updateFileActions();
     renderLoadedSources();
@@ -6689,7 +3580,7 @@
       }
       syncImageryLabelsControl();
     }
-    syncMapScaleSelect();
+    mapScaleUi.syncMapScaleSelect();
   }
 
   function loadLaunchWindowFiles(params) {
@@ -7314,7 +4205,7 @@
       var id = focusId;
       hideLayerTreeContextMenu();
       if (id) {
-        openNodeMapLabelDialog(id);
+        nodeMapLabelUi.openNodeMapLabelDialog(id);
       }
     });
 
@@ -7330,7 +4221,7 @@
       var sourceId = focusId ? documentSourceIdForLayerNodeId(focusId) : null;
       hideLayerTreeContextMenu();
       if (sourceId) {
-        openBulkMapLabelsDialog(sourceId);
+        nodeMapLabelUi.openBulkMapLabelsDialog(sourceId);
       }
     });
 
@@ -7377,7 +4268,7 @@
       event.stopPropagation();
       var id = focusId;
       hideLayerTreeContextMenu();
-      openCsvCoordsForLayerNode(id);
+      csvCoordsUi.openCsvCoordsForLayerNode(id);
     });
 
     var iconMenuSeparator = document.createElement("div");
@@ -7447,7 +4338,7 @@
     }
     hideMapContextMenu();
     hideNodeBalloon();
-    hideSidebarSectionContextMenu();
+    sidebarLayout.hideSidebarSectionContextMenu();
     updateLayerTreeContextMenuItems();
     layerTreeContextMenu.classList.remove("hidden");
     layerTreeContextMenu.style.left = "0px";
@@ -7522,7 +4413,7 @@
       var nodeId = mapContextMenuNodeId;
       hideMapContextMenu();
       if (nodeId) {
-        openNodeMapLabelDialog(nodeId);
+        nodeMapLabelUi.openNodeMapLabelDialog(nodeId);
       }
     });
 
@@ -7711,355 +4602,6 @@
         && !featurePropertiesDialog.classList.contains("hidden")
       ) {
         closeFeaturePropertiesDialog();
-      }
-    });
-  }
-
-  function readNodeMapLabelForm() {
-    var textEl = document.getElementById("node-map-label-text");
-    var alignEl = document.getElementById("node-map-label-align");
-    var paddingEl = document.getElementById("node-map-label-padding");
-    var offsetLeftEl = document.getElementById("node-map-label-offset-left");
-    var offsetRightEl = document.getElementById("node-map-label-offset-right");
-    var offsetUpEl = document.getElementById("node-map-label-offset-up");
-    var offsetDownEl = document.getElementById("node-map-label-offset-down");
-    var fontEl = document.getElementById("node-map-label-font");
-    var fontSizeEl = document.getElementById("node-map-label-font-size");
-    var colorEl = document.getElementById("node-map-label-color");
-    var boldEl = document.getElementById("node-map-label-bold");
-    var italicEl = document.getElementById("node-map-label-italic");
-    var underlineEl = document.getElementById("node-map-label-underline");
-    var bgColorEl = document.getElementById("node-map-label-bg-color");
-    var bgTransparentEl = document.getElementById("node-map-label-bg-transparent");
-    var backgroundColor = "transparent";
-    if (bgTransparentEl && !bgTransparentEl.checked && bgColorEl) {
-      backgroundColor = bgColorEl.value || "transparent";
-    }
-    return {
-      text: textEl ? textEl.value : "",
-      align: alignEl ? alignEl.value : "right",
-      padding: paddingEl ? paddingEl.value : 4,
-      offsetLeft: offsetLeftEl ? offsetLeftEl.value : 0,
-      offsetRight: offsetRightEl ? offsetRightEl.value : 0,
-      offsetUp: offsetUpEl ? offsetUpEl.value : 0,
-      offsetDown: offsetDownEl ? offsetDownEl.value : 0,
-      fontFamily: fontEl ? fontEl.value : "",
-      fontSize: fontSizeEl ? fontSizeEl.value : 12,
-      color: colorEl ? colorEl.value : "#e8eaed",
-      bold: !!(boldEl && boldEl.checked),
-      italic: !!(italicEl && italicEl.checked),
-      underline: !!(underlineEl && underlineEl.checked),
-      backgroundColor: backgroundColor,
-    };
-  }
-
-  function fillNodeMapLabelForm(spec) {
-    spec = spec || {};
-    var textEl = document.getElementById("node-map-label-text");
-    var alignEl = document.getElementById("node-map-label-align");
-    var paddingEl = document.getElementById("node-map-label-padding");
-    var offsetLeftEl = document.getElementById("node-map-label-offset-left");
-    var offsetRightEl = document.getElementById("node-map-label-offset-right");
-    var offsetUpEl = document.getElementById("node-map-label-offset-up");
-    var offsetDownEl = document.getElementById("node-map-label-offset-down");
-    var fontEl = document.getElementById("node-map-label-font");
-    var fontSizeEl = document.getElementById("node-map-label-font-size");
-    var colorEl = document.getElementById("node-map-label-color");
-    var boldEl = document.getElementById("node-map-label-bold");
-    var italicEl = document.getElementById("node-map-label-italic");
-    var underlineEl = document.getElementById("node-map-label-underline");
-    var bgColorEl = document.getElementById("node-map-label-bg-color");
-    var bgTransparentEl = document.getElementById("node-map-label-bg-transparent");
-    if (textEl) {
-      textEl.value = spec.text || "";
-    }
-    if (alignEl) {
-      alignEl.value = spec.align || "right";
-    }
-    if (paddingEl) {
-      paddingEl.value = spec.padding != null ? spec.padding : 4;
-    }
-    if (offsetLeftEl) {
-      offsetLeftEl.value = spec.offsetLeft != null ? spec.offsetLeft : 0;
-    }
-    if (offsetRightEl) {
-      offsetRightEl.value = spec.offsetRight != null ? spec.offsetRight : 0;
-    }
-    if (offsetUpEl) {
-      offsetUpEl.value = spec.offsetUp != null ? spec.offsetUp : 0;
-    }
-    if (offsetDownEl) {
-      offsetDownEl.value = spec.offsetDown != null ? spec.offsetDown : 0;
-    }
-    if (fontEl) {
-      fontEl.value = spec.fontFamily || "system-ui, Segoe UI, sans-serif";
-    }
-    if (fontSizeEl) {
-      fontSizeEl.value = spec.fontSize != null ? spec.fontSize : 12;
-    }
-    if (colorEl) {
-      colorEl.value = spec.color || "#e8eaed";
-    }
-    if (boldEl) {
-      boldEl.checked = spec.bold !== false;
-    }
-    if (italicEl) {
-      italicEl.checked = !!spec.italic;
-    }
-    if (underlineEl) {
-      underlineEl.checked = !!spec.underline;
-    }
-    var transparent =
-      !spec.backgroundColor || spec.backgroundColor === "transparent";
-    if (bgTransparentEl) {
-      bgTransparentEl.checked = transparent;
-    }
-    if (bgColorEl) {
-      bgColorEl.disabled = transparent;
-      if (!transparent && spec.backgroundColor) {
-        bgColorEl.value = spec.backgroundColor;
-      }
-    }
-  }
-
-  function syncNodeMapLabelBgControls() {
-    var bgColorEl = document.getElementById("node-map-label-bg-color");
-    var bgTransparentEl = document.getElementById("node-map-label-bg-transparent");
-    if (!bgColorEl || !bgTransparentEl) {
-      return;
-    }
-    bgColorEl.disabled = bgTransparentEl.checked;
-  }
-
-  function closeNodeMapLabelDialog(revert) {
-    var session = nodeMapLabelSession;
-    if (
-      revert
-      && session
-      && session.mode === "source"
-      && session.bulkSnapshot
-    ) {
-      var revertSourceId = resolveMapLabelSourceIdFromDialog(session) || session.sourceId;
-      if (revertSourceId) {
-        GisMap.restoreSourceMapLabelsSnapshot(revertSourceId, session.bulkSnapshot, {
-          saveToKmz: false,
-          skipInspect: true,
-        });
-      }
-    }
-    nodeMapLabelSession = null;
-    if (!nodeMapLabelDialog) {
-      return;
-    }
-    nodeMapLabelDialog.classList.remove("node-map-label-dialog--bulk");
-    resetNodeMapLabelPanelLayout();
-    var panel = nodeMapLabelDialog.querySelector(".node-map-label-per-point-panel");
-    if (panel) {
-      panel.classList.add("hidden");
-      panel.hidden = true;
-    }
-    nodeMapLabelDialog.classList.add("hidden");
-    nodeMapLabelDialog.setAttribute("aria-hidden", "true");
-  }
-
-  function applyNodeMapLabelDialog() {
-    var session = nodeMapLabelSession;
-    if (!session || !window.NodeMapLabel) {
-      return;
-    }
-    var saveToggle = document.getElementById("node-map-label-save-kmz");
-    var saveToKmz = saveToggle ? saveToggle.checked : nodeMapLabelSaveToKmz;
-    nodeMapLabelSaveToKmz = saveToKmz;
-    var applyOptions = { saveToKmz: saveToKmz, skipInspect: true };
-
-    if (session.mode === "source") {
-      if (!commitBulkMapLabelsFromDialog({ saveToKmz: saveToKmz })) {
-        return;
-      }
-      closeNodeMapLabelDialog(false);
-      return;
-    }
-
-    var raw = readNodeMapLabelForm();
-    var spec = NodeMapLabel.normalizeSpec(raw);
-    if (!spec) {
-      setMessage("Enter label text to apply a map label.");
-      return;
-    }
-    if (!GisMap.setNodeMapLabel(session.nodeId, spec, applyOptions)) {
-      setMessage("Could not apply the map label.");
-      return;
-    }
-    if (saveToKmz) {
-      var source = findLoadedSource(sourceIdFromNodeId(session.nodeId));
-      if (source) {
-        markSourceEdited(source);
-      }
-    }
-    closeNodeMapLabelDialog(false);
-  }
-
-  function removeNodeMapLabelDialog() {
-    var session = nodeMapLabelSession;
-    if (!session) {
-      return;
-    }
-    var saveToggle = document.getElementById("node-map-label-save-kmz");
-    var saveToKmz = saveToggle ? saveToggle.checked : nodeMapLabelSaveToKmz;
-    var removeOptions = { saveToKmz: saveToKmz, skipInspect: true };
-
-    if (session.mode === "source") {
-      var sourceId = resolveMapLabelSourceIdFromDialog(session);
-      if (!sourceId) {
-        setMessage("Choose a KMZ or KML file.");
-        return;
-      }
-      var cleared = GisMap.clearSourceMapLabels(sourceId, removeOptions);
-      if (!cleared) {
-        setMessage("No map labels to remove in that file.");
-        return;
-      }
-      if (saveToKmz) {
-        var bulkSource = findLoadedSource(sourceId);
-        if (bulkSource) {
-          markSourceEdited(bulkSource);
-        }
-      }
-      setMessage(
-        "Removed map labels from " +
-          cleared +
-          " point" +
-          (cleared === 1 ? "" : "s") +
-          "."
-      );
-      session.bulkSnapshot = GisMap.snapshotSourceMapLabels(sourceId);
-      closeNodeMapLabelDialog(false);
-      return;
-    }
-
-    if (!GisMap.setNodeMapLabel(session.nodeId, null, removeOptions)) {
-      setMessage("Could not remove the map label.");
-      return;
-    }
-    if (saveToKmz) {
-      var source = findLoadedSource(sourceIdFromNodeId(session.nodeId));
-      if (source) {
-        markSourceEdited(source);
-      }
-    }
-    closeNodeMapLabelDialog(false);
-  }
-
-  function openNodeMapLabelDialog(nodeId) {
-    if (!nodeMapLabelDialog || !nodeId || !window.NodeMapLabel) {
-      return;
-    }
-    var node = GisMap.findNode(nodeId);
-    if (!node || !nodeIsMapPoint(node)) {
-      setMessage("Labels can only be added to point placemarks.");
-      return;
-    }
-    nodeMapLabelSession = { mode: "node", nodeId: nodeId };
-    var existing = GisMap.getNodeMapLabel(nodeId);
-    fillNodeMapLabelForm(NodeMapLabel.specForEditor(node));
-    if (nodeMapLabelSubtitle) {
-      var subtitle = node.name || "Placemark";
-      var source = findLoadedSource(sourceIdFromNodeId(nodeId));
-      if (source && source.doc && source.doc.fileName) {
-        subtitle += " — " + source.doc.fileName;
-      }
-      nodeMapLabelSubtitle.textContent = subtitle;
-    }
-    if (nodeMapLabelTitle) {
-      nodeMapLabelTitle.textContent = existing ? "Edit label" : "Add label";
-    }
-    if (nodeMapLabelRemoveBtn) {
-      nodeMapLabelRemoveBtn.hidden = !existing;
-    }
-    var saveToggle = document.getElementById("node-map-label-save-kmz");
-    if (saveToggle) {
-      saveToggle.checked = nodeMapLabelSaveToKmz;
-    }
-    syncNodeMapLabelBgControls();
-    syncNodeMapLabelDialogUi();
-    nodeMapLabelDialog.classList.remove("hidden");
-    nodeMapLabelDialog.setAttribute("aria-hidden", "false");
-    GisMap.selectFeature(nodeId, false);
-  }
-
-  function initNodeMapLabelDialog() {
-    if (!nodeMapLabelDialog) {
-      return;
-    }
-    var panel = nodeMapLabelDialog.querySelector(".node-map-label-panel");
-    var header = document.getElementById("node-map-label-header");
-    if (window.FloatingPanel && panel && header) {
-      nodeMapLabelFloatingController = FloatingPanel.bind({
-        backdrop: nodeMapLabelDialog,
-        panel: panel,
-        dragHandle: header,
-        minWidth: 420,
-        minHeight: 360,
-        defaultWidth: 520,
-        defaultHeight: 620,
-        maxWidthPx: 1200,
-        maxHeightPx: 920,
-      });
-    }
-    bindNodeMapLabelPerPointScrollResize();
-    var closeBtn = document.getElementById("node-map-label-close");
-    var cancelBtn = document.getElementById("node-map-label-cancel");
-    if (closeBtn) {
-      closeBtn.addEventListener("click", function () {
-        closeNodeMapLabelDialog(true);
-      });
-    }
-    if (cancelBtn) {
-      cancelBtn.addEventListener("click", function () {
-        closeNodeMapLabelDialog(true);
-      });
-    }
-    if (nodeMapLabelApplyBtn) {
-      nodeMapLabelApplyBtn.addEventListener("click", applyNodeMapLabelDialog);
-    }
-    if (nodeMapLabelPreviewBtn) {
-      nodeMapLabelPreviewBtn.addEventListener("click", previewNodeMapLabelDialog);
-    }
-    if (nodeMapLabelRemoveBtn) {
-      nodeMapLabelRemoveBtn.addEventListener("click", removeNodeMapLabelDialog);
-    }
-    var perPointToggle = document.getElementById("node-map-label-per-point-toggle");
-    if (perPointToggle) {
-      perPointToggle.addEventListener("click", function () {
-        var session = nodeMapLabelSession;
-        var nextOpen = !(session && session.perPointOpen);
-        setNodeMapLabelPerPointPanelOpen(nextOpen);
-      });
-    }
-    var sourceSelect = document.getElementById("node-map-label-source");
-    if (sourceSelect) {
-      sourceSelect.addEventListener("change", onNodeMapLabelSourceChanged);
-    }
-    var bgTransparentEl = document.getElementById("node-map-label-bg-transparent");
-    if (bgTransparentEl) {
-      bgTransparentEl.addEventListener("change", syncNodeMapLabelBgControls);
-    }
-    nodeMapLabelDialog.addEventListener("click", function (event) {
-      if (event.target !== nodeMapLabelDialog) {
-        return;
-      }
-      var session = nodeMapLabelSession;
-      if (!session || session.mode !== "source") {
-        closeNodeMapLabelDialog(true);
-      }
-    });
-    document.addEventListener("keydown", function (event) {
-      if (
-        event.key === "Escape"
-        && nodeMapLabelDialog
-        && !nodeMapLabelDialog.classList.contains("hidden")
-      ) {
-        closeNodeMapLabelDialog(true);
       }
     });
   }
@@ -9101,8 +5643,8 @@
       }
     }
     renderInspect(null);
-    loadPointChainForSource(sourceId);
-    refreshPointChainPanel();
+    pointChainPanel.loadPointChainForSource(sourceId);
+    pointChainPanel.refreshPointChainPanel();
     var warn = (parsed.warnings || []).join(" ");
     setMessage(warn || "Loaded " + (parsed.fileName || file.name) + ".");
     RecentFiles.remember(file, handle || null, sourcePath || null).then(renderRecent).catch(function () {});
@@ -9132,618 +5674,6 @@
       }
     }
     return null;
-  }
-
-  function formatCsvCoordApplyMessage(stats, fileName) {
-    var label = fileName || "the file";
-    if (!stats || !stats.updated) {
-      return "No point placemarks were updated in " + label + ". Check BH_ID in ExtendedData and CSV rows.";
-    }
-    var parts = ["Updated " + stats.updated + " point placemark(s) in " + label + "."];
-    if (stats.notInCsv) {
-      parts.push(stats.notInCsv + " BH_ID(s) in the file had no CSV row.");
-    }
-    if (stats.noBhId) {
-      parts.push(stats.noBhId + " point(s) had no BH_ID field.");
-    }
-    if (stats.notPoint) {
-      parts.push(stats.notPoint + " placemark(s) with BH_ID were not points.");
-    }
-    if (stats.fuzzyMatched) {
-      parts.push(
-        stats.fuzzyMatched +
-          " matched after normalizing id spelling (leading zeros, B-/BH prefixes, etc.)."
-      );
-    }
-    if (stats.unusedCsvIds && stats.unusedCsvIds.length) {
-      var preview = stats.unusedCsvIds.slice(0, 5).join(", ");
-      var extra =
-        stats.unusedCsvIds.length > 5
-          ? " (+" + (stats.unusedCsvIds.length - 5) + " more)"
-          : "";
-      parts.push(stats.unusedCsvIds.length + " CSV row(s) unused: " + preview + extra + ".");
-    }
-    return parts.join(" ");
-  }
-
-  function setCsvCoordsDialogStatus(text, isError) {
-    if (!csvCoordsStatusEl) {
-      return;
-    }
-    csvCoordsStatusEl.textContent = text || "";
-    csvCoordsStatusEl.classList.toggle("is-error", !!isError);
-  }
-
-  function setCsvCoordsPathDisplay(kind, path, browserFileOnly) {
-    var text = String(path || "").trim();
-    var input = kind === "csv" ? csvCoordsCsvPathInput : csvCoordsKmzPathInput;
-    var selectedEl = kind === "csv" ? csvCoordsCsvSelectedEl : csvCoordsKmzSelectedEl;
-    if (input) {
-      input.value = text;
-      input.title = text;
-    }
-    if (!selectedEl) {
-      return;
-    }
-    if (!text) {
-      selectedEl.textContent = "";
-      selectedEl.classList.add("hidden");
-      selectedEl.hidden = true;
-      return;
-    }
-    selectedEl.textContent = text;
-    selectedEl.title = text;
-    if (browserFileOnly) {
-      selectedEl.title = "Full path is not available in the browser — using file name only.";
-    }
-    selectedEl.classList.remove("hidden");
-    selectedEl.hidden = false;
-  }
-
-  function formatCsvCoordNumber(value) {
-    if (typeof value !== "number" || !Number.isFinite(value)) {
-      return "—";
-    }
-    return value.toFixed(6);
-  }
-
-  function clearCsvCoordsPreviewDisplay() {
-    if (csvCoordsPreviewSection) {
-      csvCoordsPreviewSection.classList.add("hidden");
-      csvCoordsPreviewSection.hidden = true;
-    }
-    if (csvCoordsPreviewSummary) {
-      csvCoordsPreviewSummary.textContent = "";
-    }
-    if (csvCoordsPreviewWarnings) {
-      csvCoordsPreviewWarnings.textContent = "";
-      csvCoordsPreviewWarnings.classList.add("hidden");
-      csvCoordsPreviewWarnings.hidden = true;
-    }
-    if (csvCoordsDiffBody) {
-      csvCoordsDiffBody.innerHTML = "";
-    }
-  }
-
-  function clearCsvCoordsPreviewUi() {
-    csvCoordsApplyContext = null;
-    if (btnCsvCoordsApply) {
-      btnCsvCoordsApply.disabled = true;
-    }
-    clearCsvCoordsPreviewDisplay();
-  }
-
-  function resetCsvCoordsPreviewOnPathChange() {
-    clearCsvCoordsPreviewUi();
-    setCsvCoordsDialogStatus("", false);
-  }
-
-  function csvCoordsCsvPathValue() {
-    return csvCoordsCsvPathInput ? String(csvCoordsCsvPathInput.value || "").trim() : "";
-  }
-
-  function csvCoordsKmzPathValue() {
-    return csvCoordsKmzPathInput ? String(csvCoordsKmzPathInput.value || "").trim() : "";
-  }
-
-  function appendCsvCoordDiffCell(row, oldValue, newValue) {
-    var cell = document.createElement("td");
-    var oldSpan = document.createElement("span");
-    oldSpan.className = "csv-coords-diff-old";
-    oldSpan.textContent = formatCsvCoordNumber(oldValue);
-    var arrow = document.createElement("span");
-    arrow.className = "csv-coords-diff-arrow";
-    arrow.textContent = "→";
-    var newSpan = document.createElement("span");
-    newSpan.className = "csv-coords-diff-new";
-    newSpan.textContent = formatCsvCoordNumber(newValue);
-    cell.appendChild(oldSpan);
-    cell.appendChild(arrow);
-    cell.appendChild(newSpan);
-    row.appendChild(cell);
-  }
-
-  function renderCsvCoordsPreview(preview, fileName) {
-    clearCsvCoordsPreviewDisplay();
-    if (!preview || !csvCoordsPreviewSection) {
-      return;
-    }
-    if (preview.errors && preview.errors.length) {
-      setCsvCoordsDialogStatus(preview.errors[0], true);
-      setMessage(preview.errors[0]);
-      return;
-    }
-    if (!preview.changes || !preview.changes.length) {
-      var noChangeMsg =
-        "No coordinate changes to apply. Matching placemarks already use the CSV values.";
-      setCsvCoordsDialogStatus(noChangeMsg, false);
-      setMessage(noChangeMsg);
-      if (preview.warnings && preview.warnings.length && csvCoordsPreviewWarnings) {
-        csvCoordsPreviewWarnings.textContent = preview.warnings.join(" ");
-        csvCoordsPreviewWarnings.classList.remove("hidden");
-        csvCoordsPreviewWarnings.hidden = false;
-      }
-      return;
-    }
-    csvCoordsPreviewSection.classList.remove("hidden");
-    csvCoordsPreviewSection.hidden = false;
-    var label = fileName || "the file";
-    var summaryParts = [
-      preview.changes.length +
-        " placemark(s) will move in " +
-        label +
-        ".",
-    ];
-    if (preview.stats && preview.stats.unchanged) {
-      summaryParts.push(preview.stats.unchanged + " already match the CSV.");
-    }
-    if (preview.stats && preview.stats.unusedCsvIds && preview.stats.unusedCsvIds.length) {
-      var unusedPreview = preview.stats.unusedCsvIds.slice(0, 4).join(", ");
-      var unusedExtra =
-        preview.stats.unusedCsvIds.length > 4
-          ? " (+" + (preview.stats.unusedCsvIds.length - 4) + " more)"
-          : "";
-      summaryParts.push(
-        preview.stats.unusedCsvIds.length + " unused CSV row(s): " + unusedPreview + unusedExtra + "."
-      );
-    }
-    if (csvCoordsPreviewSummary) {
-      csvCoordsPreviewSummary.textContent = summaryParts.join(" ");
-    }
-    if (preview.warnings && preview.warnings.length && csvCoordsPreviewWarnings) {
-      csvCoordsPreviewWarnings.textContent = preview.warnings.join(" ");
-      csvCoordsPreviewWarnings.classList.remove("hidden");
-      csvCoordsPreviewWarnings.hidden = false;
-    }
-    if (csvCoordsDiffBody) {
-      preview.changes.forEach(function (entry) {
-        var row = document.createElement("tr");
-        var idCell = document.createElement("td");
-        idCell.className = "csv-coords-diff-id";
-        idCell.textContent = entry.bhId || "—";
-        if (entry.name && entry.name !== entry.bhId) {
-          var nameSpan = document.createElement("span");
-          nameSpan.className = "csv-coords-diff-name";
-          nameSpan.textContent = entry.name;
-          idCell.appendChild(nameSpan);
-        }
-        row.appendChild(idCell);
-        appendCsvCoordDiffCell(row, entry.oldLat, entry.newLat);
-        appendCsvCoordDiffCell(row, entry.oldLng, entry.newLng);
-        csvCoordsDiffBody.appendChild(row);
-      });
-    }
-    setCsvCoordsDialogStatus("Review the changes below, then apply them to the open file.", false);
-  }
-
-  function finishCsvCoordApply(sourceId, lookup, fileName, sourcePath) {
-    if (!sourceId || !lookup) {
-      return Promise.resolve();
-    }
-    var validation = GisMap.validateBhCoordCsvToSource(sourceId, lookup);
-    if (!validation.ok) {
-      var validationMsg =
-        validation.errors[0] || "This KMZ is not compatible with the CSV update.";
-      setCsvCoordsDialogStatus(validationMsg, true);
-      setMessage(validationMsg);
-      return Promise.resolve();
-    }
-    var stats = GisMap.applyBhCoordCsvToSource(sourceId, lookup);
-    var message = formatCsvCoordApplyMessage(stats, fileName);
-    if (validation.warnings && validation.warnings.length) {
-      message = validation.warnings.join(" ") + " " + message;
-    }
-    if (!stats.updated) {
-      setCsvCoordsDialogStatus(message, false);
-      setMessage(message);
-      return Promise.resolve();
-    }
-    var source = findLoadedSource(sourceId);
-    if (source) {
-      markSourceEdited(source);
-    } else {
-      noteEdit();
-    }
-    updateFileActions();
-    renderTree(GisMap.getRoot());
-    persistLoadedSession();
-    clearCsvCoordsPreviewUi();
-    setCsvCoordsDialogStatus(message + " Saving…", false);
-    setMessage(message + " Saving…");
-    if (!source || !sourceCanPersistToOriginal(source)) {
-      var noSaveMsg =
-        message +
-        " Changes are in the open map only — use Save copy or Save to write a file.";
-      setCsvCoordsDialogStatus(noSaveMsg, false);
-      setMessage(noSaveMsg);
-      return Promise.resolve();
-    }
-    persistActiveSourceState();
-    return persistSourceToDisk(source)
-      .then(function () {
-        var savedMsg = message + " Saved " + (sourcePath || fileName || "the file") + ".";
-        setCsvCoordsDialogStatus(savedMsg, false);
-        setMessage(savedMsg);
-      })
-      .catch(function (err) {
-        var saveErr = (err && err.message) || "Could not save the KMZ file.";
-        setCsvCoordsDialogStatus(message + " " + saveErr, true);
-        setMessage(message + " " + saveErr);
-      });
-  }
-
-  function base64ToBytes(b64) {
-    var binary = atob(String(b64 || ""));
-    var bytes = new Uint8Array(binary.length);
-    for (var i = 0; i < binary.length; i += 1) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    return bytes;
-  }
-
-  /**
-   * Read the chosen CSV or Excel file and parse borehole coordinates from it.
-   *
-   * @returns {Promise<{byId: Object, lookup: Object, errors: string[]}>}
-   */
-  function readCsvCoordsTable() {
-    if (!window.CsvCoords) {
-      return Promise.reject(new Error("CSV coordinate update is unavailable."));
-    }
-    var coords = window.CsvCoords;
-    if (csvCoordsBrowserCsvFile) {
-      var file = csvCoordsBrowserCsvFile;
-      var format = coords.coordFileFormat(file.name);
-      if (format === "xlsx") {
-        return file.arrayBuffer().then(coords.parseBhCoordXlsx);
-      }
-      if (format === "xls") {
-        return Promise.reject(
-          new Error("Legacy .xls files can only be read in the desktop app. Save it as .xlsx or .csv.")
-        );
-      }
-      return file.text().then(coords.parseBhCoordCsv);
-    }
-    var path = csvCoordsCsvPathValue();
-    if (!path) {
-      return Promise.reject(new Error("Choose a CSV or Excel file first."));
-    }
-    return ensureDesktop().then(function (desktop) {
-      if (!desktop || !desktop.api || typeof desktop.api.read_coord_file !== "function") {
-        throw new Error(
-          "Enter a file path in the desktop app, or use Browse to choose a file in the browser."
-        );
-      }
-      return Promise.resolve(desktop.api.read_coord_file(path)).then(function (payload) {
-        if (!payload || payload.error) {
-          throw new Error((payload && payload.error) || "Could not read the coordinate file.");
-        }
-        if (payload.path) {
-          setCsvCoordsPathDisplay("csv", payload.path, false);
-        }
-        if (payload.base64 != null) {
-          return coords.parseBhCoordXlsx(base64ToBytes(payload.base64));
-        }
-        return coords.parseBhCoordCsv(payload.text || "");
-      });
-    });
-  }
-
-  function csvCoordsLookupFrom(parsed) {
-    if (parsed.errors && parsed.errors.length) {
-      throw new Error(parsed.errors[0]);
-    }
-    var ids = Object.keys(parsed.lookup || parsed.byId || {});
-    if (!ids.length) {
-      throw new Error("The file has no coordinate rows.");
-    }
-    return parsed.lookup;
-  }
-
-  function ensureCsvCoordsKmzSource() {
-    if (csvCoordsTargetSourceId) {
-      var target = findLoadedSourceById(csvCoordsTargetSourceId);
-      if (!target) {
-        csvCoordsTargetSourceId = null;
-        return Promise.reject(new Error("That file is no longer open. Choose a KMZ or KML file."));
-      }
-      return Promise.resolve({
-        sourceId: target.id,
-        fileName: target.doc.fileName || "file",
-        sourcePath: target.doc.sourcePath || null,
-      });
-    }
-    var path = csvCoordsKmzPathValue();
-    if (!path && !csvCoordsBrowserKmzFile) {
-      return Promise.reject(new Error("Choose a KMZ or KML file first."));
-    }
-    if (csvCoordsBrowserKmzFile) {
-      return openFile(csvCoordsBrowserKmzFile, null, null, {}).then(function () {
-        if (!activeSourceId) {
-          throw new Error("Could not load " + csvCoordsBrowserKmzFile.name + ".");
-        }
-        return {
-          sourceId: activeSourceId,
-          fileName: csvCoordsBrowserKmzFile.name,
-          sourcePath: null,
-        };
-      });
-    }
-    var existing = findLoadedSourceByPath(path);
-    if (existing) {
-      return Promise.resolve({
-        sourceId: existing.id,
-        fileName: existing.doc.fileName || path.split(/[/\\]/).pop(),
-        sourcePath: existing.doc.sourcePath || path,
-      });
-    }
-    return ensureDesktop().then(function (desktop) {
-      if (!desktop || !desktop.api || typeof desktop.api.register_path !== "function") {
-        throw new Error(
-          "Open the KMZ in the desktop app or use Browse to choose a file in the browser."
-        );
-      }
-      return Promise.resolve(desktop.api.register_path(path)).then(function (meta) {
-        if (!meta || !meta.token) {
-          throw new Error("Could not open " + path + ".");
-        }
-        if (meta.path) {
-          setCsvCoordsPathDisplay("kmz", meta.path, false);
-        }
-        return readDesktopFile(desktop.token, meta).then(function () {
-          if (!activeSourceId) {
-            throw new Error("Could not load " + (meta.name || path) + ".");
-          }
-          return {
-            sourceId: activeSourceId,
-            fileName: meta.name || path.split(/[/\\]/).pop(),
-            sourcePath: meta.path || path,
-          };
-        });
-      });
-    });
-  }
-
-  function previewCsvCoordsChanges() {
-    if (!window.CsvCoords || typeof GisMap.previewBhCoordCsvToSource !== "function") {
-      setCsvCoordsDialogStatus("CSV coordinate update is unavailable.", true);
-      return Promise.resolve();
-    }
-    if (!csvCoordsCsvPathValue() && !csvCoordsBrowserCsvFile) {
-      setCsvCoordsDialogStatus("Choose a CSV or Excel file first.", true);
-      return Promise.resolve();
-    }
-    if (!csvCoordsKmzPathValue() && !csvCoordsBrowserKmzFile) {
-      setCsvCoordsDialogStatus("Choose a KMZ or KML file first.", true);
-      return Promise.resolve();
-    }
-    clearCsvCoordsPreviewUi();
-    setCsvCoordsDialogStatus("Loading files and building preview…", false);
-    setMessage("Building CSV coordinate preview…");
-    return readCsvCoordsTable()
-      .then(function (parsed) {
-        var lookup = csvCoordsLookupFrom(parsed);
-        return ensureCsvCoordsKmzSource().then(function (loaded) {
-          var preview = GisMap.previewBhCoordCsvToSource(loaded.sourceId, lookup);
-          if (!preview.ok) {
-            renderCsvCoordsPreview(preview, loaded.fileName);
-            return null;
-          }
-          if (!preview.changes.length) {
-            renderCsvCoordsPreview(preview, loaded.fileName);
-            return null;
-          }
-          renderCsvCoordsPreview(preview, loaded.fileName);
-          csvCoordsApplyContext = {
-            sourceId: loaded.sourceId,
-            lookup: lookup,
-            fileName: loaded.fileName,
-            sourcePath: loaded.sourcePath || csvCoordsKmzPathValue(),
-          };
-          if (btnCsvCoordsApply) {
-            btnCsvCoordsApply.disabled = false;
-          }
-          setMessage(
-            "Preview ready: " + preview.changes.length + " placemark(s) will move in " + loaded.fileName + "."
-          );
-          return null;
-        });
-      })
-      .catch(function (err) {
-        var msg = (err && err.message) || "Could not preview CSV coordinate changes.";
-        setCsvCoordsDialogStatus(msg, true);
-        setMessage(msg);
-      });
-  }
-
-  function applyCsvCoordsChanges() {
-    if (!csvCoordsApplyContext) {
-      setCsvCoordsDialogStatus("Preview changes before applying them to the file.", true);
-      return;
-    }
-    if (btnCsvCoordsApply) {
-      btnCsvCoordsApply.disabled = true;
-    }
-    var ctx = csvCoordsApplyContext;
-    csvCoordsApplyContext = null;
-    finishCsvCoordApply(ctx.sourceId, ctx.lookup, ctx.fileName, ctx.sourcePath).finally(function () {
-      if (btnCsvCoordsApply) {
-        btnCsvCoordsApply.disabled = true;
-      }
-    });
-  }
-
-  /**
-   * Use a native-dialog path as the CSV or KMZ source for the coordinate tool.
-   *
-   * @param {string} kind "csv" or "kmz".
-   * @param {string} path Absolute file path.
-   */
-  function applyCsvCoordsChosenPath(kind, path) {
-    var input = kind === "csv" ? csvCoordsCsvPathInput : csvCoordsKmzPathInput;
-    if (!path || !input) {
-      return;
-    }
-    if (kind === "csv") {
-      csvCoordsBrowserCsvFile = null;
-    } else {
-      csvCoordsBrowserKmzFile = null;
-      csvCoordsTargetSourceId = null;
-    }
-    setCsvCoordsPathDisplay(kind, path, false);
-    setCsvCoordsDialogStatus((kind === "csv" ? "Coordinate file: " : "KMZ/KML file: ") + path, false);
-    resetCsvCoordsPreviewOnPathChange();
-  }
-
-  /**
-   * Use a browser File as the CSV or KMZ source for the coordinate tool.
-   *
-   * @param {string} kind "csv" or "kmz".
-   * @param {File} file File chosen with an <input type="file">.
-   */
-  function applyCsvCoordsChosenFile(kind, file) {
-    var input = kind === "csv" ? csvCoordsCsvPathInput : csvCoordsKmzPathInput;
-    if (!file || !input) {
-      return;
-    }
-    if (kind === "csv") {
-      csvCoordsBrowserCsvFile = file;
-    } else {
-      csvCoordsBrowserKmzFile = file;
-      csvCoordsTargetSourceId = null;
-    }
-    setCsvCoordsPathDisplay(kind, file.name, true);
-    setCsvCoordsDialogStatus((kind === "csv" ? "Coordinate file: " : "KMZ/KML file: ") + file.name, false);
-    resetCsvCoordsPreviewOnPathChange();
-  }
-
-  /**
-   * Folder a CSV/KMZ Browse should start in: the current file's folder, then the
-   * tool's default folder setting, then the project root.
-   *
-   * @param {string} kind "csv" or "kmz".
-   * @returns {string} Folder path, or "".
-   */
-  function csvCoordsInitialDirectory(kind) {
-    var current = kind === "csv" ? csvCoordsCsvPathValue() : csvCoordsKmzPathValue();
-    var folder = current.replace(/[\\/][^\\/]*$/, "");
-    if (folder && folder !== current) {
-      return folder;
-    }
-    var defaultInput = kind === "csv" ? csvCoordsDefaultCsvDirInput : csvCoordsDefaultKmzDirInput;
-    var preferred = defaultInput ? String(defaultInput.value || "").trim() : "";
-    return preferred || desktopProjectRootInitial();
-  }
-
-  function saveCsvCoordsDefaultDir(kind) {
-    var input = kind === "csv" ? csvCoordsDefaultCsvDirInput : csvCoordsDefaultKmzDirInput;
-    if (!input || !window.ViewerPathPrefs) {
-      return;
-    }
-    var value = String(input.value || "").trim();
-    if (kind === "csv") {
-      ViewerPathPrefs.setCsvCoordsCsvDir(value);
-    } else {
-      ViewerPathPrefs.setCsvCoordsKmzDir(value);
-    }
-  }
-
-  function loadCsvCoordsDefaultDirs() {
-    if (!window.ViewerPathPrefs) {
-      return;
-    }
-    if (csvCoordsDefaultCsvDirInput) {
-      csvCoordsDefaultCsvDirInput.value = ViewerPathPrefs.getCsvCoordsCsvDir();
-    }
-    if (csvCoordsDefaultKmzDirInput) {
-      csvCoordsDefaultKmzDirInput.value = ViewerPathPrefs.getCsvCoordsKmzDir();
-    }
-  }
-
-  function findLoadedSourceById(sourceId) {
-    for (var i = 0; i < loadedSources.length; i += 1) {
-      if (loadedSources[i].id === sourceId) {
-        return loadedSources[i];
-      }
-    }
-    return null;
-  }
-
-  /**
-   * Open the CSV GPS to KMZ tool with the layer node's file set as the KMZ target.
-   *
-   * @param {string} nodeId Layer tree node id.
-   */
-  function openCsvCoordsForLayerNode(nodeId) {
-    var source = nodeId ? findLoadedSourceById(sourceIdFromNodeId(nodeId)) : null;
-    if (source && source.doc) {
-      if (source.doc.sourcePath) {
-        applyCsvCoordsChosenPath("kmz", source.doc.sourcePath);
-      } else {
-        // Opened in the browser without a disk path: target the loaded copy.
-        var name = source.doc.fileName || "open file";
-        csvCoordsBrowserKmzFile = null;
-        setCsvCoordsPathDisplay("kmz", name, true);
-        resetCsvCoordsPreviewOnPathChange();
-        csvCoordsTargetSourceId = source.id;
-        setCsvCoordsDialogStatus("KMZ/KML file: " + name + " (already open)", false);
-      }
-    }
-    openCsvCoordsDialog();
-  }
-
-  function browseCsvCoordsCsv() {
-    return ensureDesktop().then(function (desktop) {
-      if (desktop && desktop.api && typeof desktop.api.choose_csv === "function") {
-        var initial = csvCoordsInitialDirectory("csv");
-        return Promise.resolve(desktop.api.choose_csv(initial || "")).then(function (result) {
-          if (result && result.path) {
-            applyCsvCoordsChosenPath("csv", result.path);
-          }
-        });
-      }
-      if (csvCoordsInput) {
-        csvCoordsInput.value = "";
-        csvCoordsInput.click();
-      }
-    });
-  }
-
-  function browseCsvCoordsKmz() {
-    return ensureDesktop().then(function (desktop) {
-      if (desktop && desktop.api && typeof desktop.api.choose_kmz === "function") {
-        var initial = csvCoordsInitialDirectory("kmz");
-        return Promise.resolve(desktop.api.choose_kmz(initial || "")).then(function (meta) {
-          if (meta && meta.path) {
-            applyCsvCoordsChosenPath("kmz", meta.path);
-          }
-        });
-      }
-      if (csvCoordsKmzInput) {
-        csvCoordsKmzInput.value = "";
-        csvCoordsKmzInput.click();
-      }
-    });
   }
 
   function openFile(file, handle, sourcePath, openOptions) {
@@ -9842,7 +5772,7 @@
       gisMap: GisMap,
       measure: Measure,
       map: map,
-      mapScaleSelect: mapScaleSelect,
+      mapScaleSelect: mapScaleUi.mapScaleSelect,
       cursorCoordsInput: cursorCoordsInput,
     });
   }
@@ -9850,21 +5780,21 @@
   function flushLayoutPrefsToStorage() {
     var workspace = document.querySelector(".workspace");
     if (workspace) {
-      writeStoredPaneCollapsed(
-        SIDEBAR_COLLAPSED_KEY,
+      sidebarLayout.writeStoredPaneCollapsed(
+        sidebarLayout.SIDEBAR_COLLAPSED_KEY,
         workspace.classList.contains("is-sidebar-collapsed")
       );
-      writeStoredPaneCollapsed(
-        RIGHT_PANE_COLLAPSED_KEY,
+      sidebarLayout.writeStoredPaneCollapsed(
+        sidebarLayout.RIGHT_PANE_COLLAPSED_KEY,
         workspace.classList.contains("is-right-pane-collapsed")
       );
-      var sidebarW = readCssPx("--sidebar-w");
+      var sidebarW = sidebarLayout.readCssPx("--sidebar-w");
       if (sidebarW > 0) {
-        writeStoredPaneWidth(SIDEBAR_WIDTH_KEY, sidebarW);
+        sidebarLayout.writeStoredPaneWidth(sidebarLayout.SIDEBAR_WIDTH_KEY, sidebarW);
       }
-      var rightW = readCssPx("--right-pane-w");
+      var rightW = sidebarLayout.readCssPx("--right-pane-w");
       if (rightW > 0) {
-        writeStoredPaneWidth(RIGHT_PANE_WIDTH_KEY, rightW);
+        sidebarLayout.writeStoredPaneWidth(sidebarLayout.RIGHT_PANE_WIDTH_KEY, rightW);
       }
     }
     var sidebarRight = document.querySelector(".sidebar-right");
@@ -9879,19 +5809,19 @@
           getComputedStyle(sidebarRight).getPropertyValue("--sidebar-inspect-h")
         );
         if (Number.isFinite(inspectH) && inspectH > 0) {
-          writeSidebarInspectHeight(inspectH);
+          sidebarLayout.writeSidebarInspectHeight(inspectH);
         }
       } else {
-        clearSidebarInspectHeightStorage();
+        sidebarLayout.clearSidebarInspectHeightStorage();
       }
     }
     var orderScroller = document.getElementById("point-chain-order-scroller");
     if (orderScroller && orderScroller.classList.contains("is-height-custom")) {
       if (orderScroller.offsetHeight > 0) {
-        writePointChainOrderHeight(orderScroller.offsetHeight);
+        pointChainPanel.writePointChainOrderHeight(orderScroller.offsetHeight);
       }
     } else {
-      clearPointChainOrderHeightStorage();
+      pointChainPanel.clearPointChainOrderHeightStorage();
     }
   }
 
@@ -9909,7 +5839,7 @@
   }
 
   function saveViewMenuDefaults() {
-    writeSidebarHiddenState(sidebarSectionHiddenState);
+    sidebarLayout.writeSidebarHiddenState(sidebarLayout.sidebarSectionHiddenState);
     if (
       window.ViewerDefaults
       && typeof ViewerDefaults.savePartialSnapshot === "function"
@@ -9939,15 +5869,15 @@
   initSourceOverwriteDialog();
   initFeaturePropertiesDialog();
   initLayerNodeIconDialog();
-  initNodeMapLabelDialog();
+  nodeMapLabelUi.initNodeMapLabelDialog();
   initInspectTagEditing();
-  initSidebarSectionFolding();
-  initSidebarSectionVisibility();
-  initSidebarPanelResize();
-  initSidebarWidthResize();
+  sidebarLayout.initSidebarSectionFolding();
+  sidebarLayout.initSidebarSectionVisibility();
+  sidebarLayout.initSidebarPanelResize();
+  sidebarLayout.initSidebarWidthResize();
 
   var map = GisMap.init("map");
-  scheduleSidebarMapInvalidate();
+  sidebarLayout.scheduleSidebarMapInvalidate();
   GisMap.onFeatureHover(function (hit, related) {
     if (!hit) {
       return;
@@ -10045,7 +5975,7 @@
 
   if (layersAddLabelsBtn) {
     layersAddLabelsBtn.addEventListener("click", function () {
-      openBulkMapLabelsDialog(resolveDefaultMapLabelSourceId(null));
+      nodeMapLabelUi.openBulkMapLabelsDialog(nodeMapLabelUi.resolveDefaultMapLabelSourceId(null));
     });
   }
 
@@ -10097,8 +6027,8 @@
     fileSaveBtn.addEventListener("click", saveTimestampedCopy);
   }
   function closeCsvCoordsDialog() {
-    clearCsvCoordsPreviewUi();
-    setCsvCoordsDialogStatus("", false);
+    csvCoordsUi.clearCsvCoordsPreviewUi();
+    csvCoordsUi.setCsvCoordsDialogStatus("", false);
   }
 
   var toolHostLog = window.KmzLog
@@ -10113,7 +6043,7 @@
   function openNamedToolWindow(tool) {
     toolHostLog.info("openNamedToolWindow tool=%s", tool);
     if (tool === "point-chain") {
-      refreshPointChainPanel();
+      pointChainPanel.refreshPointChainPanel();
     }
     if (tool === "kml-editor") {
       refreshExternalEditorUi();
@@ -10216,65 +6146,65 @@
 
   if (btnCsvCoordsPreview) {
     btnCsvCoordsPreview.addEventListener("click", function () {
-      previewCsvCoordsChanges();
+      csvCoordsUi.previewCsvCoordsChanges();
     });
   }
-  if (btnCsvCoordsApply) {
-    btnCsvCoordsApply.addEventListener("click", applyCsvCoordsChanges);
+  if (csvCoordsUi.btnCsvCoordsApply) {
+    csvCoordsUi.btnCsvCoordsApply.addEventListener("click", csvCoordsUi.applyCsvCoordsChanges);
   }
   if (csvCoordsBrowseCsvBtn) {
     csvCoordsBrowseCsvBtn.addEventListener("click", function () {
-      browseCsvCoordsCsv().catch(function (err) {
-        setCsvCoordsDialogStatus((err && err.message) || "Could not choose CSV.", true);
+      csvCoordsUi.browseCsvCoordsCsv().catch(function (err) {
+        csvCoordsUi.setCsvCoordsDialogStatus((err && err.message) || "Could not choose CSV.", true);
       });
     });
   }
   if (csvCoordsBrowseKmzBtn) {
     csvCoordsBrowseKmzBtn.addEventListener("click", function () {
-      browseCsvCoordsKmz().catch(function (err) {
-        setCsvCoordsDialogStatus((err && err.message) || "Could not choose KMZ.", true);
+      csvCoordsUi.browseCsvCoordsKmz().catch(function (err) {
+        csvCoordsUi.setCsvCoordsDialogStatus((err && err.message) || "Could not choose KMZ.", true);
       });
     });
   }
   // The tool window forwards typed edits as "change" events, so listen for both.
-  if (csvCoordsCsvPathInput) {
+  if (csvCoordsUi.csvCoordsCsvPathInput) {
     ["input", "change"].forEach(function (type) {
-      csvCoordsCsvPathInput.addEventListener(type, function () {
-        csvCoordsBrowserCsvFile = null;
-        setCsvCoordsPathDisplay("csv", csvCoordsCsvPathInput.value, false);
-        resetCsvCoordsPreviewOnPathChange();
+      csvCoordsUi.csvCoordsCsvPathInput.addEventListener(type, function () {
+        csvCoordsUi.csvCoordsBrowserCsvFile = null;
+        csvCoordsUi.setCsvCoordsPathDisplay("csv", csvCoordsUi.csvCoordsCsvPathInput.value, false);
+        csvCoordsUi.resetCsvCoordsPreviewOnPathChange();
       });
     });
   }
-  if (csvCoordsKmzPathInput) {
+  if (csvCoordsUi.csvCoordsKmzPathInput) {
     ["input", "change"].forEach(function (type) {
-      csvCoordsKmzPathInput.addEventListener(type, function () {
-        csvCoordsBrowserKmzFile = null;
-        csvCoordsTargetSourceId = null;
-        setCsvCoordsPathDisplay("kmz", csvCoordsKmzPathInput.value, false);
-        resetCsvCoordsPreviewOnPathChange();
+      csvCoordsUi.csvCoordsKmzPathInput.addEventListener(type, function () {
+        csvCoordsUi.csvCoordsBrowserKmzFile = null;
+        csvCoordsUi.csvCoordsTargetSourceId = null;
+        csvCoordsUi.setCsvCoordsPathDisplay("kmz", csvCoordsUi.csvCoordsKmzPathInput.value, false);
+        csvCoordsUi.resetCsvCoordsPreviewOnPathChange();
       });
     });
   }
-  loadCsvCoordsDefaultDirs();
-  if (csvCoordsDefaultCsvDirInput) {
-    csvCoordsDefaultCsvDirInput.addEventListener("change", function () {
-      saveCsvCoordsDefaultDir("csv");
+  csvCoordsUi.loadCsvCoordsDefaultDirs();
+  if (csvCoordsUi.csvCoordsDefaultCsvDirInput) {
+    csvCoordsUi.csvCoordsDefaultCsvDirInput.addEventListener("change", function () {
+      csvCoordsUi.saveCsvCoordsDefaultDir("csv");
     });
   }
-  if (csvCoordsDefaultKmzDirInput) {
-    csvCoordsDefaultKmzDirInput.addEventListener("change", function () {
-      saveCsvCoordsDefaultDir("kmz");
+  if (csvCoordsUi.csvCoordsDefaultKmzDirInput) {
+    csvCoordsUi.csvCoordsDefaultKmzDirInput.addEventListener("change", function () {
+      csvCoordsUi.saveCsvCoordsDefaultDir("kmz");
     });
   }
-  if (csvCoordsInput) {
-    csvCoordsInput.addEventListener("change", function () {
-      applyCsvCoordsChosenFile("csv", csvCoordsInput.files && csvCoordsInput.files[0]);
+  if (csvCoordsUi.csvCoordsInput) {
+    csvCoordsUi.csvCoordsInput.addEventListener("change", function () {
+      csvCoordsUi.applyCsvCoordsChosenFile("csv", csvCoordsUi.csvCoordsInput.files && csvCoordsUi.csvCoordsInput.files[0]);
     });
   }
-  if (csvCoordsKmzInput) {
-    csvCoordsKmzInput.addEventListener("change", function () {
-      applyCsvCoordsChosenFile("kmz", csvCoordsKmzInput.files && csvCoordsKmzInput.files[0]);
+  if (csvCoordsUi.csvCoordsKmzInput) {
+    csvCoordsUi.csvCoordsKmzInput.addEventListener("change", function () {
+      csvCoordsUi.applyCsvCoordsChosenFile("kmz", csvCoordsUi.csvCoordsKmzInput.files && csvCoordsUi.csvCoordsKmzInput.files[0]);
     });
   }
   if (externalEditSourceSelect) {
@@ -10567,7 +6497,7 @@
           event.stopPropagation();
           var sectionSlug = item.getAttribute("data-section-slug");
           if (sectionSlug) {
-            toggleSidebarSectionUserHidden(sectionSlug);
+            sidebarLayout.toggleSidebarSectionUserHidden(sectionSlug);
           }
           closeAllMenus();
           return;
@@ -10575,14 +6505,14 @@
         if (item.id === "menubar-view-all-sections") {
           event.preventDefault();
           event.stopPropagation();
-          showAllSidebarSections();
+          sidebarLayout.showAllSidebarSections();
           closeAllMenus();
           return;
         }
         if (item.id === "menubar-view-none-sections") {
           event.preventDefault();
           event.stopPropagation();
-          hideAllSidebarSections();
+          sidebarLayout.hideAllSidebarSections();
           closeAllMenus();
           return;
         }
@@ -10697,9 +6627,9 @@
     layersAddBtn.addEventListener("click", promptLayerFilePicker);
   }
   if (layersInspectToggleBtn) {
-    syncLayersInspectToggleButton();
+    sidebarLayout.syncLayersInspectToggleButton();
     layersInspectToggleBtn.addEventListener("click", function () {
-      toggleSidebarSectionUserHidden(SIDEBAR_INSPECT_SECTION_SLUG);
+      sidebarLayout.toggleSidebarSectionUserHidden(SIDEBAR_INSPECT_SECTION_SLUG);
     });
   }
   function openMapPopoutBrowserWindow() {
@@ -10833,257 +6763,8 @@
     });
   }
 
-  var mapScaleSelect = document.getElementById("map-scale-select");
-  var mapScaleSyncLock = false;
-  var mapScalePresetsDialog = document.getElementById("map-scale-presets-dialog");
-  var mapScalePresetsListEl = document.getElementById("map-scale-presets-list");
-  var mapScalePresetsAddInput = document.getElementById("map-scale-presets-add-input");
-  var mapScalePresetsMessageEl = document.getElementById("map-scale-presets-message");
-
-  function mapScalePresetValues() {
-    if (typeof GisMap.getMapScalePresets === "function") {
-      return GisMap.getMapScalePresets();
-    }
-    return GisMap.MAP_SCALE_PRESETS || [];
-  }
-
-  function refreshMapScaleDropdowns() {
-    populateMapScaleSelect();
-    syncMapScaleSelect();
-    if (window.BoreholeImages && typeof BoreholeImages.refreshScalePresets === "function") {
-      BoreholeImages.refreshScalePresets();
-    }
-  }
-
-  function setMapScalePresetsDialogMessage(text, isError) {
-    if (!mapScalePresetsMessageEl) {
-      return;
-    }
-    var message = String(text || "").trim();
-    if (!message) {
-      mapScalePresetsMessageEl.hidden = true;
-      mapScalePresetsMessageEl.textContent = "";
-      mapScalePresetsMessageEl.classList.remove("is-error");
-      return;
-    }
-    mapScalePresetsMessageEl.hidden = false;
-    mapScalePresetsMessageEl.textContent = message;
-    mapScalePresetsMessageEl.classList.toggle("is-error", !!isError);
-  }
-
-  function renderMapScalePresetsDialogList() {
-    if (!mapScalePresetsListEl) {
-      return;
-    }
-    mapScalePresetsListEl.innerHTML = "";
-    mapScalePresetValues().forEach(function (denom) {
-      var item = document.createElement("li");
-      item.className = "map-scale-presets-item";
-
-      var label = document.createElement("span");
-      label.className = "map-scale-presets-item-label";
-      label.textContent = GisMap.formatMapScaleLabel(denom);
-
-      var removeBtn = document.createElement("button");
-      removeBtn.type = "button";
-      removeBtn.className = "btn btn-subtle map-scale-presets-remove";
-      removeBtn.textContent = "Remove";
-      removeBtn.setAttribute("aria-label", "Remove " + label.textContent);
-      removeBtn.addEventListener("click", function () {
-        var result = GisMap.removeMapScalePreset(denom);
-        if (!result || !result.ok) {
-          setMapScalePresetsDialogMessage((result && result.message) || "Could not remove scale.", true);
-          return;
-        }
-        setMapScalePresetsDialogMessage("");
-      });
-
-      item.appendChild(label);
-      item.appendChild(removeBtn);
-      mapScalePresetsListEl.appendChild(item);
-    });
-  }
-
-  function closeMapScalePresetsDialog() {
-    if (!mapScalePresetsDialog) {
-      return;
-    }
-    mapScalePresetsDialog.classList.add("hidden");
-    mapScalePresetsDialog.setAttribute("aria-hidden", "true");
-    setMapScalePresetsDialogMessage("");
-    if (mapScalePresetsAddInput) {
-      mapScalePresetsAddInput.value = "";
-    }
-  }
-
-  function openMapScalePresetsDialog() {
-    if (!mapScalePresetsDialog) {
-      return;
-    }
-    renderMapScalePresetsDialogList();
-    setMapScalePresetsDialogMessage("");
-    mapScalePresetsDialog.classList.remove("hidden");
-    mapScalePresetsDialog.setAttribute("aria-hidden", "false");
-    if (mapScalePresetsAddInput) {
-      mapScalePresetsAddInput.focus();
-    }
-  }
-
-  window.openMapScalePresetsDialog = openMapScalePresetsDialog;
-
-  function submitMapScalePresetAdd() {
-    if (!mapScalePresetsAddInput) {
-      return;
-    }
-    var parsed =
-      typeof GisMap.parseMapScalePresetInput === "function"
-        ? GisMap.parseMapScalePresetInput(mapScalePresetsAddInput.value)
-        : null;
-    var result = parsed != null ? GisMap.addMapScalePreset(parsed) : { ok: false, message: "Enter a valid scale." };
-    if (!result || !result.ok) {
-      setMapScalePresetsDialogMessage((result && result.message) || "Could not add scale.", true);
-      return;
-    }
-    mapScalePresetsAddInput.value = "";
-    setMapScalePresetsDialogMessage("");
-  }
-
-  if (mapScalePresetsDialog) {
-    var mapScalePresetsCloseBtn = document.getElementById("map-scale-presets-close");
-    var mapScalePresetsDoneBtn = document.getElementById("map-scale-presets-done");
-    var mapScalePresetsAddBtn = document.getElementById("map-scale-presets-add-btn");
-    var mapScalePresetsResetBtn = document.getElementById("map-scale-presets-reset");
-    var mapScaleEditBtn = document.getElementById("map-scale-edit-btn");
-
-    if (mapScaleEditBtn) {
-      mapScaleEditBtn.addEventListener("click", openMapScalePresetsDialog);
-    }
-    if (mapScalePresetsCloseBtn) {
-      mapScalePresetsCloseBtn.addEventListener("click", closeMapScalePresetsDialog);
-    }
-    if (mapScalePresetsDoneBtn) {
-      mapScalePresetsDoneBtn.addEventListener("click", closeMapScalePresetsDialog);
-    }
-    if (mapScalePresetsAddBtn) {
-      mapScalePresetsAddBtn.addEventListener("click", submitMapScalePresetAdd);
-    }
-    if (mapScalePresetsAddInput) {
-      mapScalePresetsAddInput.addEventListener("keydown", function (event) {
-        if (event.key === "Enter") {
-          event.preventDefault();
-          submitMapScalePresetAdd();
-        }
-      });
-    }
-    if (mapScalePresetsResetBtn) {
-      mapScalePresetsResetBtn.addEventListener("click", function () {
-        var result = GisMap.resetMapScalePresets();
-        if (!result || !result.ok) {
-          setMapScalePresetsDialogMessage((result && result.message) || "Could not restore defaults.", true);
-          return;
-        }
-        setMapScalePresetsDialogMessage("");
-        setMessage("Restored default map scale list.");
-      });
-    }
-    mapScalePresetsDialog.addEventListener("click", function (event) {
-      if (event.target === mapScalePresetsDialog) {
-        closeMapScalePresetsDialog();
-      }
-    });
-    document.addEventListener("keydown", function (event) {
-      if (
-        event.key === "Escape"
-        && mapScalePresetsDialog
-        && !mapScalePresetsDialog.classList.contains("hidden")
-      ) {
-        closeMapScalePresetsDialog();
-      }
-    });
-  }
-
-  window.addEventListener("kmz-map-scale-presets-changed", function () {
-    if (
-      !launchWindowParams
-      && window.ViewerDefaults
-      && typeof ViewerDefaults.savePartialSnapshot === "function"
-    ) {
-      ViewerDefaults.savePartialSnapshot(["kmz-map-scale-presets"]);
-    }
-    refreshMapScaleDropdowns();
-    if (mapScalePresetsDialog && !mapScalePresetsDialog.classList.contains("hidden")) {
-      renderMapScalePresetsDialogList();
-    }
-  });
-
-  function populateMapScaleSelect() {
-    if (!mapScaleSelect) {
-      return;
-    }
-    var previous = mapScaleSelect.value;
-    var custom = mapScaleSelect.querySelector('option[value=""]');
-    mapScaleSelect.innerHTML = "";
-    if (custom) {
-      mapScaleSelect.appendChild(custom);
-    } else {
-      var customOpt = document.createElement("option");
-      customOpt.value = "";
-      customOpt.textContent = "Custom";
-      mapScaleSelect.appendChild(customOpt);
-    }
-    mapScalePresetValues().forEach(function (denom) {
-      var opt = document.createElement("option");
-      opt.value = String(denom);
-      opt.textContent = GisMap.formatMapScaleLabel(denom);
-      mapScaleSelect.appendChild(opt);
-    });
-    if (previous && mapScaleSelect.querySelector('option[value="' + previous + '"]')) {
-      mapScaleSelect.value = previous;
-    }
-  }
-
-  function syncMapScaleSelect() {
-    if (!mapScaleSelect || mapScaleSyncLock) {
-      return;
-    }
-    var denom = GisMap.getMapScaleDenominator();
-    if (denom == null) {
-      return;
-    }
-    var preset = GisMap.nearestMapScalePreset(denom);
-    var customOpt = mapScaleSelect.querySelector('option[value=""]');
-    if (preset == null) {
-      if (customOpt) {
-        customOpt.textContent = GisMap.formatMapScaleLabel(denom);
-      }
-      mapScaleSelect.value = "";
-    } else {
-      if (customOpt) {
-        customOpt.textContent = "Custom";
-      }
-      mapScaleSelect.value = String(preset);
-    }
-  }
-
-  populateMapScaleSelect();
-  syncMapScaleSelect();
-
-  map.on("zoomend moveend", syncMapScaleSelect);
-
-  if (mapScaleSelect) {
-    mapScaleSelect.addEventListener("change", function (event) {
-      var raw = event.target.value;
-      if (!raw) {
-        syncMapScaleSelect();
-        return;
-      }
-      mapScaleSyncLock = true;
-      GisMap.setMapScaleDenominator(Number(raw));
-      mapScaleSyncLock = false;
-      syncMapScaleSelect();
-      persistViewerGuiPrefs();
-    });
-  }
+  // Map scale dropdowns and presets dialog (js/main/map-scale.js)
+  var mapScaleUi = window.KmzMainMapScale(main);
 
   var imageryLabelsInput = document.getElementById("imagery-labels");
   var imageryLabelsWrap = document.getElementById("imagery-labels-wrap");
@@ -11201,7 +6882,7 @@
       gisMap: GisMap,
       map: map,
       basemapSelect: document.getElementById("basemap-select"),
-      mapScaleSelect: mapScaleSelect,
+      mapScaleSelect: mapScaleUi.mapScaleSelect,
       cursorCoordsInput: cursorCoordsInput,
       syncCursorCoordsOverlay: syncCursorCoordsOverlay,
       chooseTool: chooseTool,
@@ -11211,7 +6892,7 @@
   syncCursorCoordsOverlay();
   syncImageryLabelsControl();
   if (!launchWindowParams) {
-    syncMapScaleSelect();
+    mapScaleUi.syncMapScaleSelect();
   }
   bindViewerGuiPrefsPersistence();
 
@@ -11278,7 +6959,7 @@
       Measure.clear();
     }
     if (key === "l") {
-      if (togglePointChainMapVisibility()) {
+      if (pointChainPanel.togglePointChainMapVisibility()) {
         event.preventDefault();
       }
     }
@@ -11691,23 +7372,23 @@
   }
 
   function reorderPointChainDraft(fromIndex, toIndex) {
-    if (!pointChainDraftPath) {
+    if (!pointChainPanel.pointChainDraftPath) {
       return;
     }
     if (
       fromIndex < 0
       || toIndex < 0
-      || fromIndex >= pointChainDraftPath.length
-      || toIndex >= pointChainDraftPath.length
+      || fromIndex >= pointChainPanel.pointChainDraftPath.length
+      || toIndex >= pointChainPanel.pointChainDraftPath.length
       || fromIndex === toIndex
     ) {
       return;
     }
-    var path = pointChainDraftPath.slice();
+    var path = pointChainPanel.pointChainDraftPath.slice();
     var moved = path.splice(fromIndex, 1)[0];
     path.splice(toIndex, 0, moved);
-    pointChainDraftPath = path;
-    renderPointChainOrderList();
+    pointChainPanel.pointChainDraftPath = path;
+    pointChainPanel.renderPointChainOrderList();
   }
 
   window.KmzToolHost = {
@@ -11743,20 +7424,20 @@
       }
       if (action === "csv-coords-set-path") {
         applyToolFields(payload.fields);
-        applyCsvCoordsChosenPath(payload.kind === "kmz" ? "kmz" : "csv", String(payload.path || ""));
+        csvCoordsUi.applyCsvCoordsChosenPath(payload.kind === "kmz" ? "kmz" : "csv", String(payload.path || ""));
         return toolHostSnapshot("csv-coords");
       }
       if (action === "csv-coords-set-file") {
         applyToolFields(payload.fields);
-        applyCsvCoordsChosenFile(payload.kind === "kmz" ? "kmz" : "csv", payload.file || null);
+        csvCoordsUi.applyCsvCoordsChosenFile(payload.kind === "kmz" ? "kmz" : "csv", payload.file || null);
         return toolHostSnapshot("csv-coords");
       }
       if (action === "point-chain-move") {
-        movePointChainDraftItem(Number(payload.index), Number(payload.delta));
+        pointChainPanel.movePointChainDraftItem(Number(payload.index), Number(payload.delta));
         return toolHostSnapshot("point-chain");
       }
       if (action === "point-chain-remove") {
-        removePointChainDraftItem(Number(payload.index));
+        pointChainPanel.removePointChainDraftItem(Number(payload.index));
         return toolHostSnapshot("point-chain");
       }
       if (action === "point-chain-reorder") {
@@ -11764,7 +7445,7 @@
         return toolHostSnapshot("point-chain");
       }
       if (action === "point-chain-height") {
-        applyPointChainOrderHeight(Number(payload.px), true);
+        pointChainPanel.applyPointChainOrderHeight(Number(payload.px), true);
         return toolHostSnapshot("point-chain");
       }
       toolHostLog.warn("unknown tool action: %s", action);
