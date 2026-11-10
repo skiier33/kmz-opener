@@ -3281,6 +3281,25 @@ textarea.inspect-field-input {
   display: none;
 }
 
+.csv-coords-defaults {
+  margin: 0 0 10px;
+  padding: 6px 10px 0;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.35));
+  border-radius: 6px;
+}
+
+.csv-coords-defaults legend {
+  padding: 0 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.csv-coords-defaults-hint {
+  margin: 0 0 8px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .csv-coords-status {
   margin: 0 0 10px;
   font-size: 12px;

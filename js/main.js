@@ -1022,6 +1022,7 @@
   var layerTreeContextMenuGotoBtn = null;
   var layerTreeContextMenuExportBtn = null;
   var layerTreeContextMenuChangeIconBtn = null;
+  var layerTreeContextMenuCsvGpsBtn = null;
   var layerTreeContextMenuIconRecursionBtn = null;
   var layerTreeContextMenuPlacemarksOnlyBtn = null;
   var layerTreeContextMenuAddLabelBtn = null;
@@ -1119,6 +1120,10 @@
   var csvCoordsDialog = document.getElementById("csv-coords-dialog");
   var csvCoordsBrowserCsvFile = null;
   var csvCoordsBrowserKmzFile = null;
+  /** Loaded source targeted from the layer tree when it has no disk path. */
+  var csvCoordsTargetSourceId = null;
+  var csvCoordsDefaultCsvDirInput = document.getElementById("csv-coords-default-csv-dir");
+  var csvCoordsDefaultKmzDirInput = document.getElementById("csv-coords-default-kmz-dir");
   var csvCoordsApplyContext = null;
   var customIconsCatalog = [];
   var customIconsUserFolder = "";
@@ -7360,6 +7365,21 @@
       }
     });
 
+    layerTreeContextMenuCsvGpsBtn = document.createElement("button");
+    layerTreeContextMenuCsvGpsBtn.type = "button";
+    layerTreeContextMenuCsvGpsBtn.className = "map-context-menu-item";
+    layerTreeContextMenuCsvGpsBtn.setAttribute("role", "menuitem");
+    layerTreeContextMenuCsvGpsBtn.textContent = "CSV GPS to KMZ";
+    layerTreeContextMenuCsvGpsBtn.title =
+      "Update this file's point coordinates from a CSV or Excel file";
+    layerTreeContextMenuCsvGpsBtn.addEventListener("click", function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      var id = focusId;
+      hideLayerTreeContextMenu();
+      openCsvCoordsForLayerNode(id);
+    });
+
     var iconMenuSeparator = document.createElement("div");
     iconMenuSeparator.className = "map-context-menu-separator";
     iconMenuSeparator.setAttribute("role", "separator");
@@ -7393,6 +7413,7 @@
     layerTreeContextMenu.appendChild(layerTreeContextMenuAddLabelBtn);
     layerTreeContextMenu.appendChild(layerTreeContextMenuBulkLabelsBtn);
     layerTreeContextMenu.appendChild(layerTreeContextMenuExportBtn);
+    layerTreeContextMenu.appendChild(layerTreeContextMenuCsvGpsBtn);
     layerTreeContextMenu.appendChild(iconMenuSeparator);
     layerTreeContextMenu.appendChild(layerTreeContextMenuChangeIconBtn);
     layerTreeContextMenu.appendChild(layerTreeContextMenuIconRecursionBtn);
@@ -8247,10 +8268,46 @@
     return !!doc.sourcePath;
   }
 
+  /**
+   * Make sure a browser file handle may be written. Handles from showOpenFilePicker
+   * start read-only; asking for write access needs a click in this window, so a call
+   * coming from a tool window (no user activation here) fails with a clear message.
+   */
+  function ensureHandleWritable(handle, fileLabel) {
+    if (typeof handle.queryPermission !== "function") {
+      return Promise.resolve();
+    }
+    return handle.queryPermission({ mode: "readwrite" }).then(function (state) {
+      if (state === "granted") {
+        return null;
+      }
+      if (typeof handle.requestPermission !== "function") {
+        return null;
+      }
+      return handle.requestPermission({ mode: "readwrite" }).then(
+        function (next) {
+          if (next !== "granted") {
+            throw new Error("Write access to " + fileLabel + " was not granted.");
+          }
+        },
+        function () {
+          throw new Error(
+            "The browser needs permission to write " +
+              fileLabel +
+              ". The changes are in the open map — click Save in the main window to grant access and save."
+          );
+        }
+      );
+    });
+  }
+
   function writeSourceBlobToDisk(source, blob) {
     var doc = source.doc;
     if (doc.handle && typeof doc.handle.createWritable === "function") {
-      return doc.handle.createWritable().then(function (writable) {
+      var handle = doc.handle;
+      return ensureHandleWritable(handle, doc.fileName || "this file").then(function () {
+        return handle.createWritable();
+      }).then(function (writable) {
         return writable.write(blob).then(function () {
           return writable.close();
         });
@@ -9335,48 +9392,87 @@
       });
   }
 
-  function readCsvCoordsCsvText() {
+  function base64ToBytes(b64) {
+    var binary = atob(String(b64 || ""));
+    var bytes = new Uint8Array(binary.length);
+    for (var i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  }
+
+  /**
+   * Read the chosen CSV or Excel file and parse borehole coordinates from it.
+   *
+   * @returns {Promise<{byId: Object, lookup: Object, errors: string[]}>}
+   */
+  function readCsvCoordsTable() {
     if (!window.CsvCoords) {
       return Promise.reject(new Error("CSV coordinate update is unavailable."));
     }
+    var coords = window.CsvCoords;
     if (csvCoordsBrowserCsvFile) {
-      return csvCoordsBrowserCsvFile.text();
+      var file = csvCoordsBrowserCsvFile;
+      var format = coords.coordFileFormat(file.name);
+      if (format === "xlsx") {
+        return file.arrayBuffer().then(coords.parseBhCoordXlsx);
+      }
+      if (format === "xls") {
+        return Promise.reject(
+          new Error("Legacy .xls files can only be read in the desktop app. Save it as .xlsx or .csv.")
+        );
+      }
+      return file.text().then(coords.parseBhCoordCsv);
     }
     var path = csvCoordsCsvPathValue();
     if (!path) {
-      return Promise.reject(new Error("Choose a CSV file first."));
+      return Promise.reject(new Error("Choose a CSV or Excel file first."));
     }
     return ensureDesktop().then(function (desktop) {
-      if (!desktop || !desktop.api || typeof desktop.api.read_csv_file !== "function") {
+      if (!desktop || !desktop.api || typeof desktop.api.read_coord_file !== "function") {
         throw new Error(
-          "Enter a CSV path in the desktop app, or use Browse to choose a file in the browser."
+          "Enter a file path in the desktop app, or use Browse to choose a file in the browser."
         );
       }
-      return Promise.resolve(desktop.api.read_csv_file(path)).then(function (payload) {
+      return Promise.resolve(desktop.api.read_coord_file(path)).then(function (payload) {
         if (!payload || payload.error) {
-          throw new Error((payload && payload.error) || "Could not read the CSV file.");
+          throw new Error((payload && payload.error) || "Could not read the coordinate file.");
         }
         if (payload.path) {
           setCsvCoordsPathDisplay("csv", payload.path, false);
         }
-        return payload.text || "";
+        if (payload.base64 != null) {
+          return coords.parseBhCoordXlsx(base64ToBytes(payload.base64));
+        }
+        return coords.parseBhCoordCsv(payload.text || "");
       });
     });
   }
 
-  function parseCsvCoordsLookup(text) {
-    var parsed = window.CsvCoords.parseBhCoordCsv(text);
+  function csvCoordsLookupFrom(parsed) {
     if (parsed.errors && parsed.errors.length) {
       throw new Error(parsed.errors[0]);
     }
     var ids = Object.keys(parsed.lookup || parsed.byId || {});
     if (!ids.length) {
-      throw new Error("The CSV has no coordinate rows.");
+      throw new Error("The file has no coordinate rows.");
     }
     return parsed.lookup;
   }
 
   function ensureCsvCoordsKmzSource() {
+    if (csvCoordsTargetSourceId) {
+      var target = findLoadedSourceById(csvCoordsTargetSourceId);
+      if (!target) {
+        csvCoordsTargetSourceId = null;
+        return Promise.reject(new Error("That file is no longer open. Choose a KMZ or KML file."));
+      }
+      return Promise.resolve({
+        sourceId: target.id,
+        fileName: target.doc.fileName || "file",
+        sourcePath: target.doc.sourcePath || null,
+      });
+    }
     var path = csvCoordsKmzPathValue();
     if (!path && !csvCoordsBrowserKmzFile) {
       return Promise.reject(new Error("Choose a KMZ or KML file first."));
@@ -9434,7 +9530,7 @@
       return Promise.resolve();
     }
     if (!csvCoordsCsvPathValue() && !csvCoordsBrowserCsvFile) {
-      setCsvCoordsDialogStatus("Choose a CSV file first.", true);
+      setCsvCoordsDialogStatus("Choose a CSV or Excel file first.", true);
       return Promise.resolve();
     }
     if (!csvCoordsKmzPathValue() && !csvCoordsBrowserKmzFile) {
@@ -9444,9 +9540,9 @@
     clearCsvCoordsPreviewUi();
     setCsvCoordsDialogStatus("Loading files and building preview…", false);
     setMessage("Building CSV coordinate preview…");
-    return readCsvCoordsCsvText()
-      .then(function (text) {
-        var lookup = parseCsvCoordsLookup(text);
+    return readCsvCoordsTable()
+      .then(function (parsed) {
+        var lookup = csvCoordsLookupFrom(parsed);
         return ensureCsvCoordsKmzSource().then(function (loaded) {
           var preview = GisMap.previewBhCoordCsvToSource(loaded.sourceId, lookup);
           if (!preview.ok) {
@@ -9497,18 +9593,133 @@
     });
   }
 
+  /**
+   * Use a native-dialog path as the CSV or KMZ source for the coordinate tool.
+   *
+   * @param {string} kind "csv" or "kmz".
+   * @param {string} path Absolute file path.
+   */
+  function applyCsvCoordsChosenPath(kind, path) {
+    var input = kind === "csv" ? csvCoordsCsvPathInput : csvCoordsKmzPathInput;
+    if (!path || !input) {
+      return;
+    }
+    if (kind === "csv") {
+      csvCoordsBrowserCsvFile = null;
+    } else {
+      csvCoordsBrowserKmzFile = null;
+      csvCoordsTargetSourceId = null;
+    }
+    setCsvCoordsPathDisplay(kind, path, false);
+    setCsvCoordsDialogStatus((kind === "csv" ? "Coordinate file: " : "KMZ/KML file: ") + path, false);
+    resetCsvCoordsPreviewOnPathChange();
+  }
+
+  /**
+   * Use a browser File as the CSV or KMZ source for the coordinate tool.
+   *
+   * @param {string} kind "csv" or "kmz".
+   * @param {File} file File chosen with an <input type="file">.
+   */
+  function applyCsvCoordsChosenFile(kind, file) {
+    var input = kind === "csv" ? csvCoordsCsvPathInput : csvCoordsKmzPathInput;
+    if (!file || !input) {
+      return;
+    }
+    if (kind === "csv") {
+      csvCoordsBrowserCsvFile = file;
+    } else {
+      csvCoordsBrowserKmzFile = file;
+      csvCoordsTargetSourceId = null;
+    }
+    setCsvCoordsPathDisplay(kind, file.name, true);
+    setCsvCoordsDialogStatus((kind === "csv" ? "Coordinate file: " : "KMZ/KML file: ") + file.name, false);
+    resetCsvCoordsPreviewOnPathChange();
+  }
+
+  /**
+   * Folder a CSV/KMZ Browse should start in: the current file's folder, then the
+   * tool's default folder setting, then the project root.
+   *
+   * @param {string} kind "csv" or "kmz".
+   * @returns {string} Folder path, or "".
+   */
+  function csvCoordsInitialDirectory(kind) {
+    var current = kind === "csv" ? csvCoordsCsvPathValue() : csvCoordsKmzPathValue();
+    var folder = current.replace(/[\\/][^\\/]*$/, "");
+    if (folder && folder !== current) {
+      return folder;
+    }
+    var defaultInput = kind === "csv" ? csvCoordsDefaultCsvDirInput : csvCoordsDefaultKmzDirInput;
+    var preferred = defaultInput ? String(defaultInput.value || "").trim() : "";
+    return preferred || desktopProjectRootInitial();
+  }
+
+  function saveCsvCoordsDefaultDir(kind) {
+    var input = kind === "csv" ? csvCoordsDefaultCsvDirInput : csvCoordsDefaultKmzDirInput;
+    if (!input || !window.ViewerPathPrefs) {
+      return;
+    }
+    var value = String(input.value || "").trim();
+    if (kind === "csv") {
+      ViewerPathPrefs.setCsvCoordsCsvDir(value);
+    } else {
+      ViewerPathPrefs.setCsvCoordsKmzDir(value);
+    }
+  }
+
+  function loadCsvCoordsDefaultDirs() {
+    if (!window.ViewerPathPrefs) {
+      return;
+    }
+    if (csvCoordsDefaultCsvDirInput) {
+      csvCoordsDefaultCsvDirInput.value = ViewerPathPrefs.getCsvCoordsCsvDir();
+    }
+    if (csvCoordsDefaultKmzDirInput) {
+      csvCoordsDefaultKmzDirInput.value = ViewerPathPrefs.getCsvCoordsKmzDir();
+    }
+  }
+
+  function findLoadedSourceById(sourceId) {
+    for (var i = 0; i < loadedSources.length; i += 1) {
+      if (loadedSources[i].id === sourceId) {
+        return loadedSources[i];
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Open the CSV GPS to KMZ tool with the layer node's file set as the KMZ target.
+   *
+   * @param {string} nodeId Layer tree node id.
+   */
+  function openCsvCoordsForLayerNode(nodeId) {
+    var source = nodeId ? findLoadedSourceById(sourceIdFromNodeId(nodeId)) : null;
+    if (source && source.doc) {
+      if (source.doc.sourcePath) {
+        applyCsvCoordsChosenPath("kmz", source.doc.sourcePath);
+      } else {
+        // Opened in the browser without a disk path: target the loaded copy.
+        var name = source.doc.fileName || "open file";
+        csvCoordsBrowserKmzFile = null;
+        setCsvCoordsPathDisplay("kmz", name, true);
+        resetCsvCoordsPreviewOnPathChange();
+        csvCoordsTargetSourceId = source.id;
+        setCsvCoordsDialogStatus("KMZ/KML file: " + name + " (already open)", false);
+      }
+    }
+    openCsvCoordsDialog();
+  }
+
   function browseCsvCoordsCsv() {
     return ensureDesktop().then(function (desktop) {
       if (desktop && desktop.api && typeof desktop.api.choose_csv === "function") {
-        var initial = csvCoordsCsvPathValue().replace(/[\\/][^\\/]*$/, "") || desktopProjectRootInitial();
+        var initial = csvCoordsInitialDirectory("csv");
         return Promise.resolve(desktop.api.choose_csv(initial || "")).then(function (result) {
-          if (!result || !result.path || !csvCoordsCsvPathInput) {
-            return;
+          if (result && result.path) {
+            applyCsvCoordsChosenPath("csv", result.path);
           }
-          csvCoordsBrowserCsvFile = null;
-          setCsvCoordsPathDisplay("csv", result.path, false);
-          setCsvCoordsDialogStatus("CSV file: " + result.path, false);
-          resetCsvCoordsPreviewOnPathChange();
         });
       }
       if (csvCoordsInput) {
@@ -9521,14 +9732,11 @@
   function browseCsvCoordsKmz() {
     return ensureDesktop().then(function (desktop) {
       if (desktop && desktop.api && typeof desktop.api.choose_kmz === "function") {
-        return desktopChooseKmz(desktop.api).then(function (meta) {
-          if (!meta || !meta.path || !csvCoordsKmzPathInput) {
-            return;
+        var initial = csvCoordsInitialDirectory("kmz");
+        return Promise.resolve(desktop.api.choose_kmz(initial || "")).then(function (meta) {
+          if (meta && meta.path) {
+            applyCsvCoordsChosenPath("kmz", meta.path);
           }
-          csvCoordsBrowserKmzFile = null;
-          setCsvCoordsPathDisplay("kmz", meta.path, false);
-          setCsvCoordsDialogStatus("KMZ/KML file: " + meta.path, false);
-          resetCsvCoordsPreviewOnPathChange();
         });
       }
       if (csvCoordsKmzInput) {
@@ -10028,42 +10236,45 @@
       });
     });
   }
+  // The tool window forwards typed edits as "change" events, so listen for both.
   if (csvCoordsCsvPathInput) {
-    csvCoordsCsvPathInput.addEventListener("input", function () {
-      csvCoordsBrowserCsvFile = null;
-      setCsvCoordsPathDisplay("csv", csvCoordsCsvPathInput.value, false);
-      resetCsvCoordsPreviewOnPathChange();
+    ["input", "change"].forEach(function (type) {
+      csvCoordsCsvPathInput.addEventListener(type, function () {
+        csvCoordsBrowserCsvFile = null;
+        setCsvCoordsPathDisplay("csv", csvCoordsCsvPathInput.value, false);
+        resetCsvCoordsPreviewOnPathChange();
+      });
     });
   }
   if (csvCoordsKmzPathInput) {
-    csvCoordsKmzPathInput.addEventListener("input", function () {
-      csvCoordsBrowserKmzFile = null;
-      setCsvCoordsPathDisplay("kmz", csvCoordsKmzPathInput.value, false);
-      resetCsvCoordsPreviewOnPathChange();
+    ["input", "change"].forEach(function (type) {
+      csvCoordsKmzPathInput.addEventListener(type, function () {
+        csvCoordsBrowserKmzFile = null;
+        csvCoordsTargetSourceId = null;
+        setCsvCoordsPathDisplay("kmz", csvCoordsKmzPathInput.value, false);
+        resetCsvCoordsPreviewOnPathChange();
+      });
+    });
+  }
+  loadCsvCoordsDefaultDirs();
+  if (csvCoordsDefaultCsvDirInput) {
+    csvCoordsDefaultCsvDirInput.addEventListener("change", function () {
+      saveCsvCoordsDefaultDir("csv");
+    });
+  }
+  if (csvCoordsDefaultKmzDirInput) {
+    csvCoordsDefaultKmzDirInput.addEventListener("change", function () {
+      saveCsvCoordsDefaultDir("kmz");
     });
   }
   if (csvCoordsInput) {
     csvCoordsInput.addEventListener("change", function () {
-      var file = csvCoordsInput.files && csvCoordsInput.files[0];
-      if (!file || !csvCoordsCsvPathInput) {
-        return;
-      }
-      csvCoordsBrowserCsvFile = file;
-      setCsvCoordsPathDisplay("csv", file.name, true);
-      setCsvCoordsDialogStatus("CSV file: " + file.name, false);
-      resetCsvCoordsPreviewOnPathChange();
+      applyCsvCoordsChosenFile("csv", csvCoordsInput.files && csvCoordsInput.files[0]);
     });
   }
   if (csvCoordsKmzInput) {
     csvCoordsKmzInput.addEventListener("change", function () {
-      var file = csvCoordsKmzInput.files && csvCoordsKmzInput.files[0];
-      if (!file || !csvCoordsKmzPathInput) {
-        return;
-      }
-      csvCoordsBrowserKmzFile = file;
-      setCsvCoordsPathDisplay("kmz", file.name, true);
-      setCsvCoordsDialogStatus("KMZ/KML file: " + file.name, false);
-      resetCsvCoordsPreviewOnPathChange();
+      applyCsvCoordsChosenFile("kmz", csvCoordsKmzInput.files && csvCoordsKmzInput.files[0]);
     });
   }
   if (externalEditSourceSelect) {
@@ -11529,6 +11740,16 @@
           el.click();
         }
         return toolHostSnapshot(tool);
+      }
+      if (action === "csv-coords-set-path") {
+        applyToolFields(payload.fields);
+        applyCsvCoordsChosenPath(payload.kind === "kmz" ? "kmz" : "csv", String(payload.path || ""));
+        return toolHostSnapshot("csv-coords");
+      }
+      if (action === "csv-coords-set-file") {
+        applyToolFields(payload.fields);
+        applyCsvCoordsChosenFile(payload.kind === "kmz" ? "kmz" : "csv", payload.file || null);
+        return toolHostSnapshot("csv-coords");
       }
       if (action === "point-chain-move") {
         movePointChainDraftItem(Number(payload.index), Number(payload.delta));

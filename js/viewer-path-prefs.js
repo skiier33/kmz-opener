@@ -110,7 +110,34 @@
     writeRaw({ appendixTemplatePath: path || "" });
   }
 
+  function getStoredString(key) {
+    var stored = readRaw();
+    return stored && stored[key] ? String(stored[key]).trim() : "";
+  }
+
+  /** Optional starting folder for the CSV GPS to KMZ tool's CSV/Excel Browse. */
+  function getCsvCoordsCsvDir() {
+    return getStoredString("csvCoordsCsvDir");
+  }
+
+  function setCsvCoordsCsvDir(path) {
+    writeRaw({ csvCoordsCsvDir: path || "" });
+  }
+
+  /** Optional starting folder for the CSV GPS to KMZ tool's KMZ/KML Browse. */
+  function getCsvCoordsKmzDir() {
+    return getStoredString("csvCoordsKmzDir");
+  }
+
+  function setCsvCoordsKmzDir(path) {
+    writeRaw({ csvCoordsKmzDir: path || "" });
+  }
+
   global.ViewerPathPrefs = {
+    getCsvCoordsCsvDir: getCsvCoordsCsvDir,
+    setCsvCoordsCsvDir: setCsvCoordsCsvDir,
+    getCsvCoordsKmzDir: getCsvCoordsKmzDir,
+    setCsvCoordsKmzDir: setCsvCoordsKmzDir,
     getProjectRoot: getProjectRoot,
     setProjectRoot: setProjectRoot,
     getScreenshotFolder: getScreenshotFolder,

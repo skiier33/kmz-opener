@@ -220,12 +220,45 @@
     return rows;
   }
 
-  function parseBhCoordCsv(text) {
-    var rows = parseCsvRows(String(text || ""));
-    if (!rows.length) {
-      return { byId: {}, errors: ["The CSV file is empty."] };
+  /** Rows to search for the header (spreadsheets often have title rows above it). */
+  var HEADER_SEARCH_ROWS = 10;
+
+  /**
+   * Find the first row (within HEADER_SEARCH_ROWS) whose cells map to all required fields.
+   *
+   * @param {string[][]} rows - Table rows.
+   * @returns {{rowIndex: number, indexByField: Object, errors: string[]}}
+   */
+  function findHeaderRow(rows) {
+    var first = null;
+    var limit = Math.min(rows.length, HEADER_SEARCH_ROWS);
+    var i;
+    for (i = 0; i < limit; i += 1) {
+      var mapped = mapBhCoordHeaderColumns(rows[i]);
+      if (!mapped.errors.length) {
+        return { rowIndex: i, indexByField: mapped.indexByField, errors: [] };
+      }
+      if (!first) {
+        first = mapped;
+      }
     }
-    var headerMap = mapBhCoordHeaderColumns(rows[0]);
+    return { rowIndex: -1, indexByField: {}, errors: first ? first.errors : [] };
+  }
+
+  /**
+   * Build the borehole coordinate lookup from table rows (CSV or spreadsheet).
+   *
+   * @param {string[][]} rows - Table rows; the header is detected in the first few rows.
+   * @param {string} [label] - Source name used in messages, e.g. "CSV" or "spreadsheet".
+   * @returns {{byId: Object, lookup: Object, errors: string[]}}
+   */
+  function parseBhCoordRows(rows, label) {
+    var source = label || "CSV";
+    rows = Array.isArray(rows) ? rows : [];
+    if (!rows.length) {
+      return { byId: {}, errors: ["The " + source + " file is empty."] };
+    }
+    var headerMap = findHeaderRow(rows);
     if (headerMap.errors.length) {
       return {
         byId: {},
@@ -237,7 +270,7 @@
     var errors = [];
     var dataRows = 0;
     var i;
-    for (i = 1; i < rows.length; i += 1) {
+    for (i = headerMap.rowIndex + 1; i < rows.length; i += 1) {
       var cells = rows[i];
       if (
         !cells.length ||
@@ -260,12 +293,12 @@
         continue;
       }
       if (byId[bhId]) {
-        errors.push("Duplicate borehole id in CSV: " + bhId + ".");
+        errors.push("Duplicate borehole id in " + source + ": " + bhId + ".");
       }
       byId[bhId] = { lat: lat, lng: lng };
     }
     if (!dataRows) {
-      errors.push("The CSV has a header but no data rows.");
+      errors.push("The " + source + " has a header but no data rows.");
     }
     var lookupResult = { lookup: {}, errors: [] };
     if (global.BhIdMatch && global.BhIdMatch.buildBhCoordLookup) {
@@ -281,6 +314,221 @@
     };
   }
 
+  function parseBhCoordCsv(text) {
+    return parseBhCoordRows(parseCsvRows(String(text || "")), "CSV");
+  }
+
+  var EXCEL_ZIP_RE = /\.(xlsx|xlsm)$/i;
+  var EXCEL_LEGACY_RE = /\.xls$/i;
+
+  /**
+   * Classify a coordinate table file by name.
+   *
+   * @param {string} name - File name or path.
+   * @returns {"csv"|"xlsx"|"xls"|""} Format id, or "" when unsupported.
+   */
+  function coordFileFormat(name) {
+    var lower = String(name || "").trim().toLowerCase();
+    if (/\.csv$/.test(lower)) {
+      return "csv";
+    }
+    if (EXCEL_ZIP_RE.test(lower)) {
+      return "xlsx";
+    }
+    if (EXCEL_LEGACY_RE.test(lower)) {
+      return "xls";
+    }
+    return "";
+  }
+
+  function xmlDoc(text) {
+    var doc = new global.DOMParser().parseFromString(text, "application/xml");
+    if (doc.getElementsByTagName("parsererror").length) {
+      throw new Error("The Excel file has invalid XML.");
+    }
+    return doc;
+  }
+
+  function byLocalName(node, name) {
+    return Array.prototype.slice.call(node.getElementsByTagNameNS("*", name));
+  }
+
+  function childByLocalName(node, name) {
+    var kids = node.childNodes;
+    var i;
+    for (i = 0; i < kids.length; i += 1) {
+      if (kids[i].nodeType === 1 && kids[i].localName === name) {
+        return kids[i];
+      }
+    }
+    return null;
+  }
+
+  /** Concatenate every <t> under a shared/inline string item (handles rich-text runs). */
+  function stringItemText(node) {
+    return byLocalName(node, "t")
+      .map(function (t) {
+        return t.textContent || "";
+      })
+      .join("");
+  }
+
+  /** Zero-based column index from a cell reference such as "AB12". */
+  function columnIndex(ref) {
+    var letters = String(ref || "").replace(/[^A-Z]/gi, "").toUpperCase();
+    var index = 0;
+    var i;
+    for (i = 0; i < letters.length; i += 1) {
+      index = index * 26 + (letters.charCodeAt(i) - 64);
+    }
+    return index - 1;
+  }
+
+  function relationshipId(sheetEl) {
+    var attrs = sheetEl.attributes;
+    var i;
+    for (i = 0; i < attrs.length; i += 1) {
+      if (attrs[i].localName === "id" && attrs[i].name !== "sheetId") {
+        return attrs[i].value;
+      }
+    }
+    return "";
+  }
+
+  function resolveSheetPath(target) {
+    var t = String(target || "");
+    if (t.charAt(0) === "/") {
+      return t.slice(1);
+    }
+    return "xl/" + t.replace(/^\.\//, "");
+  }
+
+  function readZipText(zip, path) {
+    var entry = zip.file(path);
+    return entry ? entry.async("string") : Promise.resolve(null);
+  }
+
+  function sheetRows(doc, sharedStrings) {
+    var rows = [];
+    byLocalName(doc, "row").forEach(function (rowEl) {
+      var cells = [];
+      var nextCol = 0;
+      Array.prototype.forEach.call(rowEl.childNodes, function (cell) {
+        if (cell.nodeType !== 1 || cell.localName !== "c") {
+          return;
+        }
+        var ref = cell.getAttribute("r");
+        var col = ref ? columnIndex(ref) : nextCol;
+        nextCol = col + 1;
+        var type = cell.getAttribute("t") || "";
+        var valueEl = childByLocalName(cell, "v");
+        var raw = valueEl ? valueEl.textContent || "" : "";
+        var value;
+        if (type === "s") {
+          value = sharedStrings[parseInt(raw, 10)] || "";
+        } else if (type === "inlineStr") {
+          var is = childByLocalName(cell, "is");
+          value = is ? stringItemText(is) : "";
+        } else if (type === "b") {
+          value = raw === "1" ? "TRUE" : "FALSE";
+        } else {
+          value = raw;
+        }
+        while (cells.length < col) {
+          cells.push("");
+        }
+        cells[col] = value;
+      });
+      if (cells.some(function (c) { return String(c).trim() !== ""; })) {
+        rows.push(cells);
+      }
+    });
+    return rows;
+  }
+
+  /**
+   * Read every worksheet of an .xlsx/.xlsm workbook as rows of cell text.
+   *
+   * @param {ArrayBuffer|Uint8Array} data - Workbook bytes.
+   * @returns {Promise<Array<{name: string, rows: string[][]}>>} Sheets in workbook order.
+   */
+  function readXlsxSheets(data) {
+    if (!global.JSZip) {
+      return Promise.reject(new Error("Excel reading is unavailable (JSZip did not load)."));
+    }
+    return global.JSZip.loadAsync(data)
+      .catch(function () {
+        throw new Error("That file is not a valid .xlsx workbook.");
+      })
+      .then(function (zip) {
+        return Promise.all([
+          readZipText(zip, "xl/workbook.xml"),
+          readZipText(zip, "xl/_rels/workbook.xml.rels"),
+          readZipText(zip, "xl/sharedStrings.xml"),
+        ]).then(function (parts) {
+          if (!parts[0] || !parts[1]) {
+            throw new Error("That file is not a valid .xlsx workbook.");
+          }
+          var targets = {};
+          byLocalName(xmlDoc(parts[1]), "Relationship").forEach(function (rel) {
+            targets[rel.getAttribute("Id")] = rel.getAttribute("Target");
+          });
+          var shared = parts[2]
+            ? byLocalName(xmlDoc(parts[2]), "si").map(stringItemText)
+            : [];
+          var sheets = byLocalName(xmlDoc(parts[0]), "sheet")
+            .map(function (el) {
+              var target = targets[relationshipId(el)];
+              return target ? { name: el.getAttribute("name") || "", path: resolveSheetPath(target) } : null;
+            })
+            .filter(Boolean);
+          return Promise.all(
+            sheets.map(function (sheet) {
+              return readZipText(zip, sheet.path).then(function (text) {
+                return { name: sheet.name, rows: text ? sheetRows(xmlDoc(text), shared) : [] };
+              });
+            })
+          );
+        });
+      });
+  }
+
+  /**
+   * Parse borehole coordinates from an .xlsx/.xlsm workbook.
+   * Uses the first worksheet whose header has borehole id, latitude, and longitude columns.
+   *
+   * @param {ArrayBuffer|Uint8Array} data - Workbook bytes.
+   * @returns {Promise<{byId: Object, lookup: Object, errors: string[], sheetName: string}>}
+   */
+  function parseBhCoordXlsx(data) {
+    return readXlsxSheets(data).then(function (sheets) {
+      var firstResult = null;
+      var i;
+      for (i = 0; i < sheets.length; i += 1) {
+        if (!sheets[i].rows.length) {
+          continue;
+        }
+        var header = findHeaderRow(sheets[i].rows);
+        var result = parseBhCoordRows(sheets[i].rows, "spreadsheet");
+        result.sheetName = sheets[i].name;
+        if (!header.errors.length) {
+          return result;
+        }
+        if (!firstResult) {
+          firstResult = result;
+        }
+      }
+      if (firstResult) {
+        if (sheets.length > 1) {
+          firstResult.errors[0] =
+            "No worksheet has borehole id, latitude, and longitude columns. " + firstResult.errors[0];
+        }
+        return firstResult;
+      }
+      return { byId: {}, lookup: {}, errors: ["The spreadsheet is empty."], sheetName: "" };
+    });
+  }
+
   function resolveBhCoordRow(lookup, placemarkId) {
     if (global.BhIdMatch && global.BhIdMatch.resolveBhCoordLookup) {
       return global.BhIdMatch.resolveBhCoordLookup(lookup, placemarkId);
@@ -294,6 +542,10 @@
 
   global.CsvCoords = {
     parseBhCoordCsv: parseBhCoordCsv,
+    parseBhCoordRows: parseBhCoordRows,
+    parseBhCoordXlsx: parseBhCoordXlsx,
+    readXlsxSheets: readXlsxSheets,
+    coordFileFormat: coordFileFormat,
     resolveBhCoordRow: resolveBhCoordRow,
     resolveHeaderToField: resolveHeaderToField,
     mapBhCoordHeaderColumns: mapBhCoordHeaderColumns,

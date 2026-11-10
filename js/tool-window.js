@@ -113,6 +113,126 @@
       });
   }
 
+  var CSV_COORDS_BROWSE = {
+    "csv-coords-browse-csv": {
+      kind: "csv",
+      accept: ".csv,text/csv,.xlsx,.xlsm,.xls",
+      label: "CSV or Excel file",
+    },
+    "csv-coords-browse-kmz": {
+      kind: "kmz",
+      accept: ".kmz,.kml,application/vnd.google-earth.kmz,application/vnd.google-earth.kml+xml",
+      label: "KMZ",
+    },
+  };
+  var browserFilePicker = null;
+
+  function fieldValue(id) {
+    var el = mount ? mount.querySelector("#" + id) : null;
+    return el ? String(el.value || "").trim() : "";
+  }
+
+  function projectRoot() {
+    return global.ViewerPathPrefs ? global.ViewerPathPrefs.getProjectRoot() || "" : "";
+  }
+
+  /** Current file's folder, then the tool's default folder setting, then the project root. */
+  function desktopInitialDirectory(kind) {
+    var current = fieldValue(kind === "csv" ? "csv-coords-csv-path" : "csv-coords-kmz-path");
+    var folder = current ? current.replace(/[\\/][^\\/]*$/, "") : "";
+    if (folder && folder !== current) {
+      return folder;
+    }
+    return fieldValue("csv-coords-default-" + kind + "-dir") || projectRoot();
+  }
+
+  var CSV_COORDS_DIR_BROWSE = {
+    "csv-coords-browse-csv-dir": "csv-coords-default-csv-dir",
+    "csv-coords-browse-kmz-dir": "csv-coords-default-kmz-dir",
+  };
+
+  /**
+   * Pick a default folder with the native folder dialog and save it in the viewer.
+   */
+  function browseDefaultFolder(fieldId) {
+    if (!global.pywebview || !global.DesktopBridge) {
+      setStatus("Folder pickers need the desktop app. Type the folder path instead.");
+      return;
+    }
+    var initial = fieldValue(fieldId) || projectRoot();
+    global.DesktopBridge.whenDesktopApiReady().then(function (api) {
+      if (!api || typeof api.choose_directory !== "function") {
+        setStatus("The folder picker is not available in this window.");
+        return;
+      }
+      return Promise.resolve(api.choose_directory(initial)).then(function (result) {
+        var input = mount ? mount.querySelector("#" + fieldId) : null;
+        if (!result || !result.path || !input) {
+          return;
+        }
+        input.value = result.path;
+        return run("sync", { id: fieldId, eventType: "change" }, true);
+      });
+    }).catch(function (err) {
+      log.error("browse folder failed: %s", (err && err.message) || err);
+      setStatus((err && err.message) || "Could not choose a folder.");
+    });
+  }
+
+  /**
+   * Open the browser file picker from this window (keeps the click's user gesture).
+   */
+  function pickBrowserFile(spec) {
+    if (!browserFilePicker) {
+      browserFilePicker = global.document.createElement("input");
+      browserFilePicker.type = "file";
+      browserFilePicker.hidden = true;
+      global.document.body.appendChild(browserFilePicker);
+      browserFilePicker.addEventListener("change", function () {
+        var file = browserFilePicker.files && browserFilePicker.files[0];
+        var kind = browserFilePicker.getAttribute("data-kind") || "csv";
+        if (file) {
+          run("csv-coords-set-file", { kind: kind, file: file }, true);
+        }
+      });
+    }
+    browserFilePicker.setAttribute("data-kind", spec.kind);
+    browserFilePicker.accept = spec.accept;
+    browserFilePicker.value = "";
+    browserFilePicker.click();
+  }
+
+  /**
+   * Show the native picker owned by this tool window, then send the path to the viewer.
+   */
+  function pickDesktopFile(spec) {
+    var initial = desktopInitialDirectory(spec.kind);
+    return global.DesktopBridge.whenDesktopApiReady().then(function (api) {
+      var method = spec.kind === "csv" ? "choose_csv" : "choose_kmz";
+      if (!api || typeof api[method] !== "function") {
+        setStatus("The file picker is not available in this window.");
+        return;
+      }
+      return Promise.resolve(api[method](initial)).then(function (result) {
+        if (result && result.path) {
+          return run("csv-coords-set-path", { kind: spec.kind, path: result.path }, true);
+        }
+      });
+    }).catch(function (err) {
+      log.error("browse %s failed: %s", spec.kind, (err && err.message) || err);
+      setStatus((err && err.message) || "Could not choose " + spec.label + ".");
+    });
+  }
+
+  function browseCsvCoords(spec) {
+    var hasOpenerHost = global.opener && !global.opener.closed && global.opener.KmzToolHost;
+    if (hasOpenerHost || !global.pywebview) {
+      pickBrowserFile(spec);
+      return;
+    }
+    pickDesktopFile(spec);
+  }
+
   function onClick(event) {
     var move = event.target.closest(".point-chain-up, .point-chain-down, .point-chain-remove");
     if (move) {
@@ -142,6 +262,14 @@
       return;
     }
     event.preventDefault();
+    if (CSV_COORDS_BROWSE[button.id]) {
+      browseCsvCoords(CSV_COORDS_BROWSE[button.id]);
+      return;
+    }
+    if (CSV_COORDS_DIR_BROWSE[button.id]) {
+      browseDefaultFolder(CSV_COORDS_DIR_BROWSE[button.id]);
+      return;
+    }
     run("click", { id: button.id }, true);
   }
 

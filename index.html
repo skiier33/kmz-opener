@@ -2047,7 +2047,7 @@
               </header>
               <div class="csv-coords" aria-label="Update coordinates from CSV">
                 <p class="muted csv-coords-hint">
-                  Set a CSV with borehole id, latitude, and longitude columns (any common spelling, such as
+                  Set a CSV or Excel file (.csv, .xlsx, .xlsm, .xls) with borehole id, latitude, and longitude columns (any common spelling, such as
                   <strong>BH_ID</strong> / <strong>Borehole</strong> / <strong>boring_id</strong>,
                   <strong>LAT</strong> / <strong>Latitude</strong>, and
                   <strong>LONG</strong> / <strong>Longitude</strong>), and the KMZ or KML to update. Each point placemark must have
@@ -2057,20 +2057,20 @@
                   tolerates common spelling differences (e.g. B6A vs B-6A, B06A, or BH-6A).
                 </p>
                 <label class="csv-coords-field">
-                  <span class="csv-coords-label">CSV file</span>
+                  <span class="csv-coords-label">CSV or Excel file</span>
                   <div class="csv-coords-path-row">
                     <input
                       id="csv-coords-csv-path"
                       type="text"
                       spellcheck="false"
                       autocomplete="off"
-                      placeholder="Path to coordinate CSV…"
+                      placeholder="Path to coordinate CSV or Excel file…"
                     />
                     <button
                       type="button"
                       class="btn btn-subtle"
                       id="csv-coords-browse-csv"
-                      title="Choose CSV file"
+                      title="Choose CSV or Excel file"
                     >
                       Browse…
                     </button>
@@ -2108,6 +2108,52 @@
                     aria-live="polite"
                   ></p>
                 </label>
+                <fieldset class="csv-coords-defaults">
+                  <legend>Default folders (optional)</legend>
+                  <p class="muted csv-coords-defaults-hint">
+                    Browse starts in these folders when its path box is empty. Saved for next time.
+                  </p>
+                  <label class="csv-coords-field">
+                    <span class="csv-coords-label">CSV / Excel folder</span>
+                    <div class="csv-coords-path-row">
+                      <input
+                        id="csv-coords-default-csv-dir"
+                        type="text"
+                        spellcheck="false"
+                        autocomplete="off"
+                        placeholder="Folder to start in for CSV or Excel files…"
+                      />
+                      <button
+                        type="button"
+                        class="btn btn-subtle"
+                        id="csv-coords-browse-csv-dir"
+                        title="Choose default csv / excel folder"
+                      >
+                        Browse…
+                      </button>
+                    </div>
+                  </label>
+                  <label class="csv-coords-field">
+                    <span class="csv-coords-label">KMZ / KML folder</span>
+                    <div class="csv-coords-path-row">
+                      <input
+                        id="csv-coords-default-kmz-dir"
+                        type="text"
+                        spellcheck="false"
+                        autocomplete="off"
+                        placeholder="Folder to start in for KMZ or KML files…"
+                      />
+                      <button
+                        type="button"
+                        class="btn btn-subtle"
+                        id="csv-coords-browse-kmz-dir"
+                        title="Choose default kmz / kml folder"
+                      >
+                        Browse…
+                      </button>
+                    </div>
+                  </label>
+                </fieldset>
                 <p id="csv-coords-status" class="csv-coords-status muted" aria-live="polite"></p>
                 <section
                   id="csv-coords-preview-section"
@@ -2137,7 +2183,7 @@
                 <input
                   id="csv-coords-input"
                   type="file"
-                  accept=".csv,text/csv"
+                  accept=".csv,text/csv,.xlsx,.xlsm,.xls"
                   hidden
                   tabindex="-1"
                   aria-hidden="true"

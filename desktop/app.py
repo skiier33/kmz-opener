@@ -67,6 +67,7 @@ from desktop.icon_to_image import (  # noqa: E402
     preview_icon_to_image as build_icon_to_image_preview,
     save_icon_to_image as write_icon_to_image_outputs,
 )
+from desktop.coord_table import is_coord_table_path, read_coord_table  # noqa: E402
 from desktop.google_earth import launch_google_earth  # noqa: E402
 from desktop.copilot_scan_parser import list_scan_parsers  # noqa: E402
 from desktop.scan_coordinate_extract import (  # noqa: E402
@@ -357,6 +358,18 @@ def _source_payload(path: str) -> dict:
 class DesktopApi:
     """Native file dialogs and path registration for the desktop window."""
 
+    # Window this API instance belongs to. Set for tool windows so native
+    # dialogs open over the window the user clicked in, not the main viewer.
+    _owner_window: object = None
+
+    def _dialog_window(self) -> object:
+        """Return the window that should own native dialogs, or None."""
+        owner = self._owner_window
+        if owner is not None and owner in webview.windows:
+            return owner
+        windows = webview.windows
+        return windows[0] if windows else None
+
     def session_token(self) -> str:
         """
         Return the per-launch secret required by local file endpoints.
@@ -402,18 +415,17 @@ class DesktopApi:
 
     def choose_csv(self, initial_directory: str = "") -> Optional[dict]:
         """
-        Show a native open dialog for a coordinate CSV file.
+        Show a native open dialog for a coordinate CSV or Excel file.
 
         Args:
             initial_directory: Folder to open the dialog in when set.
 
         Returns:
-            Path metadata for the chosen CSV, or None if cancelled.
+            Path metadata for the chosen file, or None if cancelled.
         """
-        windows = webview.windows
-        if not windows:
+        window = self._dialog_window()
+        if window is None:
             return None
-        window = windows[0]
         start_dir = _dialog_directory(initial_directory)
 
         def _open() -> Optional[str]:
@@ -421,7 +433,12 @@ class DesktopApi:
                 _open_dialog_flag(),
                 directory=start_dir,
                 allow_multiple=False,
-                file_types=("CSV (*.csv)", "All files (*.*)"),
+                file_types=(
+                    "CSV or Excel (*.csv;*.xlsx;*.xlsm;*.xls)",
+                    "CSV (*.csv)",
+                    "Excel (*.xlsx;*.xlsm;*.xls)",
+                    "All files (*.*)",
+                ),
             )
             return _first_path(result)
 
@@ -429,35 +446,25 @@ class DesktopApi:
         if not path or not isinstance(path, str):
             return None
         full = normalize_path(path)
-        if not full.lower().endswith(".csv") or not os.path.isfile(full):
+        if not is_coord_table_path(full) or not os.path.isfile(full):
             return None
         return {"path": full, "name": os.path.basename(full)}
 
-    def read_csv_file(self, path: str = "") -> dict:
+    def read_coord_file(self, path: str = "") -> dict:
         """
-        Read a local CSV file for coordinate import.
+        Read a local CSV or Excel coordinate table for the CSV-to-KMZ tool.
 
         Args:
-            path: Absolute path to a .csv file.
+            path: Absolute path to a .csv, .xlsx, .xlsm, or .xls file.
 
         Returns:
-            Dict with ``path`` and ``text``, or ``error`` when the file cannot be read.
+            Dict with ``path``, ``format``, and ``text`` (CSV) or ``base64``
+            (.xlsx/.xlsm workbook bytes); or ``error`` when it cannot be read.
         """
-        if not path or not isinstance(path, str):
-            return {"error": "No CSV path was given."}
-        full = normalize_path(path)
-        if not full.lower().endswith(".csv"):
-            return {"error": "Choose a .csv file."}
-        if not os.path.isfile(full):
-            return {"error": "That CSV file was not found."}
-        try:
-            with open(full, "r", encoding="utf-8-sig", newline="") as handle:
-                text = handle.read()
-        except OSError as err:
-            return {"error": err.strerror or "Could not read that CSV."}
-        if len(text) > 5_000_000:
-            return {"error": "That CSV file is too large."}
-        return {"path": full, "text": text}
+        result = read_coord_table(path)
+        if result.get("error"):
+            _log.warning("read_coord_file failed path=%s: %s", path, result["error"])
+        return result
 
     def choose_kmz(self, initial_directory: str = "") -> Optional[dict]:
         """
@@ -469,10 +476,9 @@ class DesktopApi:
         Returns:
             Path metadata for the chosen file, or None if the dialog was cancelled.
         """
-        windows = webview.windows
-        if not windows:
+        window = self._dialog_window()
+        if window is None:
             return None
-        window = windows[0]
         start_dir = _dialog_directory(initial_directory)
 
         def _open() -> Optional[str]:
@@ -499,10 +505,9 @@ class DesktopApi:
         Returns:
             The chosen folder path, or None if the dialog was cancelled.
         """
-        windows = webview.windows
-        if not windows:
+        window = self._dialog_window()
+        if window is None:
             return None
-        window = windows[0]
         start_dir = _dialog_directory(initial_directory)
 
         def _pick() -> Optional[str]:
@@ -1159,14 +1164,15 @@ class DesktopApi:
         _log.info("open_tool_window tool=%s url=%s", tool, url)
 
         def _open() -> dict:
+            api = DesktopApi()
             try:
-                webview.create_window(
+                api._owner_window = webview.create_window(
                     title,
                     url,
                     width=width,
                     height=height,
                     min_size=(420, 360),
-                    js_api=DesktopApi(),
+                    js_api=api,
                 )
             except (OSError, RuntimeError, TypeError, ValueError) as err:
                 return {"error": f"Could not open window: {err}"}
